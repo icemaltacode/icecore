@@ -1,0 +1,60 @@
+/* Tokens mirror slidev-theme-ice so the platform and the decks read as one product.
+   Rebrand by changing values here, same as the theme's tokens.css. */
+:root {
+  --ice-font-sans: 'Circular Std', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --ice-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --ice-primary: #38bdf8;
+  --ice-primary-strong: #7dd3fc;
+  --ice-primary-soft: #075985;
+  --ice-fg: #f1f5f9;
+  --ice-fg-muted: #94a3b8;
+  --ice-bg: #0b1220;
+  --ice-bg-soft: #111827;
+  --ice-border: #1f2937;
+  --ice-code-bg: #0f172a;
+  --ice-radius: 10px;
+}
+
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ice-bg);
+  color: var(--ice-fg);
+  font-family: var(--ice-font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font-family: inherit; }
+
+.btn {
+  border-radius: 8px; border: 1px solid var(--ice-border); padding: 7px 14px;
+  font-size: 13px; font-weight: 500; cursor: pointer; background: var(--ice-bg);
+  color: var(--ice-fg); transition: background .12s, border-color .12s, opacity .12s;
+}
+.btn:hover:not(:disabled) { border-color: var(--ice-primary-soft); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--ice-primary); border-color: var(--ice-primary); color: #06121e; font-weight: 600; }
+.btn.primary:hover:not(:disabled) { background: var(--ice-primary-strong); border-color: var(--ice-primary-strong); }
+
+.link {
+  background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px;
+  color: var(--ice-primary-strong); text-decoration: underline; text-underline-offset: 3px;
+}
+.link:disabled { opacity: .45; cursor: not-allowed; }
+
+/* rendered exercise copy */
+.prose p { margin: 0 0 12px; }
+.prose ul { margin: 0 0 12px; padding-left: 20px; }
+.prose li { margin: 4px 0; }
+.prose code {
+  font-family: var(--ice-font-mono); font-size: .875em;
+  background: var(--ice-code-bg); border: 1px solid var(--ice-border);
+  border-radius: 4px; padding: 1px 5px;
+}
+.prose a { color: var(--ice-primary-strong); }
+.prose.inline > p:last-child { margin-bottom: 0; }
+.prose.inline > p:first-child { margin-top: 0; }
