@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .icecore/
+infra/cdk.out/
+infra/node_modules/
+.icecore-bundle/

@@ -1,0 +1,65 @@
+# Publish a course's content and slides.
+#
+# Copy this into a course repo as .github/workflows/publish.yml. It deploys content only —
+# never infrastructure — so a typo fix in an exercise can't touch the stack. The role it
+# assumes can write objects to the site bucket and invalidate the CDN, and nothing else.
+#
+# Set these repository variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   AWS_ROLE_ARN     the PublisherRoleArn output from `just infra-deploy`
+#   AWS_REGION       eu-south-1
+#   SITE_BUCKET      the SiteBucket output
+#   DISTRIBUTION_ID  the DistributionId output
+#
+# Nothing secret is needed: authentication is OIDC, so there is no access key to rotate.
+
+name: publish
+
+on:
+  push:
+    branches: [main]
+    paths: ['content/**', 'slides/**']
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  id-token: write      # required to request the OIDC token
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm ci
+
+      # Every reference solution must grade itself correct and a wrong query must fail.
+      # This is the gate: there is no staging environment, so a green verify is the only
+      # thing between a broken exercise and the students sitting in front of it.
+      - name: Verify the content
+        run: npm run verify
+
+      - name: Build content and decks
+        run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publish
+        run: |
+          aws s3 sync dist/content/ "s3://${{ vars.SITE_BUCKET }}/content/" --delete
+          if [ -d dist/slides ]; then
+            aws s3 sync dist/slides/ "s3://${{ vars.SITE_BUCKET }}/slides/" --delete
+          fi
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.DISTRIBUTION_ID }}" \
+            --paths '/content/*' '/slides/*'
