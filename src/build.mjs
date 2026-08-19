@@ -88,6 +88,11 @@ const optionsIn = body => {
 const orderedIn = body => (body || '').split('\n').filter(l => /^\d+\.\s/.test(l))
   .map(l => l.replace(/^\d+\.\s*/, '').trim());
 const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+/* Dotted numbers sort numerically, not as text: 1.10 comes after 1.9, and exercise 10
+ * after exercise 9. Plain .sort() gets both wrong the moment a unit reaches double figures. */
+const byNumber = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+/** Every topic in a course, in order, flattened out of its modules and units. */
+const topicsOf = course => (course.modules || []).flatMap(m => m.units.flatMap(u => u.topics));
 
 export function parseExercise(file, text) {
   const [fm, md] = frontmatter(text);
@@ -168,32 +173,72 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const exDir = path.join(contentDir, 'exercises');
   if (!fs.existsSync(exDir)) throw new Error(`No exercises/ in ${contentDir}`);
 
-  // ---- collect units, grouped by course ----
-  const courses = new Map();
-  const warnings = [];
-  for (const unitId of fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort()) {
-    const dir = path.join(exDir, unitId);
-    const metaFile = path.join(dir, '_unit.json');
-    if (!fs.existsSync(metaFile)) { warnings.push(`${unitId}: no _unit.json - skipped`); continue; }
-    const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+  // ---- collect topics, and hang them off the course's modules and units ----
+  //
+  //   Course   the whole programme, one per content repo   ICExDataCamp Data Analyst
+  //   Module   a DataCamp track                            1
+  //   Unit     a DataCamp course                           1.1
+  //   Topic    a DataCamp chapter                          1.1.1
+  //
+  // Only the topic is a directory. Its unit is declared in _topic.json and its module is
+  // the unit number's first component, so nothing has to be stated twice.
+  const courseFile = path.join(contentDir, 'course.json');
+  if (!fs.existsSync(courseFile))
+    throw new Error(`No course.json in ${contentDir} - it declares the course and its modules`);
+  const courseMeta = JSON.parse(fs.readFileSync(courseFile, 'utf8'));
+  if (!courseMeta.id || !courseMeta.title) throw new Error('course.json needs an id and a title');
 
-    const exercises = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort()
+  const warnings = [];
+  const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
+  const course = { id: courseMeta.id, title: courseMeta.title, modules: [] };
+  const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
+
+  for (const topicId of fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort(byNumber)) {
+    const dir = path.join(exDir, topicId);
+    const metaFile = path.join(dir, '_topic.json');
+    if (!fs.existsSync(metaFile)) { warnings.push(`${topicId}: no _topic.json - skipped`); continue; }
+    const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+    if (!meta.unit) { warnings.push(`${topicId}: _topic.json has no unit - skipped`); continue; }
+
+    const exercises = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort(byNumber)
       .map(f => parseExercise(f, fs.readFileSync(path.join(dir, f), 'utf8')));
 
     for (const e of exercises.filter(e => e.type === 'coding'))
-      for (const problem of stepProblems(e)) warnings.push(`${unitId} ${e.file}: ${problem}`);
+      for (const problem of stepProblems(e)) warnings.push(`${topicId} ${e.file}: ${problem}`);
     for (const e of exercises.filter(e => e.type === 'mcq' && !(e.answer >= 0)))
-      warnings.push(`${unitId}: no correct option in ${e.file}`);
+      warnings.push(`${topicId}: no correct option in ${e.file}`);
     for (const e of exercises.filter(e => e.type === 'dragdrop'))
-      for (const problem of validateDragDrop(e)) warnings.push(`${unitId} ${e.file}: ${problem}`);
+      for (const problem of validateDragDrop(e)) warnings.push(`${topicId} ${e.file}: ${problem}`);
 
-    if (!courses.has(meta.course))
-      courses.set(meta.course, { id: meta.course, title: meta.courseTitle, topic: meta.topic, units: [] });
-    courses.get(meta.course).units.push({
-      unit: meta.unit, title: meta.title, label: `${meta.unit} - ${meta.title}`,
+    const moduleId = String(meta.unit).split('.')[0];
+    let mod = course.modules.find(m => m.module === moduleId);
+    if (!mod) {
+      if (!moduleTitles.has(moduleId)) warnings.push(`module ${moduleId} has no title in course.json`);
+      mod = { module: moduleId, title: moduleTitles.get(moduleId) || `Module ${moduleId}`, units: [] };
+      course.modules.push(mod);
+    }
+
+    let unit = unitOf.get(meta.unit);
+    if (!unit) {
+      unit = { unit: meta.unit, title: meta.unitTitle || meta.unit, label: `${meta.unit} - ${meta.unitTitle || meta.unit}`, topics: [] };
+      unitOf.set(meta.unit, unit);
+      mod.units.push(unit);
+    } else if (meta.unitTitle && meta.unitTitle !== unit.title) {
+      warnings.push(`${topicId}: unitTitle "${meta.unitTitle}" disagrees with "${unit.title}" used by earlier topics of ${meta.unit}`);
+    }
+
+    unit.topics.push({
+      topic: meta.topic || topicId, title: meta.title,
+      label: `${meta.topic || topicId} - ${meta.title}`,
       slides: meta.slides, exercises,
     });
   }
+  course.modules.sort((a, b) => byNumber(a.module, b.module));
+  for (const m of course.modules) {
+    m.units.sort((a, b) => byNumber(a.unit, b.unit));
+    for (const u of m.units) u.topics.sort((a, b) => byNumber(a.topic, b.topic));
+  }
+  const courses = new Map([[course.id, course]]);
 
   // ---- discover slide decks ----
   // A unit has a deck when the course repo has built one to slides/<unit>/index.html.
@@ -205,15 +250,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     ? fs.readdirSync(slidesDir).filter(d => fs.existsSync(path.join(slidesDir, d, 'index.html')))
     : []);
   for (const course of courses.values())
-    for (const u of course.units) {
-      if (u.slides) continue;                          // an explicit URL from _unit.json wins
+    for (const u of topicsOf(course)) {
+      if (u.slides) continue;                          // an explicit URL from _topic.json wins
       // index.html is named explicitly rather than relying on a directory index: S3 behind
       // CloudFront only applies defaultRootObject to the root, so `slides/1.2.3/` would
       // 404 in production, and a dev server answers it with the app's own index page -
       // which then loads the whole player inside the iframe.
-      if (decks.has(u.unit)) u.slides = `slides/${u.unit}/index.html`;
-      else if (fs.existsSync(path.join(slidesDir, u.unit)))
-        warnings.push(`${u.unit}: slides/${u.unit}/ has no index.html - deck not published`);
+      if (decks.has(u.topic)) u.slides = `slides/${u.topic}/index.html`;
+      else if (fs.existsSync(path.join(slidesDir, u.topic)))
+        warnings.push(`${u.topic}: slides/${u.topic}/ has no index.html - deck not published`);
     }
 
   // ---- load datasets ----
@@ -257,10 +302,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
 
   let computed = 0, failed = 0;
   for (const course of courses.values()) {
-    for (const u of course.units) {
+    for (const u of topicsOf(course)) {
       for (const ex of u.exercises) {
         if (ex.type !== 'coding' || !ex.dataset) continue;
-        if (!datasets[ex.dataset]) { warnings.push(`${u.unit} ${ex.file}: dataset "${ex.dataset}" not extracted yet`); continue; }
+        if (!datasets[ex.dataset]) { warnings.push(`${u.topic} ${ex.file}: dataset "${ex.dataset}" not extracted yet`); continue; }
         // An exercise's setup SQL builds the derived tables it needs on top of the
         // dataset. Applied once, to a copy, and dumped: every step then starts from a
         // database that already has them, and only exercises declaring setup pay for it.
@@ -269,7 +314,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           try {
             dump = await withSetup(dump, ex.setup);
           } catch (e) {
-            warnings.push(`${u.unit} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
+            warnings.push(`${u.topic} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
             failed++;
             continue;
           }
@@ -293,7 +338,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
             };
             computed++;
           } catch (e) {
-            warnings.push(`${u.unit} ${ex.file}: solution failed - ${String(e.message).split('\n')[0]}`);
+            warnings.push(`${u.topic} ${ex.file}: solution failed - ${String(e.message).split('\n')[0]}`);
             failed++;
           } finally { if (fresh) await db.close(); }
         }
@@ -313,7 +358,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       const dir = path.join(contentOut, course.id);
       fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
 
-      const used = new Set(course.units.flatMap(u => u.exercises.map(e => e.dataset)).filter(Boolean));
+      const used = new Set(topicsOf(course).flatMap(t => t.exercises.map(e => e.dataset)).filter(Boolean));
       const shipped = [];
       for (const d of used) {
         if (!datasets[d]) continue;
@@ -326,15 +371,22 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         datasets: shipped,
       }));
 
-      const all = course.units.flatMap(u => u.exercises);
+      const topics = topicsOf(course);
+      const all = topics.flatMap(t => t.exercises);
+      const units = course.modules.flatMap(m => m.units);
       manifest.push({
-        id: course.id, title: course.title, topic: course.topic,
-        units: course.units.map(u => ({ unit: u.unit, title: u.title, label: u.label, slides: u.slides })),
+        id: course.id, title: course.title,
+        modules: course.modules.map(m => ({
+          module: m.module, title: m.title,
+          units: m.units.map(u => ({ unit: u.unit, title: u.title, label: u.label })),
+        })),
         exercises: all.length,
         coding: all.filter(e => e.type === 'coding').length,
         mcq: all.filter(e => e.type === 'mcq').length,
       });
-      log(`  ${course.id}: ${course.units.length} units, ${all.length} exercises, datasets [${shipped.join(', ') || 'none'}]`);
+      log(`  ${course.id}: ${course.modules.length} module${course.modules.length === 1 ? '' : 's'}, ` +
+          `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
+          `datasets [${shipped.join(', ') || 'none'}]`);
     }
     fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
 

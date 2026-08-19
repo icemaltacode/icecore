@@ -120,19 +120,19 @@ async function cmdVerify() {
   let pass = 0, fail = 0, sample = null, dnd = 0, mcqSteps = 0, setups = 0;
   const bad = [];
   for (const course of courses) {
-    for (const unit of course.units) {
+    for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
       for (const ex of unit.exercises) {
         // Drag-and-drop has no SQL to run: the content itself is what gets checked.
         if (ex.type === 'dragdrop') {
           const problems = validateDragDrop(ex);
-          if (problems.length) bad.push(...problems.map(p => `${unit.unit} ${ex.file}: ${p}`));
+          if (problems.length) bad.push(...problems.map(p => `${unit.topic} ${ex.file}: ${p}`));
           else dnd++;
           continue;
         }
         if (ex.type !== 'coding') continue;
         // Step shape is checked before anything is run, and independently of the dataset:
         // a dropped question is invisible otherwise, because the other steps still pass.
-        for (const problem of stepProblems(ex)) { fail++; bad.push(`${unit.unit} ${ex.file}: ${problem}`); }
+        for (const problem of stepProblems(ex)) { fail++; bad.push(`${unit.topic} ${ex.file}: ${problem}`); }
         mcqSteps += (ex.steps || []).filter(st => st.kind === 'mcq').length;
 
         if (!ex.dataset || !datasets[ex.dataset]) continue;
@@ -141,14 +141,14 @@ async function cmdVerify() {
           try { await startingPoint(ex.dataset, ex.setup); }
           catch (e) {
             fail++;
-            bad.push(`${unit.unit} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
+            bad.push(`${unit.topic} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
             continue;
           }
           setups++;
         }
         for (const [i, step] of (ex.steps || []).entries()) {
           if (!step.solution) continue;
-          const label = `${unit.unit} ${ex.file}${ex.steps.length > 1 ? ` step ${i + 1}` : ''}`;
+          const label = `${unit.topic} ${ex.file}${ex.steps.length > 1 ? ` step ${i + 1}` : ''}`;
           if (!step.expected) { fail++; bad.push(`${label}: no expected result computed`); continue; }
           const v = compareResults(step.expected, await runQuery(ex.dataset, step.solution, ex.setup));
           if (v.pass) pass++; else { fail++; bad.push(`${label}: ${v.reason}`); }

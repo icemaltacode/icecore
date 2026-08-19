@@ -36,12 +36,34 @@ A course repo supplies:
 
 ```
 content/
-  exercises/<unit>/_unit.json     { unit, title, course, courseTitle, topic }
-  exercises/<unit>/NN-slug.md     one exercise: frontmatter + markdown sections
-  data/<table>.sql                CREATE TABLE + INSERTs
-  slides/<unit>/                  optional: a built slide deck for that unit
-  courses.json                    importer-only: source slug -> ICE unit mapping
+  course.json                      { id, title, modules: [{ module, title }] }
+  exercises/<topic>/_topic.json    { topic, title, unit, unitTitle }
+  exercises/<topic>/NN-slug.md     one exercise: frontmatter + markdown sections
+  data/<table>.sql                 CREATE TABLE + INSERTs
+  slides/<topic>/                  optional: a built slide deck for that topic
+  courses.json                     importer-only: source slug -> ICE unit mapping
 ```
+
+### The shape of a course
+
+**Course > Module > Unit > Topic > exercises.** One content repo is one course.
+
+| Level | Is | Numbered | Example |
+|---|---|---|---|
+| Course | the whole programme | -- | ICExDataCamp Data Analyst |
+| Module | a block of related units | `1` | Associate Data Analyst in SQL |
+| Unit | a subject within a module | `1.1` | Introduction to SQL |
+| Topic | a session's worth of it | `1.1.1` | Relational Databases |
+
+Only topics are directories, and only topics hold exercises. A topic names its unit and unit
+title in `_topic.json`; its module is the unit number's first component, so nothing is stated
+twice. Module titles come from `course.json`, and a unit whose topics disagree about its
+title is a warning rather than a silent pick.
+
+Numbers sort numerically, so unit 1.10 follows 1.9 rather than 1.1.
+
+(For anyone importing from DataCamp: their *track* is a module, their *course* is a unit,
+their *chapter* is a topic.)
 
 ### Exercise types
 

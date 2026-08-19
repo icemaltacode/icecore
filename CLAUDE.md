@@ -22,6 +22,16 @@ that could be shown externally or open-sourced.
 - `bin/icecore.mjs` — the CLI. `root` and `publicDir` are supplied here, not in
   `app/vite.config.js`, so the same app builds against any course repo.
 
+## The shape of a course
+
+**Course > Module > Unit > Topic > exercises**, numbered `1` / `1.1` / `1.1.1`. One content
+repo is one course. Only topics are directories and only topics hold exercises; the levels
+above exist so a few hundred exercises stay navigable.
+
+Use these words exactly -- a fourth vocabulary is how the old model ended up calling a unit
+a course and a topic a unit. Importing from DataCamp: their *track* is a module, their
+*course* is a unit, their *chapter* is a topic.
+
 ## Grading semantics
 
 Result-set comparison, not pattern matching on SQL:

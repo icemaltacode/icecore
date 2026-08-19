@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { loadManifest, loadCourse } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
 import { load as loadProgress, mark as markProgress } from './progress.js';
@@ -24,17 +24,38 @@ const showAdmin = ref(false);
 const showSlides = ref(false);
 /* The deck belongs to the unit the current exercise sits in, so it follows the student
  * through the unit and swaps when they cross into the next one. */
-const currentUnit = computed(() =>
-  (course.value?.units || []).find(u => u.exercises.some(e => e.id === currentId.value)));
+const currentTopic = computed(() =>
+  topics.value.find(t => t.exercises.some(e => e.id === currentId.value)));
+const unitOfCurrent = computed(() => (course.value?.modules || [])
+  .flatMap(m => m.units).find(u => u.topics.some(t => t === currentTopic.value)));
+
+// Units collapse: one flat list of every exercise in a course is unusable. The unit
+// holding the current exercise opens itself, so moving through a course never needs a click
+// in the sidebar.
+const openUnits = ref(new Set());
+const toggleUnit = u => {
+  const next = new Set(openUnits.value);
+  next.has(u) ? next.delete(u) : next.add(u);
+  openUnits.value = next;
+};
+watch(unitOfCurrent, u => { if (u) openUnits.value = new Set([...openUnits.value, u.unit]); });
+
+const doneIn = t => t.exercises.filter(e => solved.value.has(e.id)).length;
+const unitDone = u => u.topics.reduce((n, t) => n + doneIn(t), 0);
+const unitTotal = u => u.topics.reduce((n, t) => n + t.exercises.length, 0);
+
 const slidesUrl = computed(() => {
-  const s = currentUnit.value?.slides;
+  const s = currentTopic.value?.slides;
   return s ? (/^https?:\/\//.test(s) ? s : `${import.meta.env.BASE_URL}${s}`) : null;
 });
 const allCourses = ref([]);   // unfiltered - an admin enrols people onto courses they aren't on
 const isAdmin = computed(() => session.admin);
 
-const flat = computed(() =>
-  (course.value?.units || []).flatMap(u => u.exercises.map(e => ({ ...e, unitId: u.unit }))));
+/* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
+ * above exist to make 200-odd exercises navigable. */
+const topics = computed(() =>
+  (course.value?.modules || []).flatMap(m => m.units.flatMap(u => u.topics)));
+const flat = computed(() => topics.value.flatMap(t => t.exercises.map(e => ({ ...e, topicId: t.topic }))));
 const current = computed(() => flat.value.find(e => e.id === currentId.value));
 const index = computed(() => flat.value.findIndex(e => e.id === currentId.value));
 const total = computed(() => flat.value.length);
@@ -122,9 +143,7 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
 
       <select v-if="manifest.length > 1" class="courses"
               :value="course?.id" @change="open($event.target.value)">
-        <option v-for="c in manifest" :key="c.id" :value="c.id">
-          {{ c.topic }} &mdash; {{ c.title }}
-        </option>
+        <option v-for="c in manifest" :key="c.id" :value="c.id">{{ c.title }}</option>
       </select>
 
       <div class="progress" v-if="total">
@@ -133,16 +152,30 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
       </div>
 
       <nav>
-        <template v-for="u in course?.units || []" :key="u.unit">
-          <h4>{{ u.label }}</h4>
-          <button
-            v-for="e in u.exercises" :key="e.id"
-            class="navitem"
-            :class="{ active: e.id === currentId, done: solved.has(e.id) }"
-            @click="currentId = e.id">
-            <span class="badge">{{ solved.has(e.id) ? '✓' : (badgeFor[e.type] || 'SQL') }}</span>
-            <span class="label">{{ e.title }}</span>
-          </button>
+        <template v-for="m in course?.modules || []" :key="m.module">
+          <h4 class="module">Module {{ m.module }} &middot; {{ m.title }}</h4>
+
+          <template v-for="u in m.units" :key="u.unit">
+            <button class="unit" :class="{ open: openUnits.has(u.unit) }" @click="toggleUnit(u.unit)">
+              <span class="caret">{{ openUnits.has(u.unit) ? '▾' : '▸' }}</span>
+              <span class="label">{{ u.unit }} {{ u.title }}</span>
+              <span class="tally">{{ unitDone(u) }}/{{ unitTotal(u) }}</span>
+            </button>
+
+            <template v-if="openUnits.has(u.unit)">
+              <template v-for="t in u.topics" :key="t.topic">
+                <h5>{{ t.topic }} {{ t.title }}</h5>
+                <button
+                  v-for="e in t.exercises" :key="e.id"
+                  class="navitem"
+                  :class="{ active: e.id === currentId, done: solved.has(e.id) }"
+                  @click="currentId = e.id">
+                  <span class="badge">{{ solved.has(e.id) ? '✓' : (badgeFor[e.type] || 'SQL') }}</span>
+                  <span class="label">{{ e.title }}</span>
+                </button>
+              </template>
+            </template>
+          </template>
         </template>
       </nav>
 
@@ -184,7 +217,7 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
 
     <SlidesPanel
       v-if="showSlides && slidesUrl && !showAdmin"
-      :src="slidesUrl" :label="currentUnit?.label"
+      :src="slidesUrl" :label="currentTopic?.label"
       @close="showSlides = false" />
   </div>
 </template>
@@ -205,8 +238,18 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .bar i { display: block; height: 100%; background: var(--ice-primary); transition: width .3s; }
 .progress small { color: var(--ice-fg-muted); font-size: 11px; display: block; margin-top: 6px; }
 nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
-h4 { margin: 14px 8px 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-     color: var(--ice-fg-muted); }
+h4.module { margin: 18px 8px 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+            color: var(--ice-primary-strong); }
+h5 { margin: 10px 8px 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+     color: var(--ice-fg-muted); font-weight: 500; }
+.unit { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left;
+        padding: 7px 8px; border-radius: 8px; border: 0; background: none; cursor: pointer;
+        color: var(--ice-fg); font: inherit; font-size: 13px; font-weight: 600; }
+.unit:hover { background: var(--ice-bg); }
+.caret { flex: none; width: 10px; color: var(--ice-fg-muted); font-size: 10px; }
+.tally { flex: none; margin-left: auto; font-size: 10px; font-family: var(--ice-font-mono);
+         color: var(--ice-fg-muted); }
+.navitem { padding-left: 26px; }
 .navitem { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
            padding: 7px 8px; border-radius: 8px; border: 0; background: none; cursor: pointer;
            color: var(--ice-fg-muted); font: inherit; font-size: 13px; }
