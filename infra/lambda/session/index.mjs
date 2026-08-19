@@ -5,8 +5,16 @@
  * subsequent /content/* and /slides/* requests succeed, plus the list of courses the
  * student is enrolled on.
  *
- * The cookies are signed for the host the request arrived on, so the function never needs
- * to know the distribution's domain name and the two can be deployed independently.
+ * The cookies are signed for the origin the caller names, because nothing on this side of
+ * the wire knows it. The distribution's domain can't be an environment variable here — the
+ * distribution depends on the API which depends on this function, so referencing it back
+ * would be a cycle — and the Host header is no help either: /api/* uses the
+ * AllViewerExceptHostHeader origin request policy, which is what lets API Gateway work
+ * behind CloudFront at all, and which replaces the viewer's Host with the API's own domain.
+ *
+ * Trusting the caller for this is safe. A signature is only honoured by a distribution that
+ * trusts our key group, which is ours alone, so cookies minted for any other host are
+ * worthless — naming one gains an attacker nothing they could not already have.
  */
 import { getSignedCookies } from '@aws-sdk/cloudfront-signer';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
@@ -43,21 +51,39 @@ const isAdmin = claims => {
   return Array.isArray(groups) ? groups.includes('admins') : String(groups ?? '').includes('admins');
 };
 
+/** The site the caller is on: what they tell us, falling back to Origin, then Referer. */
+function viewerOrigin(event) {
+  let body = {};
+  try { body = JSON.parse(event.body || '{}'); } catch { /* an absent body is fine */ }
+  const h = event.headers || {};
+  for (const candidate of [body.origin, h.origin, h.referer]) {
+    try {
+      const u = new URL(candidate);
+      if (u.protocol === 'https:') return u.origin;
+    } catch { /* try the next one */ }
+  }
+  return null;
+}
+
 export async function handler(event) {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const sub = claims?.sub;
   if (!sub) return { statusCode: 401, body: JSON.stringify({ error: 'not signed in' }) };
 
-  const host = event.headers?.host;
-  if (!host) return { statusCode: 400, body: JSON.stringify({ error: 'no host header' }) };
+  const origin = viewerOrigin(event);
+  if (!origin) return { statusCode: 400, body: JSON.stringify({ error: 'could not determine the site origin' }) };
 
   const expires = new Date(Date.now() + SESSION_HOURS * 3600 * 1000);
   const signed = getSignedCookies({
-    url: `https://${host}/*`,
+    url: `${origin}/*`,
     keyPairId: process.env.KEY_PAIR_ID,
     privateKey: await signingKey(),
     dateLessThan: expires.toISOString(),
   });
+
+  // Logged because a mismatch here is invisible from outside: the cookies get set and look
+  // perfectly fine, and every content request simply returns 403.
+  console.log(`signed ${origin}/* for ${sub} until ${expires.toISOString()}`);
 
   const attrs = `Path=/; Secure; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}`;
   return {

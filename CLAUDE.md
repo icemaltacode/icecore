@@ -67,6 +67,12 @@ Don't re-strip it.
 - Booting a PGlite instance is slow (seconds in Node). That's why expected results are
   precomputed at build time rather than graded live; don't reintroduce per-check database
   creation.
+- **The session Lambda cannot learn the site's domain from the `Host` header.** `/api/*`
+  uses CloudFront's `AllViewerExceptHostHeader` origin request policy — required for an API
+  Gateway origin — which replaces the viewer's `Host` with the API's own domain. Signing
+  cookies for that host produces cookies that look perfectly valid and make every content
+  request 403. The client sends its `location.origin` instead. It can't be an environment
+  variable: the distribution depends on the API, which depends on the function.
 - **An exercise's `## Setup` SQL has to be applied in both places** — at build time before
   precomputing expected results, and in the player before the student's query runs.
   Build-time only means an exercise that graded fine tells the student the table doesn't

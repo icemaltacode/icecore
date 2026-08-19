@@ -80,7 +80,9 @@ export function completeNewPassword(password) {
 /** Trade the token for signed cookies. Returns the caller's courses and admin flag. */
 export async function startSession(idJwt) {
   token = idJwt;
-  const body = await api('session', { method: 'POST' });
+  // The session endpoint cannot work out which site to sign cookies for — CloudFront gives
+  // API Gateway origins its own Host header — so tell it.
+  const body = await api('session', { method: 'POST', body: { origin: location.origin } });
   Object.assign(session, body);
   return session;
 }
