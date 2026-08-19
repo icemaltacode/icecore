@@ -1,11 +1,83 @@
 # Keith's notes
 
-We have migrated all the MCQs, re-ordering, drag and drop and SQL exercises to the new platform. However, 22 practical exercises across 1.7 (introduction to statistics), 1.10 (Understanding data Visualization) and 1.11 (Data Communication Concepts) include an embedded web app. For example, some sort of dashboard to tweak the parameters of a chart and see how it changes, with accompanying MCQ.
+So the queue is: 
+- [ ] 1.7's 34 exercises, 
+- [ ] the 11 image ones, 
+- [ ] the 5 broken published ones, 
+- [ ] then the 9 presentation apps
+- [ ] then the 19 interactive apps,
 
-How can we tackle these?
+## Images in questions
+
+Does it work today? No. md.js had a link rule but no image rule, so ![alt](x.png) rendered as a literal ! followed by a link — and nothing served the file. It works now, verified in a browser: the image element renders, the request returns 200, and the bitmap actually decodes.
+
+Where they live — your proposed shape, unchanged:
 
 
-ALSO TO REMEMBER: THE MCQS for 1.7 ARE MISSING!!!!!!!
+content/exercises/<topic>/images/venn.png     →  dist/content/<course>/images/<topic>/venn.png
+Referenced by bare filename: ![Venn diagram](venn.png). The markdown never names the course or the deployment path — the player resolves it against the topic's image directory. Absolute and http(s):// sources pass through untouched.
+
+Putting them under content/ answers your deploy concern: that path is already behind the CloudFront key group and already carried by the content sync, so figures inherit private access and CI publishing for free. No change to publish.yml, the distribution, or the cookie scoping. Only referenced files ship — I left an unused PNG in the fixture and it was correctly skipped.
+
+Size — no concern at that scale. They're fetched per-exercise by the browser, not bundled, so they cost nothing until someone opens the exercise.
+
+One addition beyond what you asked, because it's the actual bug: a reference with no file behind it fails verify. A missing figure is invisible otherwise — the prompt still reads plausibly and the exercise still grades correctly, which is precisely how five exercises reached production with their diagrams gone. build also reports an image count in its summary line.
+
+So for 1.10 and 1.11, ship the images alongside and verify will tell you if any reference is dangling.
+
+One thing worth deciding on your side: alt text. I render it, and for "Interpreting histograms" the alt text is the difference between a screen-reader user having an exercise and having nothing. Worth writing properly rather than letting the converter emit ![](fig1.png).
+
+## The 28 embedded-app exercises
+
+**All 28 are rippable.** The apps are public static bundles — no login, no API — at a
+predictable URL: `content-embedded-apps.datacamp-learn-apps.com/course/<course_id>/<app>/index.html`.
+Each is an 882-byte shell plus a ~220KB JS bundle, a stylesheet and two fonts. `curl` gets
+them today.
+
+Two routes, and the split falls exactly along course lines:
+
+- **Presentation (9, all in 1.11)** — the widget only reveals or compares fixed content.
+  The text sits in the JS bundle as plain strings, so lift it into the exercise prompt and
+  the question becomes an ordinary MCQ. No platform work.
+- **Interactive (19, all of 1.7 and 1.10)** — the widget recomputes or redraws from input
+  and the answer depends on what changed. Mirror the bundle into the course repo and embed
+  it. Needs the platform to host an app inside an exercise, and a decision on shipping
+  DataCamp's brand fonts.
+
+Counts were 22 until 1.7 was checked: it was written off as slides-only but holds 6 apps,
+plus 34 drag-and-drop and MCQ exercises nobody has ripped.
+
+| Topic | Chapter > Exercise | URL | App | Type | Can we rip it? |
+|---|---|---|---|---|---|
+| 1.7 | Summary Statistics > Choosing a measure | [open](https://campus.datacamp.com/courses/introduction-to-statistics/summary-statistics-8a336d12-cf3c-4ac9-877b-581087f672cd?ex=7) | `mean-median-explorer` | Interactive | Yes — mirror the bundle, embed it |
+| 1.7 | Summary Statistics > London Boroughs with most frequent crimes | [open](https://campus.datacamp.com/courses/introduction-to-statistics/summary-statistics-8a336d12-cf3c-4ac9-877b-581087f672cd?ex=8) | `borough-crime-ranker` | Interactive | Yes — mirror the bundle, embed it |
+| 1.7 | Probability and distributions > Chances of the next sale being more than the mean | [open](https://campus.datacamp.com/courses/introduction-to-statistics/probability-and-distributions?ex=3) | `probability-calculator` | Interactive | Yes — mirror the bundle, embed it |
+| 1.7 | Probability and distributions > Sample mean vs. Theoretical mean | [open](https://campus.datacamp.com/courses/introduction-to-statistics/probability-and-distributions?ex=9) | `sample-mean-simulator` | Interactive | Yes — mirror the bundle, embed it |
+| 1.7 | More Distributions and the Central Limit Theorem > Visualizing sampling distributions | [open](https://campus.datacamp.com/courses/introduction-to-statistics/more-distributions-and-the-central-limit-theorem-bed4b331-74c3-4827-a96f-9954c24ecf4e?ex=11) | `clt-visualizer` | Interactive | Yes — mirror the bundle, embed it |
+| 1.7 | Correlation and Hypothesis Testing > Identifying correlation between variables | [open](https://campus.datacamp.com/courses/introduction-to-statistics/correlation-and-hypothesis-testing?ex=9) | `correlation-explorer` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | Visualizing distributions > Adjusting bin width | [open](https://campus.datacamp.com/courses/understanding-data-visualization/visualizing-distributions?ex=6) | `histogram-bin-width` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | Visualizing distributions > Ordering box plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/visualizing-distributions?ex=9) | `box-plot-ordering` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | Visualizing two variables > Trends with scatter plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/visualizing-two-variables-2?ex=3) | `scatter-trend-lines` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | Visualizing two variables > Interpreting bar plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/visualizing-two-variables-2?ex=8) | `bar-plot-explorer` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | Visualizing two variables > Sorting dot plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/visualizing-two-variables-2?ex=12) | `dot-plot-sorting` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | The color and the shape > Another dimension for scatter plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/the-color-and-the-shape?ex=2) | `scatter-dimensions` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | The color and the shape > Another dimension for line plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/the-color-and-the-shape?ex=3) | `line-dimensions` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | The color and the shape > Eye-catching colors | [open](https://campus.datacamp.com/courses/understanding-data-visualization/the-color-and-the-shape?ex=5) | `color-perception` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | The color and the shape > Qualitative, sequential, diverging | [open](https://campus.datacamp.com/courses/understanding-data-visualization/the-color-and-the-shape?ex=6) | `color-scale-selector` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | The color and the shape > Highlighting data | [open](https://campus.datacamp.com/courses/understanding-data-visualization/the-color-and-the-shape?ex=7) | `data-highlighting` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | 99 problems but a plot ain't one of them > Bar plot axes | [open](https://campus.datacamp.com/courses/understanding-data-visualization/99-problems-but-a-plot-aint-one-of-them?ex=5) | `bar-plot-axes` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | 99 problems but a plot ain't one of them > Dual axes | [open](https://campus.datacamp.com/courses/understanding-data-visualization/99-problems-but-a-plot-aint-one-of-them?ex=6) | `dual-axes-explorer` | Interactive | Yes — mirror the bundle, embed it |
+| 1.10 | 99 problems but a plot ain't one of them > Multiple plots | [open](https://campus.datacamp.com/courses/understanding-data-visualization/99-problems-but-a-plot-aint-one-of-them?ex=9) | `multi-plot-dashboard` | Interactive | Yes — mirror the bundle, embed it |
+| 1.11 | Storytelling with Data > Diagnose the data story | [open](https://campus.datacamp.com/courses/data-communication-concepts/storytelling-with-data?ex=3) | `story-snippet-analyzer` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Storytelling with Data > Translate for the marketing director | [open](https://campus.datacamp.com/courses/data-communication-concepts/storytelling-with-data?ex=5) | `jargon-translator` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Storytelling with Data > Choose the right chart | [open](https://campus.datacamp.com/courses/data-communication-concepts/storytelling-with-data?ex=10) | `chart-type-explorer` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Preparing to Communicate the Data > Show the right numbers | [open](https://campus.datacamp.com/courses/data-communication-concepts/preparing-to-communicate-the-data?ex=6) | `metric-type-explorer` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Preparing to Communicate the Data > Spot the redesign gap | [open](https://campus.datacamp.com/courses/data-communication-concepts/preparing-to-communicate-the-data?ex=9) | `chart-redesign` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Structuring Written Reports > Pick the right report | [open](https://campus.datacamp.com/courses/data-communication-concepts/structuring-written-reports?ex=3) | `report-format-comparison` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Structuring Written Reports > Spot the writing gap | [open](https://campus.datacamp.com/courses/data-communication-concepts/structuring-written-reports?ex=9) | `sentence-cleanup` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Building Compelling Oral Presentations > Choose the purpose | [open](https://campus.datacamp.com/courses/data-communication-concepts/building-compelling-oral-presentations?ex=2) | `presentation-purpose-explorer` | Presentation | Yes — lift the text, ship as a plain MCQ |
+| 1.11 | Building Compelling Oral Presentations > Finish the slide | [open](https://campus.datacamp.com/courses/data-communication-concepts/building-compelling-oral-presentations?ex=7) | `slide-redesign` | Presentation | Yes — lift the text, ship as a plain MCQ |
+
 
 # icecore backlog
 
@@ -108,9 +180,7 @@ Nothing outstanding. Questions resolved here move up into *Decisions taken*.
 - [x] **Decks are discovered, not declared** — a unit has one when
       `content/slides/<unit>/index.html` exists. `slides:` in `_unit.json` still overrides
       with an absolute URL for a deck hosted elsewhere.
-- [ ] **A `slides:build` script in the course repo** that builds one static Slidev deck per
-      unit (`slidev build unit-1.2.3.md --base /slides/1.2.3/`). Only a dev-server script
-      exists today, so the `just slides` recipe runs that instead.
+- [x] **`slides:build` exists in the course repo** and builds one deck per unit entry.
 - [x] **Decks publish with the content** — `build` copies `content/slides/<unit>/` to
       `dist/slides/<unit>/`, so a deck and its exercises deploy together behind the same
       auth.
@@ -182,11 +252,10 @@ the session endpoint can set cookies that content requests will actually send.
 - [x] **HTTP API** with a Cognito JWT authorizer, routed through the distribution.
 - [x] **Secrets**: `just openai-key` stores the key in Secrets Manager, reading it from
       stdin so it stays out of shell history. Still to be run.
-- [ ] **Confirm the hint call on first deploy.** The Lambda uses `gpt-5.6-luna` at `low`
-      reasoning effort (override with `-c openaiModel=` / `-c reasoningEffort=`) on
-      `/v1/chat/completions`, capped at 2000 completion tokens because reasoning tokens
-      count against that cap. It logs OpenAI's error body, so a rejected parameter is one
-      CloudWatch line. Untestable before the stack exists.
+- [x] **Hint call confirmed against the deployed stack.** `gpt-5.6-luna` at `low` reasoning
+      effort on `/v1/chat/completions` with `max_completion_tokens` — every parameter
+      accepted, a usable nudge returned first time. The empty-submission guard fires before
+      the counter is spent, and the rate-limit row carries a TTL three days out.
 - [x] **CloudWatch** — a month's log retention on every function, plus five alarms: one per
       Lambda for unhandled errors (each answers its own error cases with a status code, so a
       thrown error is a bug) and one for CloudFront 5xx. Deliberately sparse. They go
@@ -199,5 +268,9 @@ the session endpoint can set cookies that content requests will actually send.
       `icecore-publisher` role the stack creates, so no access key lives in any repo.
 - [x] **Content publishing is separate from `cdk deploy`** — the publisher role can write
       objects and invalidate the CDN, and has no other permission.
-- [ ] **A course repo must depend on `github:icemaltacode/icecore`**, not `file:../icecore`,
-      before its workflow can install in CI.
+- [x] **The course repo depends on `github:icemaltacode/icecore`.**
+- [ ] **A platform change needs the course repo's lockfile refreshed.** npm pins a git
+      dependency to a commit, so CI keeps installing whatever `package-lock.json` names
+      however many times the platform is pushed. It is currently pinned to `d66e9e1`, which
+      predates the volatile-step guard and exercise images. `npm update icecore` in the
+      content repo after any platform change that CI needs.
