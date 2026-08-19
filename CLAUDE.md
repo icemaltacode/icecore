@@ -35,16 +35,51 @@ Result-set comparison, not pattern matching on SQL:
   exercise broke immediately.)
 - `expected.rows` is capped at 1000; past the cap only columns and counts are checked.
 
-**Reference solutions must never reach the browser.** `build` strips `solution` from the
-output and `verify` builds in memory, so answers don't land on disk either. If you add a
-code path that ships exercise data, check it doesn't reintroduce them.
+**Not everything is graded by result set.** `dragdrop` exercises have no SQL and no
+dataset: they're graded structurally by `app/src/dragdrop.js`, which is pure and shared with
+the CLI the same way `compare.js` is. Don't route them through PGlite or give them
+precomputed expected results — `verify` validates their *content* instead (every item in
+exactly one zone, nothing duplicated).
+
+**Reference solutions ship to the browser, deliberately.** This reversed an earlier rule.
+These assessments are formative, not summative, and the player offers a "show answer"
+affordance anyway, so hiding the solution bought almost nothing while forcing a private
+server-side content artifact and a fatter hint service. `build` writes `solution` and the
+`checks:` frontmatter into `index.json`; the hint Lambda gets everything from the client.
+Don't re-strip it.
 
 ## Gotchas
 
 - `@electric-sql/pglite` must stay in `optimizeDeps.exclude` — it ships wasm and breaks if
-  pre-bundled.
+  pre-bundled. Every contrib entry point needs its own entry too: `exclude` matches the
+  import specifier, not the package.
+- **Contrib extensions live in [`src/extensions.mjs`](src/extensions.mjs)** — one list, used
+  by all three PGlite call sites and by `vite.config.js`'s `optimizeDeps.exclude`. Adding one
+  is a single line there. They must be registered on *every* instance, not just the one that
+  seeds a dataset: a data dir dumped with an extension installed still fails to load without
+  the wasm module present (`could not access file "$libdir/tablefunc"`).
+- Registering an extension also makes it appear in `pg_available_extensions`, with
+  `installed_version` set only once `CREATE EXTENSION` has run — so that catalogue reflects
+  the list above, not the ~30 a stock PostgreSQL server offers.
+- **Don't register all 32 bundled extensions.** Each is emitted as a separate browser asset
+  and they total ~2.1MB (pgcrypto alone is 1.1MB), plus ~220ms per instance boot against
+  ~45ms for the current three.
 - Booting a PGlite instance is slow (seconds in Node). That's why expected results are
   precomputed at build time rather than graded live; don't reintroduce per-check database
   creation.
+- **An exercise's `## Setup` SQL has to be applied in both places** — at build time before
+  precomputing expected results, and in the player before the student's query runs.
+  Build-time only means an exercise that graded fine tells the student the table doesn't
+  exist. It's applied to a *copy* of the seeded dataset and dumped, never by booting a
+  fresh instance, and everything the player caches downstream of a dataset is keyed by the
+  setup too: two exercises on one dataset can define the same table name differently.
+- **Only a ```sql fence in `## Setup` is setup.** That section also holds DataCamp's Python
+  `connect()` line in most imported exercises. `codeIn` matches any language; `sqlIn` is the
+  one to use here.
+- **Drag-and-drop item ids must be unique across the whole exercise**, not per zone.
+  Grading matches a placement to an item by id, so two zones each owning an `avg` would let
+  an item dropped in the wrong zone score as correct in both. `withIds` takes a shared
+  `used` map for exactly this, and `validate()` re-checks it as a backstop — the check looks
+  redundant and is not.
 - Run `icecore verify` against a real course repo after touching the builder or the grader.
   It's the only end-to-end check.
