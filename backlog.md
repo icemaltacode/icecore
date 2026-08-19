@@ -1,3 +1,7 @@
+# Keith's notes
+
+- the practical exercises for 1.7 (introduction to statistics) include some custom web app. What to do ? Replicate? Or remove let's practice from slides?
+
 # icecore backlog
 
 Working notes for taking the platform from a local static player to a hosted, authenticated

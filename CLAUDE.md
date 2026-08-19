@@ -67,6 +67,12 @@ Don't re-strip it.
 - Booting a PGlite instance is slow (seconds in Node). That's why expected results are
   precomputed at build time rather than graded live; don't reintroduce per-check database
   creation.
+- **Signed cookies covering more than one file need a *custom* policy.** Passing
+  `dateLessThan` to `getSignedCookies` yields a canned policy, which CloudFront rebuilds
+  from `CloudFront-Expires` and the URL being requested — so a signed `…/*` matches nothing
+  and every request 403s, with cookies that look entirely correct. Build the policy JSON and
+  pass `policy`; the giveaway is whether the cookies carry `CloudFront-Policy` (custom) or
+  `CloudFront-Expires` (canned).
 - **The session Lambda cannot learn the site's domain from the `Host` header.** `/api/*`
   uses CloudFront's `AllViewerExceptHostHeader` origin request policy — required for an API
   Gateway origin — which replaces the viewer's `Host` with the API's own domain. Signing

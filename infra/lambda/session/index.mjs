@@ -74,11 +74,21 @@ export async function handler(event) {
   if (!origin) return { statusCode: 400, body: JSON.stringify({ error: 'could not determine the site origin' }) };
 
   const expires = new Date(Date.now() + SESSION_HOURS * 3600 * 1000);
+
+  // A custom policy, not `dateLessThan`. Passing dateLessThan produces a *canned* policy,
+  // and CloudFront rebuilds a canned policy from CloudFront-Expires and the URL actually
+  // being requested — so the signature only matches when the signed resource was that exact
+  // URL. A wildcard cannot survive that round trip and every request 403s. Only a custom
+  // policy carries the resource pattern with it, in the CloudFront-Policy cookie.
   const signed = getSignedCookies({
-    url: `${origin}/*`,
     keyPairId: process.env.KEY_PAIR_ID,
     privateKey: await signingKey(),
-    dateLessThan: expires.toISOString(),
+    policy: JSON.stringify({
+      Statement: [{
+        Resource: `${origin}/*`,
+        Condition: { DateLessThan: { 'AWS:EpochTime': Math.floor(expires.getTime() / 1000) } },
+      }],
+    }),
   });
 
   // Logged because a mismatch here is invisible from outside: the cookies get set and look
