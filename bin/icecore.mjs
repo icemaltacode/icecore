@@ -117,7 +117,7 @@ async function cmdVerify() {
     } finally { await db.close(); }
   };
 
-  let pass = 0, fail = 0, sample = null, dnd = 0, mcqSteps = 0, setups = 0;
+  let pass = 0, fail = 0, sample = null, dnd = 0, mcqSteps = 0, setups = 0, loose = 0;
   const bad = [];
   for (const course of courses) {
     for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
@@ -152,7 +152,9 @@ async function cmdVerify() {
           if (!step.expected) { fail++; bad.push(`${label}: no expected result computed`); continue; }
           const v = compareResults(step.expected, await runQuery(ex.dataset, step.solution, ex.setup));
           if (v.pass) pass++; else { fail++; bad.push(`${label}: ${v.reason}`); }
-          sample ||= { step, dataset: ex.dataset, setup: ex.setup };
+          if (step.nondeterministic) loose++;
+          // The negative control needs a step whose values are actually checked.
+          if (!step.nondeterministic) sample ||= { step, dataset: ex.dataset, setup: ex.setup };
         }
       }
     }
@@ -169,6 +171,7 @@ async function cmdVerify() {
   if (dnd) console.log(`drag-and-drop exercises with a sound answer: ${dnd}`);
   if (mcqSteps) console.log(`multiple-choice steps: ${mcqSteps}`);
   if (setups) console.log(`exercises with setup SQL that runs: ${setups}`);
+  if (loose) console.log(`steps graded on shape only (non-deterministic): ${loose}`);
   console.log(`failures: ${fail}`);
   console.log(`negative control (wrong query rejected): ${neg}`);
   if (bad.length) { console.log('\n' + bad.join('\n')); process.exit(1); }

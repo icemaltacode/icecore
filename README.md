@@ -73,6 +73,24 @@ touches a database.
 **`mcq`** — `## Options` as a numbered list, the right one marked `← correct`, with an
 optional `## Feedback` list in the same order.
 
+**Non-deterministic steps.** A step whose result can't be reproduced — anything built on
+`now()`, `random()`, and so on — is marked in the step itself:
+
+```markdown
+### Nondeterministic
+
+Measured against now(), so the value moves every second.
+```
+
+Its values are then not compared: the expected set was computed at build time and the
+student's runs minutes or months later, so the two can only ever agree on shape. Column
+names and row count are still checked, so a wrong query still fails.
+
+Marked per **step**, not per exercise, and never inferred from the SQL. `now()` inside a
+`WHERE` clause can still yield a fixed result set, and a query containing nothing volatile
+can still be non-deterministic. `verify` reports how many steps are graded this way, because
+they are weaker checks and shouldn't spread quietly.
+
 **Per-exercise setup.** A `## Setup` section containing a ```` ```sql ```` fence runs on top
 of the dataset before anything else, for that exercise only:
 

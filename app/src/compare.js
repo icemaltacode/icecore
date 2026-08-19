@@ -29,6 +29,14 @@ export function compareResults(expected, actual) {
     return { pass: false, result: actual,
              reason: `Expected ${expected.rowCount} row${expected.rowCount === 1 ? '' : 's'}, your query returned ${actual.rows.length}.` };
 
+  // A step whose solution calls now(), random() or similar cannot have its values checked:
+  // the expected set was computed at build time and the student's runs minutes or months
+  // later, so the two can only ever agree on shape. Marked per step in the markdown, not
+  // guessed from the SQL - `now()` in a WHERE clause may still give a fixed result set,
+  // and a query with no volatile call at all can still be non-deterministic.
+  if (expected.nondeterministic)
+    return { pass: true, result: actual, reason: 'Correct - right columns and row count.' };
+
   // expected.rows is capped for size; past the cap, columns and counts are all we can check
   const cap = expected.rows.length;
   const a = expected.rows.map(r => rowKey(r, expected.fields));

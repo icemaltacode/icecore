@@ -139,6 +139,9 @@ export function parseExercise(file, text) {
       if (s.title === 'Sample') cur.sample = codeIn(s.body);
       else if (s.title === 'Solution') cur.solution = codeIn(s.body);
       else if (s.title === 'Hint') cur.hint = s.body;
+      // Marks the step's result as unreproducible - see compare.js. The body is a note to
+      // whoever reads the file later, not something the player shows.
+      else if (s.title === 'Nondeterministic') cur.nondeterministic = s.body?.trim() || true;
       else if (s.title === 'Options') Object.assign(cur, { kind: 'mcq' }, optionsIn(s.body));
       else if (s.title === 'Feedback') cur.feedback = orderedIn(s.body);
     }
@@ -331,9 +334,12 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
             const last = res[res.length - 1];
             step.expected = {
               fields: (last?.fields || []).map(f => f.name),
-              rows: (last?.rows || []).slice(0, 1000),
+              // Values are deliberately not carried for a non-deterministic step: they
+              // would be compared against nothing and only mislead anyone reading the JSON.
+              rows: step.nondeterministic ? [] : (last?.rows || []).slice(0, 1000),
               rowCount: last?.rows?.length ?? 0,
               ordered: /\border\s+by\b/i.test(step.solution),
+              nondeterministic: !!step.nondeterministic,
               ddl: fresh,
             };
             computed++;

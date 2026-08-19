@@ -44,6 +44,11 @@ Result-set comparison, not pattern matching on SQL:
   the reference solution against the student's own database, which the `CREATE VIEW`
   exercise broke immediately.)
 - `expected.rows` is capped at 1000; past the cap only columns and counts are checked.
+- A step marked `### Nondeterministic` is graded on columns and row count alone. Expected
+  results are computed at build time, so anything resting on `now()` or `random()` can never
+  match later. It is declared per step and never inferred from the SQL -- `now()` in a
+  `WHERE` clause may still give a fixed result set, and one step of an exercise being
+  unreproducible says nothing about its siblings.
 
 **Not everything is graded by result set.** `dragdrop` exercises have no SQL and no
 dataset: they're graded structurally by `app/src/dragdrop.js`, which is pure and shared with

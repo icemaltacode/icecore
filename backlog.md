@@ -76,14 +76,6 @@ Nothing outstanding. Questions resolved here move up into *Decisions taken*.
 
 ## Builder / CLI
 
-- [x] **Course > Module > Unit > Topic.** The old model called a DataCamp course a course
-      and a DataCamp chapter a unit, so one ICE course showed up as six, there was no module
-      level at all, and a student would have needed six enrolments to sit one course.
-      `course.json` declares the course and its module titles; `_topic.json` names the
-      topic's unit. Enrolment, progress and signed cookies all key on the course, so each
-      becomes one row per student rather than one per DataCamp course.
-- [x] **Dotted numbers sort numerically** -- unit 1.10 follows 1.9, not 1.1.
-
 - [x] **Per-exercise setup SQL.** A `## Setup` section with a ```` ```sql ```` fence builds
       the derived tables an exercise needs on top of its dataset. Needed because the same
       table name means different rows in different exercises, which no shared dataset can
