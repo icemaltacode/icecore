@@ -8,12 +8,15 @@
  *   <outDir>/content/<course>/index.json       units + exercises + expected results
  *   <outDir>/content/<course>/data/<t>.sql     datasets, fetched on demand
  *
- * Reference solutions are never written to the output - grading compares against the
- * expected result sets computed here, so the answers don't reach the browser.
+ * Reference solutions ARE written to the output. Grading still compares against the
+ * expected result sets computed here; the solution ships so the player can reveal it and
+ * the hint service has something to reason about. See CLAUDE.md on why that's deliberate.
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
+import { validate as validateDragDrop } from '../app/src/dragdrop.js';
+import { EXTENSIONS } from './extensions.mjs';
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -48,7 +51,43 @@ function sections(md) {
   return out.map(s => ({ ...s, body: s.body.join('\n').trim() }));
 }
 const codeIn = body => body.match(/```[a-z]*\n([\s\S]*?)```/)?.[1].replace(/\s+$/, '') ?? '';
+/* Setup is SQL and only SQL. `## Setup` is already present in most shipped exercises
+ * holding DataCamp's Python connect() line, which must never be executed - so this insists
+ * on a ```sql fence rather than taking whatever code it finds. */
+const sqlIn = body => body.match(/```sql\s*\n([\s\S]*?)```/)?.[1].replace(/\s+$/, '') ?? '';
+const bullets = body => (body || '').split('\n')
+  .filter(l => /^\s*[-*]\s+/.test(l)).map(l => l.replace(/^\s*[-*]\s+/, '').trim());
+const numbered = body => (body || '').split('\n')
+  .filter(l => /^\s*\d+[.)]\s+/.test(l)).map(l => l.replace(/^\s*\d+[.)]\s+/, '').trim());
+
+/* Item ids are derived from the item's own text so the JSON stays readable, with a
+ * numeric suffix only where two items would otherwise collide.
+ *
+ * `used` is passed in for classify, so it spans every zone. Ids only have to be unique
+ * within the exercise, not within a zone: grading matches a placement to an item by id, so
+ * two zones each owning an "avg" would let an item dropped in the wrong zone grade as
+ * correct in both. (`AVG()` and `AVG` slug identically, and their content differs, so
+ * nothing else would catch it.) validate() still checks for duplicate ids as a backstop. */
+function withIds(contents, used = new Map()) {
+  return contents.map(content => {
+    const base = content.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'item';
+    const n = (used.get(base) || 0) + 1;
+    used.set(base, n);
+    return { id: n === 1 ? base : `${base}-${n}`, content };
+  });
+}
 const stripHeading = body => body.replace(/^#\s+.*$/m, '').trim();
+/* `1. text  ← correct` - the same convention whether it's a whole exercise or one step. */
+const optionsIn = body => {
+  const lines = (body || '').split('\n').filter(l => /^\d+\.\s/.test(l));
+  return {
+    options: lines.map(l => l.replace(/^\d+\.\s*/, '').replace(/\s*←\s*correct\s*$/, '').trim()),
+    answer: lines.findIndex(l => /←\s*correct\s*$/.test(l)),
+  };
+};
+const orderedIn = body => (body || '').split('\n').filter(l => /^\d+\.\s/.test(l))
+  .map(l => l.replace(/^\d+\.\s*/, '').trim());
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 export function parseExercise(file, text) {
   const [fm, md] = frontmatter(text);
@@ -56,14 +95,28 @@ export function parseExercise(file, text) {
   const intro = stripHeading(secs[0].body);
 
   if (fm.type === 'mcq') {
-    const optSec = secs.find(s => s.title === 'Options');
-    const fbSec = secs.find(s => s.title === 'Feedback');
-    const lines = (optSec?.body || '').split('\n').filter(l => /^\d+\.\s/.test(l));
-    const options = lines.map(l => l.replace(/^\d+\.\s*/, '').replace(/\s*←\s*correct\s*$/, '').trim());
-    const answer = lines.findIndex(l => /←\s*correct\s*$/.test(l));
-    const feedback = (fbSec?.body || '').split('\n').filter(l => /^\d+\.\s/.test(l))
-      .map(l => l.replace(/^\d+\.\s*/, '').trim());
+    const { options, answer } = optionsIn(secs.find(s => s.title === 'Options')?.body);
+    const feedback = orderedIn(secs.find(s => s.title === 'Feedback')?.body);
     return { ...fm, file, prompt: intro, options, answer, feedback };
+  }
+
+  if (fm.type === 'dragdrop') {
+    const hint = secs.find(s => s.title === 'Hint')?.body || '';
+    const instructions = secs.find(s => s.title === 'Instructions')?.body || '';
+    if (fm.mode === 'order')
+      return { ...fm, file, prompt: intro, instructions, hint,
+               items: withIds(numbered(secs.find(s => s.title === 'Sequence')?.body)) };
+
+    // Everything at level 3 after `## Zones` is a zone, until the next level-2 heading.
+    const zones = [];
+    const usedIds = new Map();   // shared across zones - see withIds
+    let inZones = false;
+    for (const sec of secs) {
+      if (sec.level === 2) inZones = sec.title === 'Zones';
+      else if (inZones && sec.level === 3)
+        zones.push({ id: slug(sec.title), title: sec.title, items: withIds(bullets(sec.body), usedIds) });
+    }
+    return { ...fm, file, prompt: intro, instructions, hint, pool: fm.pool || 'Items', zones };
   }
 
   const setup = secs.find(s => s.title === 'Setup');
@@ -71,22 +124,45 @@ export function parseExercise(file, text) {
   let cur = null;
   for (const s of secs) {
     if (s.level === 2 && (/^Step \d+$/.test(s.title || '') || s.title === 'Instructions')) {
-      cur = { instructions: s.body || '', sample: '', solution: '', hint: '' };
+      // `kind` is settled below by which sections the step actually carries: a step with
+      // `### Options` is multiple-choice, one with `### Solution` is a query. Both kinds
+      // can sit in the same exercise, and an MCQ step still gets the dataset and the
+      // editor - the student often has to look at the data to answer.
+      cur = { kind: 'coding', instructions: s.body || '', sample: '', solution: '', hint: '' };
       steps.push(cur);
     } else if (cur && s.level === 3) {
       if (s.title === 'Sample') cur.sample = codeIn(s.body);
       else if (s.title === 'Solution') cur.solution = codeIn(s.body);
       else if (s.title === 'Hint') cur.hint = s.body;
+      else if (s.title === 'Options') Object.assign(cur, { kind: 'mcq' }, optionsIn(s.body));
+      else if (s.title === 'Feedback') cur.feedback = orderedIn(s.body);
     }
   }
-  return { ...fm, file, prompt: intro, setup: codeIn(setup?.body || ''), steps };
+  return { ...fm, file, prompt: intro, setup: sqlIn(setup?.body || ''), steps };
 }
 
 const isDDL = q => /\b(create|drop|alter|insert|update|delete|truncate)\b/i.test(q);
 
 /**
- * Build a content directory. Returns the full model *including* reference solutions
- * so `icecore verify` can test against it; only the stripped form is written to disk.
+ * Every step must be exactly one kind. A step carrying neither a Solution nor Options is
+ * dead weight the player can't present; one carrying both is ambiguous. Exercise 07 of
+ * 1.3.1 shipped a silently-dropped question because nothing checked per step.
+ */
+export function stepProblems(ex) {
+  const problems = [];
+  if (!ex.steps?.length) return ['no steps parsed'];
+  for (const [i, step] of ex.steps.entries()) {
+    const where = ex.steps.length > 1 ? `step ${i + 1}` : 'the instructions';
+    const coding = !!step.solution, mcq = !!step.options?.length;
+    if (coding && mcq) problems.push(`${where} has both a Solution and Options`);
+    else if (!coding && !mcq) problems.push(`${where} has neither a Solution nor Options`);
+    else if (mcq && !(step.answer >= 0)) problems.push(`${where} has no correct option marked`);
+  }
+  return problems;
+}
+
+/**
+ * Build a content directory. Returns the full model, which is also what gets written.
  */
 export async function buildContent({ contentDir, outDir, write = true, log = console.log }) {
   const exDir = path.join(contentDir, 'exercises');
@@ -104,29 +180,65 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     const exercises = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort()
       .map(f => parseExercise(f, fs.readFileSync(path.join(dir, f), 'utf8')));
 
-    for (const e of exercises.filter(e => e.type === 'coding' && !e.steps?.some(s => s.solution)))
-      warnings.push(`${unitId}: no solution parsed in ${e.file}`);
+    for (const e of exercises.filter(e => e.type === 'coding'))
+      for (const problem of stepProblems(e)) warnings.push(`${unitId} ${e.file}: ${problem}`);
     for (const e of exercises.filter(e => e.type === 'mcq' && !(e.answer >= 0)))
       warnings.push(`${unitId}: no correct option in ${e.file}`);
+    for (const e of exercises.filter(e => e.type === 'dragdrop'))
+      for (const problem of validateDragDrop(e)) warnings.push(`${unitId} ${e.file}: ${problem}`);
 
     if (!courses.has(meta.course))
       courses.set(meta.course, { id: meta.course, title: meta.courseTitle, topic: meta.topic, units: [] });
     courses.get(meta.course).units.push({
-      unit: meta.unit, title: meta.title, label: `${meta.unit} - ${meta.title}`, exercises,
+      unit: meta.unit, title: meta.title, label: `${meta.unit} - ${meta.title}`,
+      slides: meta.slides, exercises,
     });
   }
 
+  // ---- discover slide decks ----
+  // A unit has a deck when the course repo has built one to slides/<unit>/index.html.
+  // Derived rather than declared: a `slides:` key in _unit.json would be a second source
+  // of truth that could disagree with what's actually on disk. `slides:` may still be set
+  // to an absolute URL when a deck lives somewhere else entirely.
+  const slidesDir = path.join(contentDir, 'slides');
+  const decks = new Set(fs.existsSync(slidesDir)
+    ? fs.readdirSync(slidesDir).filter(d => fs.existsSync(path.join(slidesDir, d, 'index.html')))
+    : []);
+  for (const course of courses.values())
+    for (const u of course.units) {
+      if (u.slides) continue;                          // an explicit URL from _unit.json wins
+      // index.html is named explicitly rather than relying on a directory index: S3 behind
+      // CloudFront only applies defaultRootObject to the root, so `slides/1.2.3/` would
+      // 404 in production, and a dev server answers it with the app's own index page -
+      // which then loads the whole player inside the iframe.
+      if (decks.has(u.unit)) u.slides = `slides/${u.unit}/index.html`;
+      else if (fs.existsSync(path.join(slidesDir, u.unit)))
+        warnings.push(`${u.unit}: slides/${u.unit}/ has no index.html - deck not published`);
+    }
+
   // ---- load datasets ----
+  // A dataset is either one <name>.sql, or a <name>/ directory of per-table .sql files
+  // concatenated in filename order -- a dataset is a database, and a database may hold
+  // more than one table. Either way it ships as a single <name>.sql, so the player only
+  // ever fetches one file per dataset.
   const dataDir = path.join(contentDir, 'data');
   const datasets = {};
-  for (const f of (fs.existsSync(dataDir) ? fs.readdirSync(dataDir) : []))
-    if (f.endsWith('.sql')) datasets[f.replace(/\.sql$/, '')] = fs.readFileSync(path.join(dataDir, f), 'utf8');
+  for (const e of (fs.existsSync(dataDir) ? fs.readdirSync(dataDir, { withFileTypes: true }) : [])) {
+    if (e.isDirectory()) {
+      const dir = path.join(dataDir, e.name);
+      const parts = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort()
+        .map(f => fs.readFileSync(path.join(dir, f), 'utf8'));
+      if (parts.length) datasets[e.name] = parts.join('\n');
+    } else if (e.name.endsWith('.sql')) {
+      datasets[e.name.replace(/\.sql$/, '')] = fs.readFileSync(path.join(dataDir, e.name), 'utf8');
+    }
+  }
 
   // ---- precompute expected results ----
   const seeded = new Map();
   const template = async name => {
     if (!seeded.has(name)) {
-      const db = new PGlite();
+      const db = new PGlite({ extensions: EXTENSIONS });
       await db.exec(datasets[name]);
       const dump = await db.dumpDataDir();
       await db.close();
@@ -135,18 +247,40 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     return seeded.get(name);
   };
 
+  const withSetup = async (dump, setup) => {
+    const db = new PGlite({ loadDataDir: dump, extensions: EXTENSIONS });
+    try {
+      await db.exec(setup);
+      return await db.dumpDataDir();
+    } finally { await db.close(); }
+  };
+
   let computed = 0, failed = 0;
   for (const course of courses.values()) {
     for (const u of course.units) {
       for (const ex of u.exercises) {
         if (ex.type !== 'coding' || !ex.dataset) continue;
         if (!datasets[ex.dataset]) { warnings.push(`${u.unit} ${ex.file}: dataset "${ex.dataset}" not extracted yet`); continue; }
-        const dump = await template(ex.dataset);
+        // An exercise's setup SQL builds the derived tables it needs on top of the
+        // dataset. Applied once, to a copy, and dumped: every step then starts from a
+        // database that already has them, and only exercises declaring setup pay for it.
+        let dump = await template(ex.dataset);
+        if (ex.setup) {
+          try {
+            dump = await withSetup(dump, ex.setup);
+          } catch (e) {
+            warnings.push(`${u.unit} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
+            failed++;
+            continue;
+          }
+        }
         let shared = null;   // SELECT-only solutions share a database; DDL needs a clean one
         for (const step of ex.steps || []) {
           if (!step.solution) continue;
           const fresh = isDDL(step.solution);
-          const db = fresh ? new PGlite({ loadDataDir: dump }) : (shared ||= new PGlite({ loadDataDir: dump }));
+          const db = fresh
+            ? new PGlite({ loadDataDir: dump, extensions: EXTENSIONS })
+            : (shared ||= new PGlite({ loadDataDir: dump, extensions: EXTENSIONS }));
           try {
             const res = await db.exec(step.solution);
             const last = res[res.length - 1];
@@ -187,21 +321,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         shipped.push(d);
       }
 
-      // strip reference solutions - grading uses `expected`
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({
         ...course,
         datasets: shipped,
-        units: course.units.map(u => ({
-          ...u,
-          exercises: u.exercises.map(e => e.type !== 'coding' ? e
-            : { ...e, steps: e.steps.map(({ solution, ...rest }) => rest) }),
-        })),
       }));
 
       const all = course.units.flatMap(u => u.exercises);
       manifest.push({
         id: course.id, title: course.title, topic: course.topic,
-        units: course.units.map(u => ({ unit: u.unit, title: u.title, label: u.label })),
+        units: course.units.map(u => ({ unit: u.unit, title: u.title, label: u.label, slides: u.slides })),
         exercises: all.length,
         coding: all.filter(e => e.type === 'coding').length,
         mcq: all.filter(e => e.type === 'mcq').length,
@@ -209,6 +337,16 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       log(`  ${course.id}: ${course.units.length} units, ${all.length} exercises, datasets [${shipped.join(', ') || 'none'}]`);
     }
     fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
+
+    // Decks sit at the site root, not under content/: a built Slidev deck is a small site
+    // of its own with absolute asset paths, and its --base has to match where it lands.
+    const slidesOut = path.join(outDir, 'slides');
+    fs.rmSync(slidesOut, { recursive: true, force: true });
+    if (decks.size) {
+      for (const unit of decks)
+        fs.cpSync(path.join(slidesDir, unit), path.join(slidesOut, unit), { recursive: true });
+      log(`  slides: ${decks.size} deck${decks.size === 1 ? '' : 's'} [${[...decks].sort().join(', ')}]`);
+    }
   }
 
   for (const w of warnings) log(`  ! ${w}`);

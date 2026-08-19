@@ -5,6 +5,7 @@ import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
+import { askTutor, tutorAvailable } from '../hint.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
@@ -16,22 +17,32 @@ const error = ref('');
 const verdict = ref(null);
 const busy = ref(false);
 const showHint = ref(false);
+const showSolution = ref(false);
+const picked = ref(null);
+const tutor = ref(null);        // { text } once a nudge comes back
+const tutorError = ref('');
+const tutorBusy = ref(false);
 
 const steps = computed(() => props.exercise.steps || []);
 const step = computed(() => steps.value[stepIndex.value] || {});
 const multi = computed(() => steps.value.length > 1);
+const isMcqStep = computed(() => step.value.kind === 'mcq');
 
 // reset everything when the exercise or step changes
 watch(() => [props.exercise.id, stepIndex.value], () => {
-  code.value = step.value.sample || '';
-  result.value = null; error.value = ''; verdict.value = null; showHint.value = false;
+  // A multiple-choice step with no sample leaves the editor alone: the student is often
+  // part-way through exploring the tables that the question is about.
+  if (!isMcqStep.value || step.value.sample) code.value = step.value.sample || '';
+  result.value = null; error.value = ''; verdict.value = null;
+  showHint.value = false; showSolution.value = false; picked.value = null;
+  tutor.value = null; tutorError.value = '';
 }, { immediate: true });
 
 watch(() => props.exercise.id, () => { stepIndex.value = 0; });
 
 async function doRun() {
   busy.value = true; error.value = ''; verdict.value = null;
-  try { result.value = await run(props.courseId, props.exercise.dataset, code.value); }
+  try { result.value = await run(props.courseId, props.exercise.dataset, code.value, props.exercise.setup); }
   catch (e) { error.value = e.message; result.value = null; }
   finally { busy.value = false; }
 }
@@ -39,9 +50,8 @@ async function doRun() {
 async function doCheck() {
   busy.value = true; error.value = '';
   try {
-    const v = await grade(props.courseId, props.exercise.dataset, step.value, code.value);
+    const v = isMcqStep.value ? checkChoice() : await gradeQuery();
     verdict.value = v;
-    if (v.result) result.value = v.result;
     if (v.pass) {
       if (stepIndex.value < steps.value.length - 1) setTimeout(() => stepIndex.value++, 900);
       else emit('solved', props.exercise.id);
@@ -49,9 +59,48 @@ async function doCheck() {
   } finally { busy.value = false; }
 }
 
+function checkChoice() {
+  const right = picked.value === step.value.answer;
+  return {
+    pass: right,
+    reason: step.value.feedback?.[picked.value] || (right ? 'Correct.' : 'Not quite.'),
+  };
+}
+
+async function gradeQuery() {
+  const v = await grade(props.courseId, props.exercise, step.value, code.value);
+  if (v.result) result.value = v.result;
+  return v;
+}
+
+async function askForHelp() {
+  tutorBusy.value = true; tutorError.value = ''; tutor.value = null;
+  try {
+    const r = await askTutor({
+      course: props.courseId,
+      exercise: props.exercise,
+      step: step.value,
+      submission: code.value,
+      // What the grader last said is the most useful single clue about where they are.
+      feedback: verdict.value && !verdict.value.pass ? verdict.value.reason : error.value,
+    });
+    tutor.value = r;
+  } catch (e) {
+    tutorError.value = e.message;
+  } finally {
+    tutorBusy.value = false;
+  }
+}
+
+function useSolution() {
+  if (isMcqStep.value) picked.value = step.value.answer;
+  else code.value = step.value.solution;
+  verdict.value = null;
+}
+
 async function doReset() {
   busy.value = true;
-  try { await resetDb(props.courseId, props.exercise.dataset); result.value = null; error.value = ''; verdict.value = null; }
+  try { await resetDb(props.courseId, props.exercise.dataset, props.exercise.setup); result.value = null; error.value = ''; verdict.value = null; }
   finally { busy.value = false; }
 }
 </script>
@@ -79,13 +128,42 @@ async function doReset() {
           </li>
         </ol>
         <div v-else class="prose" v-html="md(step.instructions)"></div>
+
+        <ul v-if="isMcqStep" class="options">
+          <li v-for="(opt, i) in step.options" :key="i">
+            <button
+              class="option"
+              :class="{ picked: picked === i,
+                        right: showSolution && i === step.answer,
+                        wrong: verdict && !verdict.pass && picked === i }"
+              @click="picked = i; verdict = null">
+              <span class="marker">{{ String.fromCharCode(65 + i) }}</span>
+              <span class="prose inline" v-html="md(opt)"></span>
+            </button>
+          </li>
+        </ul>
       </div>
 
-      <div class="hint" v-if="step.hint">
-        <button class="link" @click="showHint = !showHint">
-          {{ showHint ? 'Hide hint' : 'Take a hint' }}
-        </button>
+      <div class="help" v-if="step.hint || step.solution || isMcqStep || tutorAvailable()">
+        <div class="helplinks">
+          <button v-if="step.hint" class="link" @click="showHint = !showHint">
+            {{ showHint ? 'Hide hint' : 'Take a hint' }}
+          </button>
+          <button v-if="tutorAvailable() && !isMcqStep" class="link"
+                  @click="askForHelp" :disabled="tutorBusy">
+            {{ tutorBusy ? 'Thinking…' : 'Ask a tutor' }}
+          </button>
+          <button v-if="step.solution || isMcqStep" class="link" @click="showSolution = !showSolution">
+            {{ showSolution ? 'Hide answer' : 'Show answer' }}
+          </button>
+        </div>
         <div v-if="showHint" class="prose hintbody" v-html="md(step.hint)"></div>
+        <div v-if="tutor" class="prose tutorbody" v-html="md(tutor.hint)"></div>
+        <p v-if="tutorError" class="tutorerr">{{ tutorError }}</p>
+        <div v-if="showSolution && !isMcqStep" class="solution">
+          <pre><code>{{ step.solution }}</code></pre>
+          <button class="link" @click="useSolution">Copy into the editor</button>
+        </div>
       </div>
     </section>
 
@@ -97,12 +175,12 @@ async function doReset() {
         </div>
         <SqlEditor v-model="code" @run="doRun" />
         <div class="actions">
-          <span v-if="verdict" class="verdict" :class="{ pass: verdict.pass, fail: !verdict.pass }">
-            {{ verdict.reason }}
-          </span>
+          <span v-if="verdict" class="verdict prose inline"
+                :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="md(verdict.reason)"></span>
           <span v-else class="muted kbd">Cmd/Ctrl + Enter to run</span>
           <button class="btn ghost" @click="doRun" :disabled="busy">Run code</button>
-          <button class="btn primary" @click="doCheck" :disabled="busy">Check answer</button>
+          <button class="btn primary" @click="doCheck"
+                  :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
         </div>
       </div>
       <div class="result-pane">
@@ -114,7 +192,7 @@ async function doReset() {
 </template>
 
 <style scoped>
-.coding { display: grid; grid-template-columns: minmax(320px, 34%) 1fr; height: 100%; min-height: 0; }
+.coding { display: grid; grid-template-columns: minmax(320px, 34%) minmax(0, 1fr); height: 100%; min-height: 0; }
 .brief { overflow: auto; padding: 24px 28px; border-right: 1px solid var(--ice-border); }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h2 { margin: 0 0 4px; font-size: 20px; }
@@ -129,11 +207,31 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
         font-size: 11px; background: var(--ice-bg-soft); border: 1px solid var(--ice-border); }
 .steplist li.past .tick { background: var(--ice-primary-soft); color: var(--ice-fg); border-color: transparent; }
 .steplist li.current .tick { border-color: var(--ice-primary); color: var(--ice-primary); }
-.hint { margin-top: 20px; }
-.hintbody { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft); border-radius: var(--ice-radius); }
+.options { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
+.option { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
+          padding: 10px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px;
+          background: var(--ice-bg); border: 1px solid var(--ice-border); color: var(--ice-fg); }
+.option:hover { border-color: var(--ice-primary-soft); }
+.option.picked { border-color: var(--ice-primary); }
+.option.right { border-color: #4ade80; background: rgba(74, 222, 128, .08); }
+.option.wrong { border-color: #f87171; background: rgba(248, 113, 113, .08); }
+.marker { flex: none; width: 20px; height: 20px; border-radius: 5px; display: grid; place-items: center;
+          font-size: 11px; font-weight: 600; background: var(--ice-bg-soft); border: 1px solid var(--ice-border); }
 
-.work { display: grid; grid-template-rows: 1fr minmax(140px, 38%); min-height: 0; }
-.editor-pane, .result-pane { display: flex; flex-direction: column; min-height: 0; }
+.help { margin-top: 20px; }
+.helplinks { display: flex; gap: 16px; }
+.hintbody { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft); border-radius: var(--ice-radius); }
+.solution { margin-top: 8px; }
+.solution pre { margin: 0; padding: 10px 12px; background: var(--ice-bg-soft); border-radius: var(--ice-radius);
+                border-left: 2px solid var(--ice-primary); overflow-x: auto; }
+.solution code { font-family: var(--ice-font-mono); font-size: 13px; white-space: pre; }
+.solution .link { margin-top: 6px; }
+.tutorbody { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft);
+             border-left: 2px solid var(--ice-primary); border-radius: var(--ice-radius); }
+.tutorerr { margin: 8px 0 0; color: #fca5a5; font-size: 13px; }
+
+.work { display: grid; grid-template-rows: 1fr minmax(140px, 38%); min-height: 0; min-width: 0; }
+.editor-pane, .result-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .result-pane { border-top: 1px solid var(--ice-border); }
 .tabbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--ice-bg-soft);
           border-bottom: 1px solid var(--ice-border); }

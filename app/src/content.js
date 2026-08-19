@@ -13,7 +13,7 @@ async function json(url) {
 /** All courses available on this deployment. */
 export const loadManifest = () => json(`${BASE}courses.json`);
 
-/** One course: units, exercises, expected results. No reference solutions. */
+/** One course: units, exercises, expected results, and reference solutions. */
 export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.json`);
 
 /** A dataset's seed SQL, fetched only when an exercise actually needs it. */
