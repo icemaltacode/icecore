@@ -9,10 +9,6 @@ export AWS_PROFILE := "ice"
 #   just course=../icecore-some-other-course dev
 course := "../icecore-datacamp-data-analyst"
 
-# Filled in once the CDK stack has been deployed once.
-site_bucket    := env_var_or_default("ICECORE_SITE_BUCKET", "")
-distribution   := env_var_or_default("ICECORE_DISTRIBUTION", "")
-
 icecore := "node " + justfile_directory() + "/bin/icecore.mjs"
 
 _default:
@@ -32,13 +28,26 @@ verify:
 build:
     {{icecore}} build {{course}}/content
 
+# Decks are only picked up if already built — run `just decks` first, or use `just deploy`.
 # Build the full deployable site — app + content — into dist/.
 bundle:
     {{icecore}} bundle {{course}}/content
 
-# Run the course's Slidev deck (per-unit static build still to be written).
+# Run the course's Slidev deck in a dev server.
 slides:
     cd {{course}} && npm run slides
+
+# `bundle` and `build` only discover decks something else has already written, so anything
+# that publishes comes through here first or ships a course with no slides and says nothing.
+# Build the course's per-unit slide decks into its content/slides/.
+decks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! node -e "process.exit(require('{{justfile_directory()}}/{{course}}/package.json').scripts?.['slides:build'] ? 0 : 1)"; then
+      echo "warning: {{course}} has no slides:build script - publishing without decks" >&2
+      exit 0
+    fi
+    npm --prefix {{course}} run slides:build
 
 clean:
     rm -rf dist {{course}}/.icecore
@@ -95,40 +104,63 @@ openai-key:
 
 # --- publishing ------------------------------------------------------------
 
-# Build everything and push it live. This IS production.
-deploy: verify bundle _auth-json _require-targets
-    aws s3 sync dist/ s3://{{site_bucket}}/ --delete
-    aws cloudfront create-invalidation --distribution-id {{distribution}} --paths '/*'
-    @echo "live."
+# This is the only thing that publishes the *app* — index.html, its bundle and auth.json
+# all come from here. The GitHub Actions workflow in a course repo publishes content and
+# decks only, and assumes the app is already in place; on an empty bucket it leaves
+# CloudFront answering Access Denied with nothing to explain why. So run this once before
+# CI is any use, and again whenever the player itself changes.
+# Build everything and push it live. This IS production, and the only way the app ships.
+deploy: verify decks bundle _auth-json
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just _targets)"
+    aws s3 sync dist/ "s3://$bucket/" --delete
+    aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
+    echo "live: https://$(aws cloudfront get-distribution --id "$dist" --query 'Distribution.DomainName' --output text)"
 
 # Push content and slides only — no app rebuild. The usual path for fixing an exercise.
-deploy-content: build _require-targets
-    aws s3 sync dist/content/ s3://{{site_bucket}}/content/ --delete
+deploy-content: decks build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just _targets)"
+    aws s3 sync dist/content/ "s3://$bucket/content/" --delete
     # Decks are built by the course repo and published alongside the content, so a content
     # push has to carry them too, or a corrected slide never reaches anyone.
-    [ -d dist/slides ] && aws s3 sync dist/slides/ s3://{{site_bucket}}/slides/ --delete || true
-    aws cloudfront create-invalidation --distribution-id {{distribution}} --paths '/content/*' '/slides/*'
-    @echo "content live."
+    [ -d dist/slides ] && aws s3 sync dist/slides/ "s3://$bucket/slides/" --delete || true
+    aws cloudfront create-invalidation --distribution-id "$dist" --paths '/content/*' '/slides/*' >/dev/null
+    echo "content live."
 
 # Write dist/auth.json from the stack outputs. The app reads it at boot; without it the
 # player runs open, which is what makes `just dev` work with no AWS account at all.
 _auth-json:
     #!/usr/bin/env bash
     set -euo pipefail
-    read -r pool client region < <(aws cloudformation describe-stacks --stack-name Icecore \
+    read -r pool client < <(aws cloudformation describe-stacks --stack-name Icecore \
       --query "Stacks[0].[Outputs[?OutputKey=='UserPoolId'].OutputValue|[0],\
                           Outputs[?OutputKey=='UserPoolClientId'].OutputValue|[0]]" \
-      --output text | tr '\t' ' ' | awk -v r="$(aws configure get region)" '{print $1, $2, r}')
-    printf '{"userPoolId":"%s","clientId":"%s","region":"%s"}\n' "$pool" "$client" "$region" > dist/auth.json
+      --output text)
+    printf '{"userPoolId":"%s","clientId":"%s","region":"%s"}\n' \
+      "$pool" "$client" "$(aws configure get region)" > dist/auth.json
     echo "wrote dist/auth.json for user pool $pool"
 
-_require-targets:
+# Where to publish. Read from the stack rather than asked for: they are outputs of the
+# deploy that created them, and a hand-set bucket name is one typo from a silent no-op.
+_targets:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -z "{{site_bucket}}" || -z "{{distribution}}" ]]; then
-      echo "Set ICECORE_SITE_BUCKET and ICECORE_DISTRIBUTION (from the CDK stack outputs)." >&2
+    bucket="${ICECORE_SITE_BUCKET:-}"; dist="${ICECORE_DISTRIBUTION:-}"
+    if [[ -z "$bucket" || -z "$dist" ]]; then
+      read -r bucket dist < <(aws cloudformation describe-stacks --stack-name Icecore \
+        --query "Stacks[0].[Outputs[?OutputKey=='SiteBucket'].OutputValue|[0],\
+                            Outputs[?OutputKey=='DistributionId'].OutputValue|[0]]" \
+        --output text 2>/dev/null || echo "None None")
+    fi
+    if [[ -z "$bucket" || "$bucket" == "None" || "$dist" == "None" ]]; then
+      echo "Could not read SiteBucket/DistributionId from the Icecore stack." >&2
+      echo "Deploy it first with \`just infra-deploy\`." >&2
       exit 1
     fi
+    printf 'bucket=%q; dist=%q\n' "$bucket" "$dist"
 
 # Who am I deploying as?
 whoami:

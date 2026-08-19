@@ -27,6 +27,11 @@ open questions are marked as such.
 - **Iframe focus between the deck and the editor is not a problem worth solving** — a
   mouse click moves focus, and that's sufficient.
 - **One environment only.** No dev/staging/prod split — `just deploy` publishes live.
+- **The app deploys manually, content deploys through CI.** `just deploy` is the only thing
+  that publishes the player itself; the course repos' workflow publishes content and decks
+  and assumes the app is already there. Keeping the app out of CI means a content push can
+  never change the player under a cohort, but it does mean a fresh bucket needs one manual
+  deploy before anything works.
 - **`just` is the task runner.** Recipes live in `Justfile` at the repo root and export
   `AWS_PROFILE=ice`.
 - **Signed cookies are scoped to the whole site, not per course.** One cookie set for

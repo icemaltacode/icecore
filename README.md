@@ -221,6 +221,12 @@ It authenticates by OIDC — there is no access key in any repo — and assumes 
 write objects and invalidate the CDN, nothing more. **Content publishing never runs
 `cdk deploy`**: fixing a typo in an exercise must not be able to touch infrastructure.
 
+**The app has to be deployed first, and that stays manual.** The workflow publishes content
+and decks only; `index.html`, the JS bundle and `auth.json` come from `just deploy` in this
+repo. Run that once before the workflow is any use — on an empty bucket CloudFront answers
+`Access Denied`, which gives no clue that the app is what's missing — and again whenever the
+player changes.
+
 The workflow needs `icecore` resolvable in CI, so a course repo should depend on
 `"icecore": "github:icemaltacode/icecore"` rather than `file:../icecore` once it is
 publishing — and its `package-lock.json` has to be regenerated to match, or `npm ci` refuses

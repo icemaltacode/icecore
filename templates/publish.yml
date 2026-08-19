@@ -4,6 +4,12 @@
 # never infrastructure — so a typo fix in an exercise can't touch the stack. The role it
 # assumes can write objects to the site bucket and invalidate the CDN, and nothing else.
 #
+# THE APP MUST BE DEPLOYED FIRST. This pipeline publishes content and decks and nothing
+# else: index.html, the JS bundle and auth.json all come from `just deploy` in the icecore
+# repo, which is manual and stays manual. Run that once before this workflow is any use,
+# and again whenever the player itself changes. Until then the bucket has no app in it and
+# CloudFront answers Access Denied, which says nothing about what is actually missing.
+#
 # Set these repository variables (Settings -> Secrets and variables -> Actions -> Variables):
 #   AWS_ROLE_ARN     the PublisherRoleArn output from `just infra-deploy`
 #   AWS_REGION       eu-south-1
