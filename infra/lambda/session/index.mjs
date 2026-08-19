@@ -93,7 +93,8 @@ export async function handler(event) {
 
   // Logged because a mismatch here is invisible from outside: the cookies get set and look
   // perfectly fine, and every content request simply returns 403.
-  console.log(`signed ${origin}/* for ${sub} until ${expires.toISOString()}`);
+  console.log(`signed ${origin}/* for ${sub} until ${expires.toISOString()}` +
+    ` (admin=${isAdmin(claims)}, groups=${JSON.stringify(claims['cognito:groups'] ?? null)})`);
 
   const attrs = `Path=/; Secure; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}`;
   return {

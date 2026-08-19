@@ -10,6 +10,7 @@
  * cookies are HttpOnly and same-origin, so every later request for content and slides
  * carries them without this module being involved again.
  */
+import { reactive } from 'vue';
 import { CognitoUserPool, CognitoUser, AuthenticationDetails } from 'amazon-cognito-identity-js';
 
 const BASE = import.meta.env.BASE_URL;
@@ -19,8 +20,12 @@ let pool = null;
 let pending = null;  // the CognitoUser mid-way through a first-login password change
 let token = null;    // the current id token, for calls to /api/*
 
-/** Session facts the UI cares about: which courses, and whether this is an admin. */
-export const session = { courses: null, admin: false, expires: null };
+/**
+ * Session facts the UI cares about: which courses, and whether this is an admin.
+ * Reactive because components read it through computed(); as a plain object the admin
+ * flag was read once as false before sign-in and never looked at again.
+ */
+export const session = reactive({ courses: null, admin: false, expires: null });
 
 export const isEnabled = () => !!config;
 
