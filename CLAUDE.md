@@ -44,6 +44,12 @@ Result-set comparison, not pattern matching on SQL:
   the reference solution against the student's own database, which the `CREATE VIEW`
   exercise broke immediately.)
 - `expected.rows` is capped at 1000; past the cap only columns and counts are checked.
+- A step whose solution calls `now()`, `CURRENT_DATE`, `random()` and friends **must** be
+  marked `### Nondeterministic`, and `verify` fails if it isn't. The marker is hand-written
+  in the exercise, so a forced re-convert can wipe it -- without the check that would
+  silently restore strict grading, and the failures would look like data problems. Note the
+  worst case is not the step that fails at once but the one that matches a value precomputed
+  the same day and goes red at midnight.
 - A step marked `### Nondeterministic` is graded on columns and row count alone. Expected
   results are computed at build time, so anything resting on `now()` or `random()` can never
   match later. It is declared per step and never inferred from the SQL -- `now()` in a

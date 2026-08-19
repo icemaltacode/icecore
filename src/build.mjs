@@ -151,6 +151,20 @@ export function parseExercise(file, text) {
 
 const isDDL = q => /\b(create|drop|alter|insert|update|delete|truncate)\b/i.test(q);
 
+/* Calls whose result depends on when the query runs. Split in two because some are
+ * functions and some are bare keywords, and a bare \b(now)\b would match a column called
+ * `now`. Used only to insist the step is *marked* - it never changes grading by itself. */
+const VOLATILE = [
+  /\b(now|random|clock_timestamp|timeofday|statement_timestamp)\s*\(/i,
+  /\b(current_date|current_time|current_timestamp|localtime|localtimestamp)\b/i,
+];
+const volatileCall = sql => {
+  const m = VOLATILE.map(re => sql.match(re)).find(Boolean);
+  if (!m) return null;
+  // The function form's match ends at the opening paren; the keyword form has none.
+  return m[0].trim().endsWith('(') ? `${m[1].toLowerCase()}()` : m[0].toUpperCase();
+};
+
 /**
  * Every step must be exactly one kind. A step carrying neither a Solution nor Options is
  * dead weight the player can't present; one carrying both is ambiguous. Exercise 07 of
@@ -165,6 +179,15 @@ export function stepProblems(ex) {
     if (coding && mcq) problems.push(`${where} has both a Solution and Options`);
     else if (!coding && !mcq) problems.push(`${where} has neither a Solution nor Options`);
     else if (mcq && !(step.answer >= 0)) problems.push(`${where} has no correct option marked`);
+
+    // Expected values are computed at build time, so a volatile call means the step either
+    // fails immediately or - worse - passes today and fails at midnight. The marker is
+    // hand-written in the exercise, so a re-convert can wipe it; without this check that
+    // would quietly restore strict grading and surface later as a data problem.
+    const volatile = coding && !step.nondeterministic && volatileCall(step.solution);
+    if (volatile)
+      problems.push(`${where} uses ${volatile} but is not marked "### Nondeterministic" - `
+        + 'its expected values cannot be reproduced');
   }
   return problems;
 }

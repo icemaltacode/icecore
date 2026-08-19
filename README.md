@@ -86,7 +86,13 @@ Its values are then not compared: the expected set was computed at build time an
 student's runs minutes or months later, so the two can only ever agree on shape. Column
 names and row count are still checked, so a wrong query still fails.
 
-Marked per **step**, not per exercise, and never inferred from the SQL. `now()` inside a
+`verify` **fails** a step that uses a volatile call and isn't marked. The marker is
+hand-written, so a re-convert can wipe it; without that check, grading would quietly go
+strict again and the failures would look like data problems. The nastiest case isn't a step
+that fails at once — it's one matching a value precomputed the same day, which goes red at
+midnight.
+
+Marked per **step**, not per exercise, and the marker is never inferred from the SQL. `now()` inside a
 `WHERE` clause can still yield a fixed result set, and a query containing nothing volatile
 can still be non-deterministic. `verify` reports how many steps are graded this way, because
 they are weaker checks and shouldn't spread quietly.
