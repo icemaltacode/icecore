@@ -223,7 +223,9 @@ write objects and invalidate the CDN, nothing more. **Content publishing never r
 
 The workflow needs `icecore` resolvable in CI, so a course repo should depend on
 `"icecore": "github:icemaltacode/icecore"` rather than `file:../icecore` once it is
-publishing. The four repository variables it expects are listed at the top of the file, and
+publishing — and its `package-lock.json` has to be regenerated to match, or `npm ci` refuses
+to run. It builds the decks before the content, because `content/slides/` is generated and
+absent from a fresh checkout; skip that and the publish quietly succeeds with no slides. The four repository variables it expects are listed at the top of the file, and
 all four are stack outputs.
 
 ## Deployment

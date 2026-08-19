@@ -28,6 +28,11 @@ permissions:
   id-token: write      # required to request the OIDC token
   contents: read
 
+env:
+  # playwright-chromium is in the slides devDependencies for PDF export only, and its
+  # install pulls a browser build nothing in this workflow uses.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -37,8 +42,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            slides/package-lock.json
 
       - run: npm ci
+      - run: npm ci --prefix slides
 
       # Every reference solution must grade itself correct and a wrong query must fail.
       # This is the gate: there is no staging environment, so a green verify is the only
@@ -46,7 +56,14 @@ jobs:
       - name: Verify the content
         run: npm run verify
 
-      - name: Build content and decks
+      # Decks first: this writes content/slides/<unit>/, which is gitignored and so does
+      # not exist in a fresh checkout. The content build then discovers those directories
+      # and gives each unit its Slides button. Skipping this doesn't fail the build - it
+      # quietly publishes a course with no slides at all.
+      - name: Build decks
+        run: npm run slides:build
+
+      - name: Build content
         run: npm run build
 
       - uses: aws-actions/configure-aws-credentials@v4
