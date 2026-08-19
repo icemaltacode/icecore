@@ -5,10 +5,15 @@ import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
+import { imageBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
+
+// Figures are written as bare filenames in the markdown; this is what turns them
+// into a URL under the course's content.
+const mdx = text => md(text, { base: imageBase(props.courseId, props.exercise.topicId) });
 
 const stepIndex = ref(0);
 const code = ref('');
@@ -113,7 +118,7 @@ async function doReset() {
         <span class="xp">{{ exercise.xp }} XP</span>
       </header>
 
-      <div class="prose" v-html="md(exercise.prompt)"></div>
+      <div class="prose" v-html="mdx(exercise.prompt)"></div>
 
       <div class="instructions">
         <h3>
@@ -124,10 +129,10 @@ async function doReset() {
           <li v-for="(s, i) in steps" :key="i"
               :class="{ current: i === stepIndex, past: i < stepIndex }">
             <span class="tick">{{ i < stepIndex ? '✓' : i + 1 }}</span>
-            <span class="prose inline" v-html="md(s.instructions)"></span>
+            <span class="prose inline" v-html="mdx(s.instructions)"></span>
           </li>
         </ol>
-        <div v-else class="prose" v-html="md(step.instructions)"></div>
+        <div v-else class="prose" v-html="mdx(step.instructions)"></div>
 
         <ul v-if="isMcqStep" class="options">
           <li v-for="(opt, i) in step.options" :key="i">
@@ -138,7 +143,7 @@ async function doReset() {
                         wrong: verdict && !verdict.pass && picked === i }"
               @click="picked = i; verdict = null">
               <span class="marker">{{ String.fromCharCode(65 + i) }}</span>
-              <span class="prose inline" v-html="md(opt)"></span>
+              <span class="prose inline" v-html="mdx(opt)"></span>
             </button>
           </li>
         </ul>
@@ -157,8 +162,8 @@ async function doReset() {
             {{ showSolution ? 'Hide answer' : 'Show answer' }}
           </button>
         </div>
-        <div v-if="showHint" class="prose hintbody" v-html="md(step.hint)"></div>
-        <div v-if="tutor" class="prose tutorbody" v-html="md(tutor.hint)"></div>
+        <div v-if="showHint" class="prose hintbody" v-html="mdx(step.hint)"></div>
+        <div v-if="tutor" class="prose tutorbody" v-html="mdx(tutor.hint)"></div>
         <p v-if="tutorError" class="tutorerr">{{ tutorError }}</p>
         <div v-if="showSolution && !isMcqStep" class="solution">
           <pre><code>{{ step.solution }}</code></pre>
@@ -176,7 +181,7 @@ async function doReset() {
         <SqlEditor v-model="code" @run="doRun" />
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
-                :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="md(verdict.reason)"></span>
+                :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>
           <span v-else class="muted kbd">Cmd/Ctrl + Enter to run</span>
           <button class="btn ghost" @click="doRun" :disabled="busy">Run code</button>
           <button class="btn primary" @click="doCheck"

@@ -76,7 +76,7 @@ async function cmdBuild(outDir = path.resolve(flag('out', 'dist'))) {
 async function cmdVerify() {
   console.log(`verifying ${path.relative(process.cwd(), contentDir) || '.'}`);
   // built in memory: reference solutions never touch the disk
-  const { courses, datasets } = await buildContent({ contentDir, write: false });
+  const { courses, datasets, missingImages } = await buildContent({ contentDir, write: false });
 
   const seeded = new Map();
   const template = async name => {
@@ -119,6 +119,9 @@ async function cmdVerify() {
 
   let pass = 0, fail = 0, sample = null, dnd = 0, mcqSteps = 0, setups = 0, loose = 0;
   const bad = [];
+  // A figure that isn't there is why this check exists: the prompt still reads fine and the
+  // exercise still grades, so nothing else would ever notice.
+  for (const m of missingImages) { fail++; bad.push(m); }
   for (const course of courses) {
     for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
       for (const ex of unit.exercises) {

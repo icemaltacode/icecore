@@ -1,9 +1,14 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { md } from '../md.js';
+import { imageBase } from '../content.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
+
+// Figures are written as bare filenames in the markdown; this is what turns them
+// into a URL under the course's content.
+const mdx = text => md(text, { base: imageBase(props.courseId, props.exercise.topicId) });
 
 const picked = ref(null);
 const submitted = ref(false);
@@ -27,7 +32,7 @@ function submit() {
         <span class="xp">{{ exercise.xp }} XP</span>
       </header>
 
-      <div class="prose" v-html="md(exercise.prompt)"></div>
+      <div class="prose" v-html="mdx(exercise.prompt)"></div>
 
       <ul class="options">
         <li v-for="(opt, i) in exercise.options" :key="i">
@@ -41,14 +46,14 @@ function submit() {
             :disabled="submitted"
             @click="picked = i">
             <span class="marker">{{ String.fromCharCode(65 + i) }}</span>
-            <span class="prose inline" v-html="md(opt)"></span>
+            <span class="prose inline" v-html="mdx(opt)"></span>
           </button>
         </li>
       </ul>
 
       <div class="foot">
         <p v-if="submitted" class="feedback" :class="{ pass: correct(), fail: !correct() }"
-           v-html="md(exercise.feedback?.[picked] || (correct() ? 'Correct.' : 'Not quite.'))"></p>
+           v-html="mdx(exercise.feedback?.[picked] || (correct() ? 'Correct.' : 'Not quite.'))"></p>
         <button v-if="!submitted" class="btn primary" :disabled="picked === null" @click="submit">
           Submit answer
         </button>

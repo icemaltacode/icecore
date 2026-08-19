@@ -215,6 +215,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   if (!courseMeta.id || !courseMeta.title) throw new Error('course.json needs an id and a title');
 
   const warnings = [];
+  const usedImages = new Set();   // "<topic>/<file>", so unreferenced files aren't shipped
+  const missingImages = [];       // verify fails on these - a dropped figure is the bug
   const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
   const course = { id: courseMeta.id, title: courseMeta.title, modules: [] };
   const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
@@ -226,8 +228,23 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
     if (!meta.unit) { warnings.push(`${topicId}: _topic.json has no unit - skipped`); continue; }
 
+    // An exercise's figures live beside it. Referenced by bare filename: the markdown has
+    // no business knowing the course id or where the bundle is mounted.
+    const imgDir = path.join(dir, 'images');
+    const haveImages = new Set(fs.existsSync(imgDir) ? fs.readdirSync(imgDir) : []);
+
     const exercises = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort(byNumber)
-      .map(f => parseExercise(f, fs.readFileSync(path.join(dir, f), 'utf8')));
+      .map(f => {
+        const text = fs.readFileSync(path.join(dir, f), 'utf8');
+        // The whole point of this feature is that figures were being dropped in silence,
+        // so a reference with no file behind it is worth saying out loud.
+        for (const [, src] of text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+          if (/^(https?:)?\/\//.test(src) || src.startsWith('/')) continue;
+          if (!haveImages.has(src)) missingImages.push(`${topicId} ${f}: no image at images/${src}`);
+          else usedImages.add(`${topicId}/${src}`);
+        }
+        return parseExercise(f, text);
+      });
 
     for (const e of exercises.filter(e => e.type === 'coding'))
       for (const problem of stepProblems(e)) warnings.push(`${topicId} ${e.file}: ${problem}`);
@@ -395,6 +412,19 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         shipped.push(d);
       }
 
+      // Under content/, deliberately: that path is already behind the CloudFront key group
+      // and already carried by the content sync, so figures inherit both for free.
+      let images = 0;
+      for (const ref of usedImages) {
+        const [topicId, file] = [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)];
+        const from = path.join(exDir, topicId, 'images', file);
+        if (!fs.existsSync(from)) continue;
+        const to = path.join(dir, 'images', topicId, file);
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.copyFileSync(from, to);
+        images++;
+      }
+
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({
         ...course,
         datasets: shipped,
@@ -415,7 +445,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       });
       log(`  ${course.id}: ${course.modules.length} module${course.modules.length === 1 ? '' : 's'}, ` +
           `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
-          `datasets [${shipped.join(', ') || 'none'}]`);
+          `${images} image${images === 1 ? '' : 's'}, datasets [${shipped.join(', ') || 'none'}]`);
     }
     fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
 
@@ -433,5 +463,6 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   for (const w of warnings) log(`  ! ${w}`);
   log(`  precomputed ${computed} expected result sets${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
-  return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings };
+  warnings.push(...missingImages);
+  return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings, missingImages };
 }

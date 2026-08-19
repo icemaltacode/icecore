@@ -16,6 +16,10 @@ export const loadManifest = () => json(`${BASE}courses.json`);
 /** One course: units, exercises, expected results, and reference solutions. */
 export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.json`);
 
+/** Where a topic's figures live. Exercises reference them by bare filename. */
+export const imageBase = (courseId, topic) =>
+  `${BASE}${encodeURIComponent(courseId)}/images/${encodeURIComponent(topic)}/`;
+
 /** A dataset's seed SQL, fetched only when an exercise actually needs it. */
 export async function loadDatasetSql(courseId, dataset) {
   const url = `${BASE}${encodeURIComponent(courseId)}/data/${encodeURIComponent(dataset)}.sql`;

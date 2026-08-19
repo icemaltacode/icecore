@@ -5,20 +5,7 @@ We have migrated all the MCQs, re-ordering, drag and drop and SQL exercises to t
 How can we tackle these?
 
 
-Can an exercise prompt include an image, and if not, what would it take?
-
-DataCamp embeds figures in exercise prompts — a Venn diagram for set operators, a table schema, a histogram to read. html2md drops <img> silently, so five published exercises are live right now with their figure missing: 1.1.1/03, 1.1.1/05, 1.2.2/11, 1.3.2/07, 1.3.3/10. 1.3.3/10 Calling all set operators is the clearest — it asks students to match operators to a Venn diagram that isn't on screen.
-
-It also blocks 11 exercises in topics 1.10 and 1.11, which I've held back rather than shipping broken. Those are the visualisation ones — "Interpreting histograms", "Interpreting scatter plots", "Interpreting correlation heatmaps" — where the figure is the exercise.
-
-What I need to know:
-
-Does the player render markdown images in a prompt today? The prompt goes through md.js, so ![alt](…) may already work — but nothing serves the file. The content bundle carries data/ and slides/; there's no home for exercise assets that I can see.
-
-If not, where should they live? The natural shape from this side is content/exercises/<topic>/images/<file>.png beside the exercise, published into the bundle like datasets are, and referenced relatively. But that's your call — it affects the bundle layout, the S3 sync in publish.yml, and the private-bucket signed-cookie scoping.
-
-Is there a size or count concern? These are small PNGs, roughly 20–80 KB each, and the total across the course would be tens of files. Nothing like the 13 MB sql_eda dataset.
-
+ALSO TO REMEMBER: THE MCQS for 1.7 ARE MISSING!!!!!!!
 
 # icecore backlog
 

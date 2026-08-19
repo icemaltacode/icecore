@@ -1,10 +1,15 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { md } from '../md.js';
+import { imageBase } from '../content.js';
 import { check, allItems } from '../dragdrop.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
+
+// Figures are written as bare filenames in the markdown; this is what turns them
+// into a URL under the course's content.
+const mdx = text => md(text, { base: imageBase(props.courseId, props.exercise.topicId) });
 
 const POOL = '__pool';
 
@@ -99,8 +104,8 @@ function showAnswer() {
         <span class="xp">{{ exercise.xp }} XP</span>
       </header>
 
-      <div class="prose" v-html="md(exercise.prompt)"></div>
-      <div v-if="exercise.instructions" class="prose instructions" v-html="md(exercise.instructions)"></div>
+      <div class="prose" v-html="mdx(exercise.prompt)"></div>
+      <div v-if="exercise.instructions" class="prose instructions" v-html="mdx(exercise.instructions)"></div>
 
       <div class="board" :class="{ ordered: isOrder }">
         <section
@@ -121,7 +126,7 @@ function showAnswer() {
               @click.stop="onClickItem(item.id, col.id)">
               <span v-if="isOrder" class="rank">{{ i + 1 }}</span>
               <span class="grip" aria-hidden="true">⠿</span>
-              <span class="prose inline" v-html="md(item.content)"></span>
+              <span class="prose inline" v-html="mdx(item.content)"></span>
             </li>
           </ul>
           <p v-if="!col.items.length" class="empty">Drop items here</p>
@@ -131,7 +136,7 @@ function showAnswer() {
       <div v-if="exercise.hint" class="hint">
         <details>
           <summary>Take a hint</summary>
-          <div class="prose" v-html="md(exercise.hint)"></div>
+          <div class="prose" v-html="mdx(exercise.hint)"></div>
         </details>
       </div>
 

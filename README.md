@@ -73,6 +73,23 @@ touches a database.
 **`mcq`** — `## Options` as a numbered list, the right one marked `← correct`, with an
 optional `## Feedback` list in the same order.
 
+**Figures.** An exercise's images live beside it in `exercises/<topic>/images/` and are
+referenced by bare filename:
+
+```markdown
+![Venn diagram of the set operators](venn.png)
+```
+
+The markdown never names the course or the deployment path; the player resolves the
+filename against the topic's image directory. Absolute and `http(s)://` sources are left
+alone. Only referenced files are published, into
+`dist/content/<course>/images/<topic>/` — under `content/`, so figures sit behind the same
+signed cookies as the rest of the course and need nothing added to the deploy.
+
+**A reference with no file behind it fails `verify`.** The prompt still reads plausibly
+without its figure and the exercise still grades, so nothing else would ever notice — which
+is exactly how five exercises reached production with their diagrams missing.
+
 **Non-deterministic steps.** A step whose result can't be reproduced — anything built on
 `now()`, `random()`, and so on — is marked in the step itself:
 

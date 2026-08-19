@@ -59,6 +59,9 @@ button { font-family: inherit; }
              background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
              border-radius: var(--ice-radius); }
 .prose pre code { padding: 0; background: none; border: 0; font-size: 13px; line-height: 1.5; }
+.prose img { display: block; max-width: 100%; height: auto; margin: 14px 0;
+             border-radius: var(--ice-radius); background: #fff; }
+.prose.inline img { display: inline-block; margin: 4px 0; vertical-align: middle; }
 .prose a { color: var(--ice-primary-strong); }
 .prose.inline > p:last-child { margin-bottom: 0; }
 .prose.inline > p:first-child { margin-top: 0; }
