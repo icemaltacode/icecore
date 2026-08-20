@@ -22,6 +22,11 @@ const PREVIEW = previewRole();
 /* Preview's sign-out has to be remembered somewhere, or reloading signs you straight back
  * in and the button looks broken. Session-scoped: closing the tab forgets it. */
 const PREVIEW_OUT = 'ice-preview-signed-out';
+/* A real-shaped id token, so the name in the top bar comes from the same code path it will
+ * on a deployment rather than from a preview-only special case. Header and signature are
+ * junk on purpose: nothing here verifies it, and nothing here should be able to. */
+const PREVIEW_TOKEN = `x.${btoa(JSON.stringify({ name: 'Ada Lovelace', email: 'ada@example.com' }))
+  .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}.x`;
 
 let config = null;   // { userPoolId, clientId } or null when auth is switched off
 let pool = null;
@@ -33,7 +38,23 @@ let token = null;    // the current id token, for calls to /api/*
  * Reactive because components read it through computed(); as a plain object the admin
  * flag was read once as false before sign-in and never looked at again.
  */
-export const session = reactive({ courses: null, admin: false, expires: null });
+export const session = reactive({ courses: null, admin: false, expires: null, name: '', email: '' });
+
+/**
+ * The display name and email out of the id token.
+ *
+ * Read, not verified: this is the token Cognito just handed us and it is only being used
+ * to write a name in the corner. Anything that grants access is checked server-side by the
+ * API's JWT authorizer, which is where verification belongs.
+ */
+function claims(jwt) {
+  try {
+    const body = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(decodeURIComponent(escape(atob(body))));
+  } catch {
+    return {};
+  }
+}
 
 export const isEnabled = () => !!config || !!PREVIEW;
 
@@ -60,7 +81,7 @@ export function restore() {
   // 'signin' is the one preview role that starts logged out: it exists so the sign-in and
   // choose-a-password screens can be looked at without a real user pool behind them.
   if (PREVIEW) return Promise.resolve(
-    PREVIEW === 'signin' || sessionStorage.getItem(PREVIEW_OUT) ? null : 'preview-token');
+    PREVIEW === 'signin' || sessionStorage.getItem(PREVIEW_OUT) ? null : PREVIEW_TOKEN);
   const user = pool?.getCurrentUser();
   if (!user) return Promise.resolve(null);
   return new Promise(resolve => {
@@ -79,7 +100,7 @@ export function signIn(email, password) {
     // Any password signs you in, except the literal `temp`, which raises the first-login
     // password challenge. That screen is otherwise unreachable locally, and it is the one
     // every invited student meets first.
-    return Promise.resolve(password === 'temp' ? { challenge: 'NEW_PASSWORD' } : 'preview-token');
+    return Promise.resolve(password === 'temp' ? { challenge: 'NEW_PASSWORD' } : PREVIEW_TOKEN);
   }
   const user = new CognitoUser({ Username: email, Pool: pool });
   return new Promise((resolve, reject) => {
@@ -92,7 +113,7 @@ export function signIn(email, password) {
 }
 
 export function completeNewPassword(password) {
-  if (PREVIEW) return Promise.resolve('preview-token');
+  if (PREVIEW) return Promise.resolve(PREVIEW_TOKEN);
   return new Promise((resolve, reject) => {
     // Cognito rejects the challenge if the attributes it just handed us are echoed back,
     // so send none - the pool requires nothing the invitation didn't already set.
@@ -106,6 +127,9 @@ export function completeNewPassword(password) {
 /** Trade the token for signed cookies. Returns the caller's courses and admin flag. */
 export async function startSession(idJwt) {
   token = idJwt;
+  const who = claims(idJwt);
+  session.name = who.name || '';
+  session.email = who.email || '';
   // The session endpoint cannot work out which site to sign cookies for — CloudFront gives
   // API Gateway origins its own Host header — so tell it.
   const body = await api('session', { method: 'POST', body: { origin: location.origin } });
@@ -139,6 +163,7 @@ export function signOut() {
   pool?.getCurrentUser()?.signOut();
   token = null;
   session.courses = null; session.admin = false; session.expires = null;
+  session.name = ''; session.email = '';
   location.reload();   // drops in-memory state and the stale cookies with it
 }
 

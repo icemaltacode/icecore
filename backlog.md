@@ -45,8 +45,6 @@ Ownership: you were last in md.js, so it's yours — I'll keep out of it. Conten
 
 ## UX
 
-- We need a top bar. Our (eventual) logo moves there. On the right, we have the user's name/avatar, the sign out button. 
-
 - We need light/dark theme support. Currently, there's only a dark theme. We nee da light theme. Also, in the top bar, a theme selector drop-down button. Defaults to user's last selected preference, or system preference if there isn't that. 
 
 - The editor (SQL) colours can be hard to read in dark mode. For example, typing a keyords such as SELECT turns dark purple, but in dark mode that's hard to read. We need a proper dark/light theme for syntax colouring. 

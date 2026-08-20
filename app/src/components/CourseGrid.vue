@@ -12,12 +12,10 @@ const props = defineProps({
   courses: Array,
   /** id -> number solved. Absent while it is still being fetched. */
   progress: Object,
-  admin: Boolean,
-  authed: Boolean,
   loading: Boolean,
   error: String,
 });
-defineEmits(['open', 'admin', 'signout']);
+defineEmits(['open']);
 
 const done = c => props.progress?.[c.id] ?? 0;
 const pct = c => (c.exercises ? done(c) / c.exercises * 100 : 0);
@@ -34,17 +32,6 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
 
 <template>
   <div class="page">
-    <header>
-      <div class="brand">
-        <span class="dot"></span>
-        <strong>ICE Practice</strong>
-      </div>
-      <div class="actions">
-        <button v-if="admin" class="btn ghost" @click="$emit('admin')">Manage enrolment</button>
-        <button v-if="authed" class="btn ghost" @click="$emit('signout')">Sign out</button>
-      </div>
-    </header>
-
     <main>
       <h1>Your courses</h1>
 
@@ -72,12 +59,6 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
 
 <style scoped>
 .page { height: 100%; overflow: auto; display: flex; flex-direction: column; }
-header { display: flex; align-items: center; gap: 12px; padding: 16px 28px;
-         border-bottom: 1px solid var(--ice-border); background: var(--ice-bg-soft); }
-.brand { display: flex; gap: 10px; align-items: center; }
-.dot { width: 12px; height: 12px; border-radius: 3px; background: var(--ice-primary); }
-.actions { margin-left: auto; display: flex; gap: 8px; }
-
 main { width: 100%; max-width: 1080px; margin: 0 auto; padding: 32px 28px 56px; }
 h1 { margin: 0 0 24px; font-size: 22px; }
 .muted { color: var(--ice-fg-muted); }

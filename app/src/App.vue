@@ -9,6 +9,7 @@ import DragDropExercise from './components/DragDropExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
+import TopBar from './components/TopBar.vue';
 import { badgeFor } from './badges.js';
 import SlidesPanel from './components/SlidesPanel.vue';
 import SignIn from './components/SignIn.vue';
@@ -120,6 +121,9 @@ async function loadCourses() {
 
 /** Back to the grid. Drops ?course= as well, or a reload would walk straight past it. */
 function backToCourses() {
+  // The logo is the way home from anywhere, enrolment included - leaving that open would
+  // make it look like it had done nothing.
+  showAdmin.value = false;
   course.value = null;
   currentId.value = null;
   showSlides.value = false;
@@ -165,126 +169,131 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
 <template>
   <SignIn v-if="needsSignIn" @authenticated="onAuthenticated" />
 
-  <!-- Enrolment is a whole mode of its own, not a pane of the player: it has no use for
-       the exercise nav, and it has to be reachable from the grid, where there is none. -->
-  <AdminPanel v-else-if="showAdmin" :courses="allCourses" @close="showAdmin = false" />
+  <div v-else class="app">
+    <TopBar
+      :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
+      @home="backToCourses" @admin="showAdmin = true" @signout="signOut" />
 
-  <CourseGrid
-    v-else-if="!course"
-    :courses="manifest" :progress="courseProgress" :admin="isAdmin" :authed="authed"
-    :loading="loading" :error="loadError"
-    @open="open" @admin="showAdmin = true" @signout="signOut" />
+    <!-- Enrolment is a whole mode of its own, not a pane of the player: it has no use for
+         the exercise nav, and it has to be reachable from the grid, where there is none. -->
+    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="showAdmin = false" />
 
-  <div v-else class="shell" :class="{ collapsed: !sidebarOpen }">
-    <!-- Collapsed, the sidebar leaves a rail rather than nothing: a toggle that has to be
-         hunted for is a toggle nobody finds twice, and Contents is worth reaching without
-         reopening anything. -->
-    <aside v-if="!sidebarOpen" class="rail">
-      <button class="railbtn" title="Show the sidebar" @click="sidebarOpen = true">&raquo;</button>
-      <button class="railbtn" title="Contents" @click="showContents = true">&#9776;</button>
-    </aside>
+    <CourseGrid
+      v-else-if="!course"
+      :courses="manifest" :progress="courseProgress"
+      :loading="loading" :error="loadError"
+      @open="open" />
 
-    <aside v-else>
-      <div class="brand">
-        <span class="dot"></span>
-        <div>
-          <strong>ICE Practice</strong>
-          <small>{{ course?.title || 'Loading…' }}</small>
+    <div v-else class="shell" :class="{ collapsed: !sidebarOpen }">
+      <!-- Collapsed, the sidebar leaves a rail rather than nothing: a toggle that has to be
+           hunted for is a toggle nobody finds twice, and Contents is worth reaching without
+           reopening anything. -->
+      <aside v-if="!sidebarOpen" class="rail">
+        <button class="railbtn" title="Show the sidebar" @click="sidebarOpen = true">&raquo;</button>
+        <button class="railbtn" title="Contents" @click="showContents = true">&#9776;</button>
+      </aside>
+
+      <aside v-else>
+        <div class="brand">
+          <strong>{{ course?.title || 'Loading…' }}</strong>
+          <button class="collapse" title="Hide the sidebar" @click="sidebarOpen = false">&laquo;</button>
         </div>
-        <button class="collapse" title="Hide the sidebar" @click="sidebarOpen = false">&laquo;</button>
-      </div>
 
-      <button class="courses" @click="backToCourses">&larr; All courses</button>
+        <button class="courses" @click="backToCourses">&larr; All courses</button>
 
-      <div class="progress" v-if="total">
-        <div class="bar"><i :style="{ width: (doneCount / total * 100) + '%' }"></i></div>
-        <small>{{ doneCount }} of {{ total }} complete</small>
-      </div>
-
-      <!-- Where they are, and the two moves either side of it. The whole structure is one
-           click away in Contents; this is the part they need without asking. -->
-      <div class="here" v-if="currentTopic">
-        <div class="hop">
-          <button class="step" :disabled="topicIndex <= 0"
-                  title="Previous topic" @click="goTopic(-1)">&lsaquo;</button>
-          <button class="step" :disabled="topicIndex >= topics.length - 1"
-                  title="Next topic" @click="goTopic(1)">&rsaquo;</button>
+        <div class="progress" v-if="total">
+          <div class="bar"><i :style="{ width: (doneCount / total * 100) + '%' }"></i></div>
+          <small>{{ doneCount }} of {{ total }} complete</small>
         </div>
-        <small>{{ unitOfCurrent?.unit }} {{ unitOfCurrent?.title }}</small>
-        <strong>{{ currentTopic.topic }} {{ currentTopic.title }}</strong>
-      </div>
 
-      <button class="contents" @click="showContents = true">
-        <span>Contents</span>
-        <span class="hint">{{ total }} exercises</span>
-      </button>
+        <!-- Where they are, and the two moves either side of it. The whole structure is one
+             click away in Contents; this is the part they need without asking. -->
+        <div class="here" v-if="currentTopic">
+          <div class="hop">
+            <button class="step" :disabled="topicIndex <= 0"
+                    title="Previous topic" @click="goTopic(-1)">&lsaquo;</button>
+            <button class="step" :disabled="topicIndex >= topics.length - 1"
+                    title="Next topic" @click="goTopic(1)">&rsaquo;</button>
+          </div>
+          <small>{{ unitOfCurrent?.unit }} {{ unitOfCurrent?.title }}</small>
+          <strong>{{ currentTopic.topic }} {{ currentTopic.title }}</strong>
+        </div>
 
-      <nav>
-        <button
-          v-for="e in currentTopic?.exercises || []" :key="e.id"
-          class="navitem"
-          :class="{ active: e.id === currentId, done: solved.has(e.id) }"
-          @click="currentId = e.id">
-          <span class="badge">{{ badgeFor(e, solved.has(e.id)) }}</span>
-          <span class="label">{{ e.title }}</span>
+        <button class="contents" @click="showContents = true">
+          <span>Contents</span>
+          <span class="hint">{{ total }} exercises</span>
         </button>
-      </nav>
 
-      <button v-if="isAdmin" class="signout" @click="showAdmin = true">Manage enrolment</button>
-      <button v-if="authed" class="signout" @click="signOut">Sign out</button>
-    </aside>
+        <nav>
+          <button
+            v-for="e in currentTopic?.exercises || []" :key="e.id"
+            class="navitem"
+            :class="{ active: e.id === currentId, done: solved.has(e.id) }"
+            @click="currentId = e.id">
+            <span class="badge">{{ badgeFor(e, solved.has(e.id)) }}</span>
+            <span class="label">{{ e.title }}</span>
+          </button>
+        </nav>
 
-    <main :class="{ 'with-slides': showSlides && slidesUrl }">
-      <div v-if="loadError" class="state error">
-        <h2>Couldn't load the course</h2>
-        <p>{{ loadError }}</p>
-      </div>
-      <div v-else-if="loading" class="state">
-        <p>Loading…</p>
-      </div>
-      <component
-        v-else-if="current"
-        :is="componentFor[current.type] || CodingExercise"
-        :key="current.id"
-        :course-id="course.id"
-        :exercise="current"
-        :done="solved.has(current.id)"
-        @solved="markSolved" />
+      </aside>
 
-      <footer v-if="total">
-        <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>
-        <span class="muted">{{ index + 1 }} / {{ total }}</span>
-        <!-- In the footer rather than inside an exercise, so every exercise type gets it. -->
-        <button v-if="slidesUrl" class="btn ghost" :class="{ on: showSlides }"
-                @click="showSlides = !showSlides">
-          {{ showSlides ? 'Hide slides' : 'Slides' }}
-        </button>
-        <button class="btn ghost" :disabled="index >= total - 1" @click="go(1)">Next</button>
-      </footer>
-    </main>
+      <main :class="{ 'with-slides': showSlides && slidesUrl }">
+        <div v-if="loadError" class="state error">
+          <h2>Couldn't load the course</h2>
+          <p>{{ loadError }}</p>
+        </div>
+        <div v-else-if="loading" class="state">
+          <p>Loading…</p>
+        </div>
+        <component
+          v-else-if="current"
+          :is="componentFor[current.type] || CodingExercise"
+          :key="current.id"
+          :course-id="course.id"
+          :exercise="current"
+          :done="solved.has(current.id)"
+          @solved="markSolved" />
 
-    <SlidesPanel
-      v-if="showSlides && slidesUrl"
-      :src="slidesUrl" :label="currentTopic?.label"
-      @close="showSlides = false" />
+        <footer v-if="total">
+          <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>
+          <span class="muted">{{ index + 1 }} / {{ total }}</span>
+          <!-- In the footer rather than inside an exercise, so every exercise type gets it. -->
+          <button v-if="slidesUrl" class="btn ghost" :class="{ on: showSlides }"
+                  @click="showSlides = !showSlides">
+            {{ showSlides ? 'Hide slides' : 'Slides' }}
+          </button>
+          <button class="btn ghost" :disabled="index >= total - 1" @click="go(1)">Next</button>
+        </footer>
+      </main>
 
-    <ContentsModal
-      v-if="showContents"
-      :course="course" :current-id="currentId" :solved="solved" :current-unit="unitOfCurrent?.unit"
-      @pick="id => { currentId = id; showContents = false; }"
-      @close="showContents = false" />
+      <SlidesPanel
+        v-if="showSlides && slidesUrl"
+        :src="slidesUrl" :label="currentTopic?.label"
+        @close="showSlides = false" />
+
+        <ContentsModal
+          v-if="showContents"
+          :course="course" :current-id="currentId" :solved="solved" :current-unit="unitOfCurrent?.unit"
+          @pick="id => { currentId = id; showContents = false; }"
+          @close="showContents = false" />
+    </div>
   </div>
 </template>
 
 <style scoped>
-.shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100vh; }
+/* The bar is a fixed row above whatever screen is showing, so the screen gets the rest of
+   the viewport and does its own scrolling. minmax(0,·) on the row, or a long exercise
+   pushes the grid taller than the window instead of scrolling inside it. */
+.app { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
 .shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
 .shell.collapsed { grid-template-columns: 44px minmax(0, 1fr); }
 .shell.collapsed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
 aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border);
         display: flex; flex-direction: column; min-height: 0; }
-.brand { display: flex; gap: 10px; align-items: center; padding: 18px 18px 14px; }
-.brand > div { min-width: 0; }
+.brand { display: flex; gap: 10px; align-items: center; padding: 16px 18px 12px; }
+.brand strong { min-width: 0; font-size: 13px; line-height: 1.35;
+                overflow: hidden; text-overflow: ellipsis; }
 .collapse { margin-left: auto; background: none; border: 0; cursor: pointer; padding: 2px 4px;
             color: var(--ice-fg-muted); font-size: 15px; line-height: 1; }
 .collapse:hover { color: var(--ice-fg); }
@@ -315,8 +324,6 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .contents:hover { border-color: var(--ice-primary-soft); }
 .contents .hint { margin-left: auto; font-weight: 400; font-size: 10px;
                   font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
-.brand small { display: block; color: var(--ice-fg-muted); font-size: 11px; }
-.dot { width: 12px; height: 12px; border-radius: 3px; background: var(--ice-primary); flex: none; }
 .courses { margin: 0 18px 12px; padding: 6px 8px; font: inherit; font-size: 12px;
            text-align: left; cursor: pointer;
            background: var(--ice-bg); color: var(--ice-fg-muted);
@@ -338,10 +345,6 @@ nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
          font-family: var(--ice-font-mono); background: var(--ice-bg); border: 1px solid var(--ice-border); }
 .navitem.done .badge { background: var(--ice-primary-soft); border-color: transparent; color: var(--ice-fg); }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.signout { flex: none; margin: 0; padding: 12px 18px; border: 0; border-top: 1px solid var(--ice-border);
-           background: none; color: var(--ice-fg-muted); font: inherit; font-size: 12px;
-           text-align: left; cursor: pointer; }
-.signout:hover { color: var(--ice-fg); }
 
 main { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
 .state { display: grid; place-content: center; text-align: center; color: var(--ice-fg-muted); gap: 6px; }
