@@ -1,0 +1,228 @@
+# Publish a course's content and slides. ONE definition, called by every course repo.
+#
+# This used to be a template each course copied into its own .github/workflows/. The two
+# copies drifted within a fortnight - templates/publish.yml gained a warning that never
+# reached the course repo - and a per-deck build would have meant maintaining the deck
+# selection logic in two places as well. icecore is public, so a private course repo can
+# call this directly; a course's own workflow is now about twelve lines.
+#
+# THE APP MUST BE DEPLOYED FIRST. This pipeline publishes content and decks and nothing
+# else: index.html, the JS bundle and auth.json all come from `just deploy` in the icecore
+# repo, which is manual and stays manual. Run that once before this workflow is any use,
+# and again whenever the player itself changes. Until then the bucket has no app in it and
+# CloudFront answers Access Denied, which says nothing about what is actually missing.
+#
+# WHAT MAKES THE SELECTIVITY SAFE. Two traps, both of which used to make this actively
+# destructive rather than merely wasteful:
+#
+#   1. The Slides button used to be derived from *built output* in content/slides/<topic>/.
+#      Skipping the deck build therefore published a course with no slides links at all,
+#      silently. It now comes from the deck source, so the two pipelines are independent.
+#   2. `aws s3 sync --delete` against slides/ with a partial dist DELETES EVERY DECK THAT
+#      WASN'T REBUILT. So slides sync one prefix at a time, `--delete` never applies to
+#      slides/ as a whole, and stale prefixes are reconciled explicitly against the list of
+#      decks the course actually has.
+#
+# Nothing secret is needed: authentication is OIDC, so there is no access key to rotate.
+
+name: publish
+
+on:
+  workflow_call:
+    inputs:
+      aws-role-arn:
+        description: The PublisherRoleArn output from `just infra-deploy`.
+        required: true
+        type: string
+      aws-region:
+        required: true
+        type: string
+      site-bucket:
+        description: The SiteBucket output.
+        required: true
+        type: string
+      distribution-id:
+        description: The DistributionId output.
+        required: true
+        type: string
+      node-version:
+        type: string
+        default: '22'
+      force-all:
+        description: Rebuild and republish everything, ignoring what changed.
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write      # required to request the OIDC token
+  contents: read
+
+concurrency:
+  group: publish-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  # playwright-chromium is in the slides devDependencies for PDF export only, and its
+  # install pulls a browser build nothing in this workflow uses.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The whole history, because deciding what to rebuild means diffing against the
+          # commit this push started from. A shallow clone makes that commit unreachable and
+          # the fallback below rebuilds everything - correct, but slowly, every time.
+          fetch-depth: 0
+
+      # ---- what changed -------------------------------------------------------------
+      - name: Work out what changed
+        id: scope
+        run: |
+          set -euo pipefail
+          before='${{ github.event.before }}'
+          all='${{ inputs.force-all }}'
+
+          # A manual run, a new branch, a force-push or a first push all leave us with no
+          # usable baseline. Rebuilding everything is the safe answer; saying so is the
+          # important part, because "published less than you meant to" is the failure mode
+          # of every selective pipeline and it is silent by nature.
+          if [ "$all" = 'true' ]; then
+            reason='force-all requested'
+          elif [ -z "$before" ] || [ "${before//0/}" = '' ]; then
+            all=true; reason='no baseline commit for this event'
+          elif ! git cat-file -e "${before}^{commit}" 2>/dev/null; then
+            all=true; reason="baseline ${before:0:8} is not in this clone"
+          fi
+
+          if [ "$all" = 'true' ]; then
+            echo "rebuilding everything - $reason"
+            echo 'content=true' >> "$GITHUB_OUTPUT"
+            echo 'slides=true'  >> "$GITHUB_OUTPUT"
+            echo 'since='       >> "$GITHUB_OUTPUT"
+          else
+            changed=$(git diff --name-only "$before" HEAD --)
+            echo "$changed" | sed 's/^/  /'
+            grep -qE '^content/'          <<<"$changed" && c=true || c=false
+            grep -qE '^slides/'           <<<"$changed" && s=true || s=false
+            # package-lock.json and the workflow caller itself can change how anything
+            # builds, so treat a root-level change as touching both.
+            grep -qE '^[^/]+$'            <<<"$changed" && { c=true; s=true; } || true
+            echo "content=$c" >> "$GITHUB_OUTPUT"
+            echo "slides=$s"  >> "$GITHUB_OUTPUT"
+            echo "since=$before" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            slides/package-lock.json
+
+      - run: npm ci
+
+      # Unconditional, even on a content-only push that will not build a single deck.
+      # The content build reads the deck sources through @slidev/parser to work out each
+      # topic's section ranges, and the parser is resolved from the course's slides/ so it
+      # matches the Slidev that builds the decks. Skip this and the parser is missing, every
+      # topic loses its interleaving, and index.json ships that way without failing - so a
+      # content push would quietly undo what the previous slides push published.
+      # The install is cached by setup-node and costs seconds.
+      - name: Install the deck toolchain
+        run: npm ci --prefix slides
+
+      # ---- gates --------------------------------------------------------------------
+      # Every reference solution must grade itself correct and a wrong query must fail.
+      # This is the gate: there is no staging environment, so a green verify is the only
+      # thing between a broken exercise and the students sitting in front of it.
+      #
+      # It also validates that every exercise's `section:` resolves to a real slide, which
+      # is why it needs the deck sources - but not a built deck, and not Slidev.
+      - name: Verify the content
+        if: steps.scope.outputs.content == 'true'
+        run: npm run verify
+
+      # Only the decks the change actually reached. `icecore slides` resolves each deck's
+      # transitive src: includes, so editing pages/_unit-1.5.md rebuilds four decks and
+      # editing pages/_frame-close.md rebuilds all of them - and anything non-markdown under
+      # slides/ (public/, the theme, the lockfile) is treated as global.
+      - name: Build the affected decks
+        if: steps.scope.outputs.slides == 'true'
+        env:
+          SINCE: ${{ steps.scope.outputs.since }}
+        run: |
+          set -euo pipefail
+          # The course's own icecore, not npx: npx would go to the network for a version
+          # that has to match the grader the lockfile pins.
+          if [ -n "$SINCE" ]; then
+            ./node_modules/.bin/icecore slides content --since "$SINCE"
+          else
+            ./node_modules/.bin/icecore slides content
+          fi
+
+      # The content build reads the deck *sources* - for the Slides button and for the
+      # section ranges the player interleaves with - so a slides-only push still has to
+      # rebuild index.json even though no exercise changed.
+      - name: Build content
+        run: npm run build
+
+      # ---- publish ------------------------------------------------------------------
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ inputs.aws-role-arn }}
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Publish
+        env:
+          BUCKET: ${{ inputs.site-bucket }}
+          DISTRIBUTION: ${{ inputs.distribution-id }}
+        run: |
+          set -euo pipefail
+          paths=()
+
+          # Content is a single coherent tree and --delete is right for it: an exercise that
+          # has been removed should stop being served.
+          aws s3 sync dist/content/ "s3://$BUCKET/content/" --delete
+          paths+=('/content/*')
+
+          manifest=content/slides/.built.json
+          if [ -f "$manifest" ]; then
+            mapfile -t built < <(jq -r '.built[]' "$manifest")
+            mapfile -t all   < <(jq -r '.all[]'   "$manifest")
+
+            # One prefix at a time. --delete is scoped to the single deck being replaced, so
+            # it can only ever remove files belonging to that deck - never a deck this run
+            # did not rebuild.
+            for topic in ${built[@]+"${built[@]}"}; do
+              [ -d "dist/slides/$topic" ] || continue
+              echo "publishing slides/$topic"
+              aws s3 sync "dist/slides/$topic/" "s3://$BUCKET/slides/$topic/" --delete
+              paths+=("/slides/$topic/*")
+            done
+
+            # Reconcile: a deck whose source has been deleted should stop being served, and
+            # nothing above would ever remove it. Guarded to things shaped like a topic
+            # number so an unrelated prefix under slides/ is never touched.
+            live=$(aws s3 ls "s3://$BUCKET/slides/" | awk '/PRE/ {print $2}' | tr -d '/')
+            for topic in $live; do
+              [[ "$topic" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
+              printf '%s\n' ${all[@]+"${all[@]}"} | grep -qx "$topic" && continue
+              echo "removing slides/$topic - the course no longer has a deck for it"
+              aws s3 rm "s3://$BUCKET/slides/$topic/" --recursive
+              paths+=("/slides/$topic/*")
+            done
+          fi
+
+          # A wildcard costs one path instead of sixty, and past a couple of dozen decks the
+          # per-path invalidation is both slower and billable.
+          if [ "${#paths[@]}" -gt 20 ]; then
+            paths=('/content/*' '/slides/*')
+          fi
+          echo "invalidating: ${paths[*]}"
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION" \
+            --paths "${paths[@]}" >/dev/null

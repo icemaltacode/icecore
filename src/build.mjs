@@ -340,6 +340,12 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     onError: (topic, msg) => deckErrors.push(`${topic}: deck will not parse - ${msg}`),
   });
   warnings.push(...deckErrors);
+  // Said out loud because the alternative is a course that quietly stops interleaving. The
+  // parser lives in the course's slides/, so `npm ci` there is a prerequisite of building
+  // content - not just of building decks, which is the intuition that gets this wrong.
+  if (sources.size && !decks.size)
+    warnings.push(`${sources.size} deck source(s) but @slidev/parser could not be loaded `
+      + `from ${srcDir} - no topic will interleave. Run npm ci there.`);
 
   const missingSections = [];   // verify fails on these - see below
   for (const course of courses.values())
