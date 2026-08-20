@@ -200,7 +200,14 @@ async function cmdVerify() {
 }
 
 async function cmdDev() {
-  const staging = path.join(contentDir, '..', '.icecore');   // see cmdBundle
+  const port = Number(flag('port', 5173));
+  /* Per port, because buildContent WIPES its output directory on startup. Two dev servers
+   * sharing one staging dir means the second one to boot deletes the first one's content
+   * out from under it, and the first then answers every content request with the app's own
+   * index page - a 200, with HTML, which fails as "unexpected token <" somewhere far away.
+   * `bundle` already had its own directory for exactly this reason; `dev` didn't, because
+   * nobody ran two. With several sessions on one machine, two is normal. */
+  const staging = path.join(contentDir, '..', '.icecore', String(port));
   await buildContent({ contentDir, outDir: staging });
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
   // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
@@ -216,7 +223,7 @@ async function cmdDev() {
     configFile: path.join(APP, 'vite.config.js'),
     root: APP,
     publicDir: staging,
-    server: { port: Number(flag('port', 5173)), open: true },
+    server: { port, open: true },
   });
   await server.listen();
   server.printUrls();

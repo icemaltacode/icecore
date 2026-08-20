@@ -27,7 +27,7 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
 </script>
 
 <template>
-  <article class="step">
+  <article class="slidestep">
     <header>
       <span class="eyebrow">Slides</span>
       <h2>{{ row.title }}</h2>
@@ -42,16 +42,27 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
 </template>
 
 <style scoped>
-.step { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; height: 100%; }
-header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 12px; }
-.eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+/* THE ROOT CLASS HAS TO BE UNIQUE ACROSS THE WHOLE APP, not just unique in here.
+ *
+ * Vue's scoped CSS still reaches a child component's ROOT element - that is deliberate, so
+ * a parent can position the child it renders. So App.vue's rules land on this <article>.
+ * It was `class="step"`, and App.vue scopes `.step { width: 26px; height: 22px }` for the
+ * topic-hop buttons in the sidebar. The frame rendered, the deck inside it booted fine, and
+ * the whole thing was laid out at 26x22 pixels - a blank strip under a correct header,
+ * which reads as "the deck failed to load" and sends you looking at iframes and CORS.
+ *
+ * Same shape as App.vue's `.bar` once rounding TopBar's corners, because TopBar's root
+ * happened to be <header class="bar">. Pick a name nothing else would choose. */
+.slidestep { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; height: 100%; }
+.slidestep > header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 12px; }
+.slidestep .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
            font-family: var(--ice-font-mono); color: var(--ice-primary-strong); }
-h2 { margin: 0; font-size: 18px; line-height: 1.3; }
-.count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
-.link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
-.link:hover { color: var(--ice-fg); }
+.slidestep h2 { margin: 0; font-size: 18px; line-height: 1.3; }
+.slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
+.slidestep .link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
+.slidestep .link:hover { color: var(--ice-fg); }
 /* White behind it deliberately: a deck is its own site with its own light theme, and the
    player's dark ground showing through while it loads reads as a broken frame. */
-iframe { width: 100%; height: 100%; border: 0; min-height: 0; background: #fff;
+.slidestep iframe { width: 100%; height: 100%; border: 0; min-height: 0; background: #fff;
          border-top: 1px solid var(--ice-border); }
 </style>
