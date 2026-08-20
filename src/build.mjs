@@ -223,7 +223,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const usedApps = new Set();     // "<topic>/<name>", same idea for embedded apps
   const missingApps = [];
   const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
-  const course = { id: courseMeta.id, title: courseMeta.title, modules: [] };
+  // The card image for the course grid. Named in course.json and resolved beside it, the
+  // same way an exercise's figures are resolved beside the exercise - a course shouldn't
+  // have to know where the bundle is mounted either. Optional: without one the player
+  // draws a tile instead, which is why a *missing* file is an error and an absent field
+  // is not. Square: the grid crops to 1:1 and a wide image loses its edges.
+  const course = {
+    id: courseMeta.id, title: courseMeta.title, modules: [],
+    blurb: courseMeta.blurb, image: courseMeta.image,
+  };
   const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
 
   for (const topicId of fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort(byNumber)) {
@@ -296,6 +304,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     m.units.sort((a, b) => byNumber(a.unit, b.unit));
     for (const u of m.units) u.topics.sort((a, b) => byNumber(a.topic, b.topic));
   }
+  if (course.image && !fs.existsSync(path.join(contentDir, course.image)))
+    missingImages.push(`course.json: no image at ${course.image}`);
   const courses = new Map([[course.id, course]]);
 
   // ---- discover slide decks ----
@@ -450,8 +460,22 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         apps++;
       }
 
+      // Published beside the course's other assets, so it inherits the content sync and
+      // the CloudFront key group without anything else knowing about it.
+      let cover = null;
+      if (course.image) {
+        const from = path.join(contentDir, course.image);
+        if (fs.existsSync(from)) {
+          cover = `cover${path.extname(course.image)}`;
+          fs.copyFileSync(from, path.join(dir, cover));
+        }
+      }
+
+      // `image` deliberately does not go into index.json: on the course object it is the
+      // source filename, and a field of the same name in the manifest is the published
+      // path. One name, two meanings, is how a wrong <img src> gets shipped.
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({
-        ...course,
+        ...course, image: undefined,
         datasets: shipped,
       }));
 
@@ -459,7 +483,9 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       const all = topics.flatMap(t => t.exercises);
       const units = course.modules.flatMap(m => m.units);
       manifest.push({
-        id: course.id, title: course.title,
+        id: course.id, title: course.title, blurb: course.blurb,
+        // Relative to the content root, which is the only path the player knows.
+        image: cover && `${course.id}/${cover}`,
         modules: course.modules.map(m => ({
           module: m.module, title: m.title,
           units: m.units.map(u => ({ unit: u.unit, title: u.title, label: u.label })),

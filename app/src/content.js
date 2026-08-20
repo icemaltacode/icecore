@@ -16,6 +16,9 @@ export const loadManifest = () => json(`${BASE}courses.json`);
 /** One course: units, exercises, expected results, and reference solutions. */
 export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.json`);
 
+/** A course's card image, published beside its content and named in the manifest. */
+export const courseImage = rel => `${BASE}${rel}`;
+
 /** Where a topic's figures live. Exercises reference them by bare filename. */
 export const imageBase = (courseId, topic) =>
   `${BASE}${encodeURIComponent(courseId)}/images/${encodeURIComponent(topic)}/`;

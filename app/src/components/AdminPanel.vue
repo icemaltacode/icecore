@@ -55,7 +55,7 @@ async function remove(user) {
     <div class="card">
       <header>
         <h2>Course enrolment</h2>
-        <button class="btn ghost" @click="emit('close')">Back to practising</button>
+        <button class="btn ghost" @click="emit('close')">Done</button>
       </header>
       <p class="muted">Inviting someone who has no account creates one and emails them a
         temporary password. There is no progress reporting here yet.</p>
@@ -96,7 +96,7 @@ async function remove(user) {
 </template>
 
 <style scoped>
-.admin { overflow: auto; padding: 40px; display: flex; justify-content: center; }
+.admin { height: 100%; overflow: auto; padding: 40px; display: flex; justify-content: center; }
 .card { width: min(720px, 100%); }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h2 { margin: 0; font-size: 22px; }

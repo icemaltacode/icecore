@@ -56,7 +56,7 @@ A course repo supplies:
 
 ```
 content/
-  course.json                      { id, title, modules: [{ module, title }] }
+  course.json                      { id, title, image?, blurb?, modules: [...] }
   exercises/<topic>/_topic.json    { topic, title, unit, unitTitle }
   exercises/<topic>/NN-slug.md     one exercise: frontmatter + markdown sections
   data/<table>.sql                 CREATE TABLE + INSERTs
@@ -81,6 +81,31 @@ twice. Module titles come from `course.json`, and a unit whose topics disagree a
 title is a warning rather than a silent pick.
 
 Numbers sort numerically, so unit 1.10 follows 1.9 rather than 1.1.
+
+### The course card
+
+Signing in lands on a grid of the courses a student is enrolled on, one card each.
+`course.json` supplies what goes on it:
+
+```json
+{
+  "id": "icex-data-analyst",
+  "title": "ICExDataCamp Data Analyst",
+  "image": "cover.png",
+  "blurb": "Query, aggregate and join relational data with SQL.",
+  "modules": [{ "module": "1", "title": "Associate Data Analyst in SQL" }]
+}
+```
+
+`image` is a path relative to `content/`, and the file should be **square** — the card
+crops to 1:1. Both fields are optional: without a blurb the card is just a title, and
+without an image it draws a coloured tile carrying the course's initial, which is a
+deliberate look rather than a hole. Naming an image that isn't there fails `verify`, the
+same as a missing figure.
+
+Progress on each card is the count of solved exercises over the course total, so a
+returning student sees where they are before opening anything. Opening a course puts
+`?course=` in the URL — coming back to that tab resumes the course rather than the grid.
 
 (For anyone importing from DataCamp: their *track* is a module, their *course* is a unit,
 their *chapter* is a topic.)
