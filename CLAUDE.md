@@ -115,7 +115,22 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
 ## Embedded apps
 
 A prompt can host a self-contained static app: a line reading `::app <name>::`, optionally
-`::app <name> height=720::`, renders an iframe. The app is a directory beside the exercise
+`::app <name> height=720::`, renders an iframe. **`height=` is a floor, not a height** -
+[`app/src/appframe.js`](app/src/appframe.js) measures the app and grows the frame past it
+when the content needs more, so the authored number only has to be not-too-large. Sixteen
+of the twenty-two shipped apps do exceed theirs, two of them by ~600px.
+
+Every measurement is taken at the *same* reference height, the floor: set frame to floor,
+read `scrollHeight`, write the answer back, all in one task so the reference is never
+painted. Measuring at the frame's current height would be circular - these apps were built
+to fill DataCamp's exercise pane, so what they report depends on what you gave them, and the
+frame walks down the page a few pixels per redraw. Neutralising that instead would collapse
+any chart with `flex: 1`. Checked against all 22: every one is a fixed point of the
+reference measurement.
+
+The watcher is installed once from `main.js`, not owned by a component: the `::app` markup
+is produced by `md.js` and injected with `v-html` from several components and owned by none,
+so a future component rendering prose would silently get fixed-height frames again. The app is a directory beside the exercise
 at `content/exercises/<topic>/apps/<name>/` with its own `index.html`, mirrored to
 `content/<course>/apps/<topic>/<name>/` at build time and shipped whole. `verify` fails on
 a reference with no `index.html` behind it, the same way it does for a missing figure.

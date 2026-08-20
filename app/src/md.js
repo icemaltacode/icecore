@@ -1,4 +1,6 @@
 /* Deliberately tiny markdown renderer — the content is ours and uses a known subset. */
+import { DEFAULT_FLOOR as DEFAULT_APP_FLOOR } from './appframe.js';
+
 /* `>` is deliberately not escaped: it is only special after a `<`, which is escaped, and
  * leaving it alone is what lets the blockquote rule below still see its own marker. */
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -49,8 +51,14 @@ export function md(src = '', { base = '', apps = '', escaped = false } = {}) {
     if (embed) {
       flushPara(); flushList();
       const [, name, height] = embed;
+      /* The authored height is a FLOOR, not the height: `appframe.js` measures the app and
+       * grows past it when the content needs more. Carried in `data-floor` as well as in
+       * the inline style, because the style is only a starting point - it is overwritten on
+       * the first measurement and the floor has to survive that. `height=` is optional for
+       * the same reason; without it the measurement does all the work. */
+      const floor = Number(height) || DEFAULT_APP_FLOOR;
       out.push(
-        `<div class="appframe" style="height:${height || 620}px">` +
+        `<div class="appframe" data-floor="${floor}" style="height:${floor}px">` +
         `<iframe src="${apps}${encodeURIComponent(name)}/index.html" title="${name}" ` +
         `loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe></div>`);
       continue;
