@@ -65,26 +65,29 @@ const REVEAL = `
  *
  * The deck is the whole topic - every section of it - and Slidev's Next quite reasonably
  * walks the lot. That is wrong here: a slide step IS one section, and paging out of it
- * lands the student in the next section's slides having skipped the exercises that sit
- * between the two. The interleaving is the entire point of splitting them up, so the
- * range has to be a wall rather than a suggestion.
+ * lands the student in the next section's slides having skipped the exercises interleaved
+ * between the two, which is the one thing the interleaving exists to prevent.
  *
- * Enforced on `hashchange` rather than by intercepting the controls, because there are far
- * too many ways to move: the bar's arrows, arrow keys, space, PageDown, a swipe, and
- * clicking any slide in the overview. All of them end in the hash, so that is the one place
- * that catches every route out.
+ * HOOKED ON pushState, NOT ON hashchange. `routerMode: hash` is a vue-router hash history,
+ * and vue-router hash mode still drives the History API: it calls `history.pushState` with
+ * a `#/n` URL. No `hashchange` fires, and no `popstate` either - a listener on those sees
+ * nothing at all while the deck pages happily past the end. (It is worth stating because
+ * the first version of this did exactly that and looked correct.)
  *
- * `replace` and not an assignment: bouncing back would otherwise leave the out-of-range
- * slide in the frame's history, and one Back would take the student straight to it.
+ * Patching pushState catches every way out at once - the bar's arrows, arrow keys, space,
+ * PageDown, a swipe, and clicking any slide in the overview - because all of them are the
+ * router navigating. Guarding the keys instead would be wrong as well as incomplete:
+ * ArrowRight on a v-click slide advances the CLICK, and blocking it on the section's last
+ * slide would strand the student mid-build.
  *
- * The hash is `#/<slide>` or `#/<slide>/<click>` on a slide with v-clicks, so only the
- * leading number is read - clamping must not disturb where they are within a slide. */
-const clamp = win => {
-  const n = Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]);
-  if (!n || (n >= props.row.slide && n <= props.row.end)) return;
-  win.location.replace(`#/${n < props.row.slide ? props.row.slide : props.row.end}`);
-};
-
+ * The push is allowed through and then undone with `back()`, rather than being blocked.
+ * vue-router updates its own reactive location alongside the History call, so refusing to
+ * delegate leaves the URL right and the rendered slide wrong; going back one entry moves
+ * both. The cost is a frame of the next slide before it returns, which reads as the section
+ * ending rather than as a fault.
+ *
+ * The hash is `#/<slide>` or `#/<slide>/<click>`, so only the leading number is read - a
+ * click within an in-range slide must not be disturbed. */
 const onLoad = () => {
   const win = frame.value?.contentWindow;
   const doc = frame.value?.contentDocument;
@@ -93,13 +96,36 @@ const onLoad = () => {
   style.id = 'ice-reveal-controls';
   style.textContent = REVEAL;
   doc.head.appendChild(style);
-  /* No teardown: the listener is on the frame's own window, which the browser destroys
-   * when the iframe navigates or the step is left. The iframe is keyed on `src`, so
-   * moving between two sections of one deck builds a new element rather than reusing
-   * this one with a stale range closed over. */
-  win.addEventListener('hashchange', () => clamp(win));
-  clamp(win);
+
+  const { slide: lo, end: hi } = props.row;
+  const at = () => Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]) || 0;
+  let fixing = false;
+  const clamp = () => {
+    const n = at();
+    if (fixing || !n || (n >= lo && n <= hi)) return;
+    fixing = true;
+    win.history.back();
+    /* A backstop, not the mechanism. `back()` relies on the previous entry being in range,
+     * which it is because every entry has passed through here - but a hash typed straight
+     * into the address bar has no in-range entry behind it at all. */
+    win.setTimeout(() => {
+      fixing = false;
+      const m = at();
+      if (m && (m < lo || m > hi)) win.location.replace(`#/${m < lo ? lo : hi}`);
+    }, 80);
+  };
+
+  /* No teardown: these live on the frame's own window, which the browser destroys when the
+   * iframe navigates or the step is left. The iframe is keyed on `src`, so moving between
+   * two sections of one deck builds a new element rather than reusing this one with a stale
+   * range closed over. */
+  const push = win.history.pushState;
+  win.history.pushState = function (...a) { const r = push.apply(this, a); clamp(); return r; };
+  win.addEventListener('popstate', clamp);
+  win.addEventListener('hashchange', clamp);
+  clamp();
 };
+
 </script>
 
 <template>
