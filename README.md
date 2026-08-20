@@ -128,9 +128,12 @@ topic they belong to, and a step either way. Everything else is behind **Content
 holding the whole collapsible structure with a filter across every exercise, topic and unit
 title. Four hundred exercises in a permanent tree is a wall, not navigation.
 
-It starts collapsed to a rail and expands by click rather than by hover; the choice is
-remembered. The rail keeps the reopen and Contents buttons, so nothing has to be hunted
-for.
+It starts collapsed to a rail and is held open by a **pin**, in the sidebar's own header
+and on the rail — pinned, it comes back open on the next visit; unpinned, it collapses and
+stays that way. The pin is the whole of the state, so there is no preference hidden
+anywhere else. The rail keeps the pin and Contents, so nothing has to be hunted for, and it
+is click rather than hover: the pointer crosses that edge constantly on the way to the
+editor.
 
 Opening a course for the first time starts at its first exercise; after that it resumes
 where the student left off. The place-marker is stored per course beside the progress

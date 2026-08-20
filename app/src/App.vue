@@ -10,6 +10,7 @@ import AdminPanel from './components/AdminPanel.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
+import Icon from './components/Icon.vue';
 import { badgeFor } from './badges.js';
 import SlidesPanel from './components/SlidesPanel.vue';
 import SignIn from './components/SignIn.vue';
@@ -36,13 +37,18 @@ const unitOfCurrent = computed(() => (course.value?.modules || [])
  * hundred exercises in a permanent tree is not navigation, it is a wall. */
 const showContents = ref(false);
 
-/* Collapsed until asked for: the exercise is the work, and the rail keeps the two things
- * worth reaching from it. Deliberately click-to-toggle rather than reveal-on-hover - the
- * pointer crosses the left edge constantly on the way to the editor, and a sidebar that
- * opens itself on the way past is a twitch, not an affordance. */
-const SIDEBAR_KEY = 'ice-platform-sidebar';
-const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) === 'open');
-watch(sidebarOpen, v => localStorage.setItem(SIDEBAR_KEY, v ? 'open' : 'closed'));
+/* Pinned or not, and nothing else: the pin *is* the visibility, so the state that decides
+ * what the student sees on their next visit is the one they can see and press. A separate
+ * "open for now" would need its own close button and would leave the pin looking like a
+ * setting buried somewhere.
+ *
+ * Collapsed unless pinned. The exercise is the work, and the rail keeps the two things
+ * worth reaching from it. Click to toggle, never reveal-on-hover - the pointer crosses the
+ * left edge constantly on the way to the editor, and a sidebar that opens itself on the way
+ * past is a twitch, not an affordance. */
+const SIDEBAR_KEY = 'ice-sidebar-pinned';
+const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) === 'yes');
+watch(sidebarOpen, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
 
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
 const goTopic = d => {
@@ -190,14 +196,18 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
            hunted for is a toggle nobody finds twice, and Contents is worth reaching without
            reopening anything. -->
       <aside v-if="!sidebarOpen" class="rail">
-        <button class="railbtn" title="Show the sidebar" @click="sidebarOpen = true">&raquo;</button>
-        <button class="railbtn" title="Contents" @click="showContents = true">&#9776;</button>
+        <button class="railbtn loose" title="Pin the sidebar open" :aria-pressed="false"
+                @click="sidebarOpen = true"><Icon name="pin" :size="16" /></button>
+        <button class="railbtn" title="Contents" @click="showContents = true">
+          <Icon name="contents" :size="16" />
+        </button>
       </aside>
 
       <aside v-else>
         <div class="brand">
           <strong>{{ course?.title || 'Loading…' }}</strong>
-          <button class="collapse" title="Hide the sidebar" @click="sidebarOpen = false">&laquo;</button>
+          <button class="collapse" title="Unpin the sidebar" :aria-pressed="true"
+                  @click="sidebarOpen = false"><Icon name="pin" :size="16" /></button>
         </div>
 
         <button class="courses" @click="backToCourses">&larr; All courses</button>
@@ -295,15 +305,18 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .brand { display: flex; gap: 10px; align-items: center; padding: 16px 18px 12px; }
 .brand strong { min-width: 0; font-size: 13px; line-height: 1.35;
                 overflow: hidden; text-overflow: ellipsis; }
-.collapse { margin-left: auto; background: none; border: 0; cursor: pointer; padding: 2px 4px;
-            color: var(--ice-fg-muted); font-size: 15px; line-height: 1; }
-.collapse:hover { color: var(--ice-fg); }
+/* Pinned upright and in the accent, unpinned tilted and grey - the pin says which state it
+   is in, not which state pressing it would reach. */
+.collapse { margin-left: auto; flex: none; background: none; border: 0; cursor: pointer;
+            padding: 3px; border-radius: 6px; color: var(--ice-primary); line-height: 0; }
+.collapse:hover { background: var(--ice-raise-strong); }
 
 .rail { align-items: center; padding: 16px 0; gap: 8px; }
 .railbtn { width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
            background: none; border: 1px solid transparent; border-radius: 8px;
            color: var(--ice-fg-muted); font-size: 14px; line-height: 1; }
 .railbtn:hover { color: var(--ice-fg); border-color: var(--ice-border); background: var(--ice-bg); }
+.railbtn.loose :deep(.icon) { transform: rotate(45deg); }
 
 /* Where they are. The unit is context and the topic is the heading, so the topic is the
    one that gets the weight. */
