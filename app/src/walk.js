@@ -55,6 +55,10 @@ export function walkTopic(topic) {
       title: s.title,
       slide: s.slide,
       end: s.end,
+      /* The composed deck's length, carried so a slide step can number itself the way the
+       * deck's own paginator does. A section labelled "8 slides" beside a frame reading
+       * 13/31 is two counts of two different things and reads as a bug. */
+      total: topic.slideCount,
     });
     for (const e of topic.exercises || [])
       if (e.section === s.n) emit(asExercise(e));

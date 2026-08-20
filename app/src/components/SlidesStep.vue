@@ -24,6 +24,14 @@ const base = computed(() => /^https?:\/\//.test(props.deck || '')
   : `${import.meta.env.BASE_URL}${props.deck}`);
 const src = computed(() => `${base.value}#/${props.row.slide}`);
 const count = computed(() => (props.row.end - props.row.slide) + 1);
+/* Numbered the way the deck's own paginator numbers it, because both are on screen at
+ * once. The frame shows 13/31 - the COMPOSED deck, module frame and unit frame included -
+ * so a header reading "8 slides" is a second, correct, unrelated count of something else,
+ * and the two together read as a fault. Falls back to the plain count for a course whose
+ * build predates `slideCount`. */
+const range = computed(() => props.row.total
+  ? `${props.row.slide}\u2013${props.row.end} of ${props.row.total}`
+  : `${count.value} slide${count.value === 1 ? '' : 's'}`);
 
 /* SHOW SLIDEV'S OWN CONTROL BAR.
  *
@@ -133,7 +141,7 @@ const onLoad = () => {
     <header>
       <span class="eyebrow">Slides</span>
       <h2>{{ row.title }}</h2>
-      <span class="count">{{ count }} slide{{ count === 1 ? '' : 's' }}</span>
+      <span class="count">{{ range }}</span>
       <a class="link" :href="src" target="_blank" rel="noopener">Open in a tab</a>
     </header>
     <!-- The frame is held at 16:9 rather than filled to the pane. A deck letterboxes itself

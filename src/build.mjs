@@ -385,7 +385,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           + `${u.exercises.length} exercises have no section: - the topic won't interleave`);
       // Carried only when every exercise is placed: a partial mapping interleaves some of
       // the topic and silently drops the rest, which reads as lost exercises.
-      else u.sections = sections;
+      // `slideCount` is the COMPOSED deck's length - what Slidev's own paginator counts
+      // against - so the player can label a section in the same numbers the student is
+      // looking at inside the frame.
+      else { u.sections = sections; u.slideCount = decks.get(u.topic).slides; }
     }
 
   // ---- load datasets ----
