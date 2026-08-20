@@ -20,6 +20,14 @@ _default:
 dev:
     {{icecore}} dev {{course}}/content
 
+# Same server, but signed in - a fake session, no Cognito, no AWS. This is the one that
+# shows the student's actual view: `just dev` runs *open*, and open hides the tutor button,
+# the course filter, sign-out and the admin panel. Roles: student (default), admin, signin.
+# In `signin` any password gets you in, except `temp`, which raises the first-login
+# choose-a-password screen.
+preview role="student":
+    {{icecore}} dev {{course}}/content --as {{role}}
+
 # Every reference solution must grade itself correct, and a wrong query must fail.
 verify:
     {{icecore}} verify {{course}}/content

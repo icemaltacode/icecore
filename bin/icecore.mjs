@@ -3,8 +3,12 @@
  *
  *   icecore build  [contentDir] [--out dir]   publish content as static files
  *   icecore verify [contentDir]               check every solution grades itself correct
- *   icecore dev    [contentDir] [--port n]    run the player against a content directory
+ *   icecore dev    [contentDir] [--port n] [--as role]
+ *                                             run the player against a content directory
  *   icecore bundle [contentDir] [--out dir]   build a deployable site (app + content)
+ *
+ * `dev --as student|admin|signin` fakes the whole authenticated session locally, so the
+ * signed-in screens can be worked on without AWS. See app/src/preview.js.
  *
  * contentDir defaults to ./content, so inside a course repo the commands take no arguments.
  */
@@ -58,6 +62,7 @@ switch (cmd) {
   icecore build  [contentDir] [--out dir]   publish content as static files (default out: dist)
   icecore verify [contentDir]               check every solution grades itself correct
   icecore dev    [contentDir] [--port n]    run the player against a content directory
+                 [--as student|admin|signin]  ...as a signed-in user, with no AWS
   icecore bundle [contentDir] [--out dir]   build a deployable site (app + content)
 
 contentDir defaults to ./content.`);
@@ -183,6 +188,15 @@ async function cmdVerify() {
 async function cmdDev() {
   const staging = path.join(contentDir, '..', '.icecore');   // see cmdBundle
   await buildContent({ contentDir, outDir: staging });
+  // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
+  // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
+  // `bundle` sets false - preview cannot leak into anything that ships.
+  const as = flag('as');
+  if (as) {
+    if (!['student', 'admin', 'signin'].includes(as)) die(`--as must be student, admin or signin`);
+    process.env.VITE_ICECORE_PREVIEW = as;
+    console.log(`preview: running as a signed-in ${as === 'signin' ? 'user (starting at the sign-in screen)' : as}`);
+  }
   const { createServer } = await import('vite');
   const server = await createServer({
     configFile: path.join(APP, 'vite.config.js'),

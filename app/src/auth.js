@@ -9,11 +9,19 @@
  * trade the resulting token for CloudFront signed cookies at POST /api/session. Those
  * cookies are HttpOnly and same-origin, so every later request for content and slides
  * carries them without this module being involved again.
+ *
+ * `icecore dev --as <role>` stands in for the whole of that - see preview.js. Every branch
+ * marked PREVIEW below is dev-only and cannot survive a build.
  */
 import { reactive } from 'vue';
 import { CognitoUserPool, CognitoUser, AuthenticationDetails } from 'amazon-cognito-identity-js';
+import { previewRole, previewApi } from './preview.js';
 
 const BASE = import.meta.env.BASE_URL;
+const PREVIEW = previewRole();
+/* Preview's sign-out has to be remembered somewhere, or reloading signs you straight back
+ * in and the button looks broken. Session-scoped: closing the tab forgets it. */
+const PREVIEW_OUT = 'ice-preview-signed-out';
 
 let config = null;   // { userPoolId, clientId } or null when auth is switched off
 let pool = null;
@@ -27,10 +35,11 @@ let token = null;    // the current id token, for calls to /api/*
  */
 export const session = reactive({ courses: null, admin: false, expires: null });
 
-export const isEnabled = () => !!config;
+export const isEnabled = () => !!config || !!PREVIEW;
 
 /** Read auth.json. A 404 means "no auth on this deployment", not an error. */
 export async function loadAuthConfig() {
+  if (PREVIEW) return { preview: PREVIEW };   // no auth.json, no user pool, no network
   try {
     const r = await fetch(`${BASE}auth.json`, { cache: 'no-store' });
     // A dev server answers unknown paths with the index page rather than a 404, so a 200
@@ -48,6 +57,10 @@ const idToken = cognitoSession => cognitoSession.getIdToken().getJwtToken();
 
 /** An already-signed-in user returning to the tab. Resolves to a token or null. */
 export function restore() {
+  // 'signin' is the one preview role that starts logged out: it exists so the sign-in and
+  // choose-a-password screens can be looked at without a real user pool behind them.
+  if (PREVIEW) return Promise.resolve(
+    PREVIEW === 'signin' || sessionStorage.getItem(PREVIEW_OUT) ? null : 'preview-token');
   const user = pool?.getCurrentUser();
   if (!user) return Promise.resolve(null);
   return new Promise(resolve => {
@@ -61,6 +74,13 @@ export function restore() {
  * sign-in, so it is a normal path rather than an edge case.
  */
 export function signIn(email, password) {
+  if (PREVIEW) {
+    sessionStorage.removeItem(PREVIEW_OUT);
+    // Any password signs you in, except the literal `temp`, which raises the first-login
+    // password challenge. That screen is otherwise unreachable locally, and it is the one
+    // every invited student meets first.
+    return Promise.resolve(password === 'temp' ? { challenge: 'NEW_PASSWORD' } : 'preview-token');
+  }
   const user = new CognitoUser({ Username: email, Pool: pool });
   return new Promise((resolve, reject) => {
     user.authenticateUser(new AuthenticationDetails({ Username: email, Password: password }), {
@@ -72,6 +92,7 @@ export function signIn(email, password) {
 }
 
 export function completeNewPassword(password) {
+  if (PREVIEW) return Promise.resolve('preview-token');
   return new Promise((resolve, reject) => {
     // Cognito rejects the challenge if the attributes it just handed us are echoed back,
     // so send none - the pool requires nothing the invitation didn't already set.
@@ -97,6 +118,7 @@ export async function startSession(idJwt) {
  * 401, which is what happens when a tab has been left open past the token's lifetime.
  */
 export async function api(path, { method = 'GET', body, retry = true } = {}) {
+  if (PREVIEW) return previewApi(path, { method, body });
   const r = await fetch(`${BASE}api/${path}`, {
     method,
     headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
@@ -113,6 +135,7 @@ export async function api(path, { method = 'GET', body, retry = true } = {}) {
 }
 
 export function signOut() {
+  if (PREVIEW) sessionStorage.setItem(PREVIEW_OUT, '1');
   pool?.getCurrentUser()?.signOut();
   token = null;
   session.courses = null; session.admin = false; session.expires = null;

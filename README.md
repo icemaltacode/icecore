@@ -30,6 +30,26 @@ in their own repos and depend on this one.
 
 `dir` defaults to `./content`.
 
+### Working on the player's own UI
+
+`icecore dev` runs the platform **open** — no sign-in, and none of the affordances that
+only exist for a signed-in student: the tutor button, the enrolment filter, sign-out, the
+admin panel. That makes the screens hardest to design the ones you cannot see locally.
+
+```
+icecore dev content --as student   # the student's view, fully signed in
+icecore dev content --as admin     # ...plus the enrolment panel
+icecore dev content --as signin    # start logged out, at the sign-in screen
+```
+
+There is no Cognito, no API and no AWS account behind any of it — `app/src/preview.js`
+stands in for the lot. Progress goes to localStorage; the tutor returns a canned reply that
+says so; enrolments are in memory and reset on reload. In the `signin` role any password
+works, except the literal `temp`, which raises the first-login choose-a-password challenge.
+
+Preview is gated on `import.meta.env.DEV` as well as the flag, so it cannot reach anything
+`icecore bundle` produces.
+
 ## The content contract
 
 A course repo supplies:
