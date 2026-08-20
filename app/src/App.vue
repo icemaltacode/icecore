@@ -9,6 +9,7 @@ import DragDropExercise from './components/DragDropExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
+import { badgeFor } from './badges.js';
 import SlidesPanel from './components/SlidesPanel.vue';
 import SignIn from './components/SignIn.vue';
 
@@ -19,7 +20,6 @@ const loadError = ref('');
 const currentId = ref(null);
 // Coding is the default; anything else declares its own player.
 const componentFor = { mcq: McqExercise, dragdrop: DragDropExercise };
-const badgeFor = { mcq: '?', dragdrop: '⇅' };
 const needsSignIn = ref(false);
 const authed = ref(false);
 const showAdmin = ref(false);
@@ -225,7 +225,7 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
           class="navitem"
           :class="{ active: e.id === currentId, done: solved.has(e.id) }"
           @click="currentId = e.id">
-          <span class="badge">{{ solved.has(e.id) ? '✓' : (badgeFor[e.type] || 'SQL') }}</span>
+          <span class="badge">{{ badgeFor(e, solved.has(e.id)) }}</span>
           <span class="label">{{ e.title }}</span>
         </button>
       </nav>

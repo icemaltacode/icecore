@@ -10,6 +10,7 @@
  * through eleven units.
  */
 import { ref, computed, watch, onMounted, nextTick } from 'vue';
+import { badgeFor } from '../badges.js';
 
 const props = defineProps({
   course: Object,
@@ -90,25 +91,25 @@ watch(query, () => { if (box.value) box.value.scrollTop = 0; });
         <template v-for="m in shown" :key="m.module">
           <h4>Module {{ m.module }} &middot; {{ m.title }}</h4>
 
-          <template v-for="u in m.units" :key="u.unit">
-            <button class="unit" :class="{ open: isOpen(u) }" @click="toggle(u.unit)">
+          <section v-for="u in m.units" :key="u.unit" class="unit" :class="{ open: isOpen(u) }">
+            <button class="unithead" @click="toggle(u.unit)">
               <span class="caret">{{ isOpen(u) ? '▾' : '▸' }}</span>
               <span class="label">{{ u.unit }} {{ u.title }}</span>
               <span class="tally">{{ unitDone(u) }}/{{ unitTotal(u) }}</span>
             </button>
 
-            <template v-if="isOpen(u)">
+            <div v-if="isOpen(u)" class="topics">
               <div v-for="t in u.topics" :key="t.topic" class="topic">
                 <h5>{{ t.topic }} {{ t.title }}</h5>
                 <button v-for="e in t.exercises" :key="e.id" class="entry"
                         :class="{ active: e.id === currentId, done: solved?.has(e.id) }"
                         @click="emit('pick', e.id)">
-                  <span class="badge">{{ solved?.has(e.id) ? '✓' : '' }}</span>
+                  <span class="badge">{{ badgeFor(e, solved?.has(e.id)) }}</span>
                   <span class="label">{{ e.title }}</span>
                 </button>
               </div>
-            </template>
-          </template>
+            </div>
+          </section>
         </template>
 
         <p v-if="!shown.length" class="empty">Nothing matches “{{ query }}”.</p>
@@ -134,22 +135,39 @@ header { display: flex; gap: 10px; padding: 14px; border-bottom: 1px solid var(-
 .body { overflow: auto; padding: 8px 12px 18px; }
 h4 { margin: 16px 8px 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
      color: var(--ice-primary-strong); }
-h5 { margin: 10px 8px 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
-     color: var(--ice-fg-muted); font-weight: 500; }
-.topic { margin-left: 4px; }
-.unit, .entry { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
-                border: 0; background: none; cursor: pointer; font: inherit;
-                padding: 7px 8px; border-radius: 8px; color: var(--ice-fg); }
-.unit { font-size: 13px; font-weight: 600; }
-.unit:hover, .entry:hover { background: var(--ice-bg); }
+/* Three grounds, one per level: the sheet, a unit sunk into it, and a topic lifted back
+   out again. Depth rather than indentation alone - at four hundred rows an indent is not
+   enough to tell you which unit you are looking at. */
+.unit { background: var(--ice-bg); border: 1px solid var(--ice-border);
+        border-radius: var(--ice-radius); margin: 0 0 8px; overflow: hidden; }
+.unithead { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
+            border: 0; background: none; cursor: pointer; font: inherit; font-size: 13px;
+            font-weight: 600; padding: 10px 11px; color: var(--ice-fg); }
+.unithead:hover { background: rgba(255, 255, 255, .03); }
 .caret { flex: none; width: 10px; color: var(--ice-fg-muted); font-size: 10px; }
 .tally { flex: none; margin-left: auto; font-size: 10px; font-family: var(--ice-font-mono);
          color: var(--ice-fg-muted); }
-.entry { padding-left: 26px; font-size: 13px; color: var(--ice-fg-muted); }
+
+.topics { padding: 0 8px 8px; }
+.topic { background: rgba(255, 255, 255, .04); border-radius: 8px;
+         padding: 4px 7px 7px; margin-top: 6px; }
+h5 { margin: 6px 4px 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+     color: var(--ice-fg-muted); font-weight: 500; }
+
+.entry { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
+         border: 0; background: none; cursor: pointer; font: inherit; font-size: 13px;
+         padding: 6px 6px; border-radius: 7px; color: var(--ice-fg-muted); }
+.entry:hover { background: rgba(255, 255, 255, .05); color: var(--ice-fg); }
 .entry.done { color: var(--ice-fg); }
 .entry.active { background: var(--ice-bg); color: var(--ice-fg);
                 box-shadow: inset 2px 0 0 var(--ice-primary); }
-.badge { flex: none; width: 14px; font-size: 10px; color: var(--ice-primary-strong); }
+/* Same badge as the sidebar, so an exercise looks like itself in both places. */
+.badge { flex: none; min-width: 26px; height: 20px; padding: 0 4px; border-radius: 5px;
+         display: grid; place-items: center; font-size: 9px; letter-spacing: .04em;
+         font-family: var(--ice-font-mono); background: var(--ice-bg);
+         border: 1px solid var(--ice-border); }
+.entry.done .badge { background: var(--ice-primary-soft); border-color: transparent;
+                     color: var(--ice-fg); }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty { color: var(--ice-fg-muted); font-size: 13px; padding: 16px 8px; }
 </style>
