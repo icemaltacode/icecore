@@ -18,6 +18,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
+import { openExpectedCache } from './expected-cache.mjs';
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -406,6 +407,13 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   }
 
   // ---- precompute expected results ----
+  //
+  // Reference solutions are run here rather than in the browser, because booting PGlite
+  // costs seconds and a check has to be instant. `expected-cache.mjs` then keeps the
+  // results between builds: without it every `icecore dev` restart re-runs all of this, and
+  // a one-line copy edit costs four minutes.
+  const cache = openExpectedCache({ contentDir, extensions: Object.keys(EXTENSIONS), log });
+
   const seeded = new Map();
   const template = async name => {
     if (!seeded.has(name)) {
@@ -427,11 +435,44 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   };
 
   let computed = 0, failed = 0;
+
+  /* The single place an outcome becomes warnings, counters and `step.expected` - reached
+   * identically whether it was just computed or replayed off disk. Two code paths here is
+   * exactly how a cached build starts quietly reporting different numbers from a cold one,
+   * which would make the cache impossible to trust. */
+  const record = (u, ex, outcome) => {
+    if (outcome.setupError) {
+      warnings.push(`${u.topic} ${ex.file}: setup failed - ${outcome.setupError}`);
+      failed++;
+      return;
+    }
+    (ex.steps || []).forEach((step, i) => {
+      const r = outcome.steps[i];
+      if (!r) return;                                  // a step with no solution to run
+      if (r.error) {
+        warnings.push(`${u.topic} ${ex.file}: solution failed - ${r.error}`);
+        failed++;
+      } else {
+        step.expected = r.expected;
+        computed++;
+      }
+    });
+  };
+
   for (const course of courses.values()) {
     for (const u of topicsOf(course)) {
       for (const ex of u.exercises) {
         if (ex.type !== 'coding' || !ex.dataset) continue;
         if (!datasets[ex.dataset]) { warnings.push(`${u.topic} ${ex.file}: dataset "${ex.dataset}" not extracted yet`); continue; }
+
+        const key = cache.keyFor(datasets[ex.dataset], ex.setup, ex.steps || []);
+        const hit = cache.get(key);
+        if (hit) { record(u, ex, hit); continue; }
+
+        /* Everything below is the cache MISS path, and nothing above it touches a
+         * database - which is the whole point. On a fully warm cache no PGlite instance is
+         * booted at all, rather than booting one and asking it less. */
+        const outcome = { setupError: null, steps: [] };
         // An exercise's setup SQL builds the derived tables it needs on top of the
         // dataset. Applied once, to a copy, and dumped: every step then starts from a
         // database that already has them, and only exercises declaring setup pay for it.
@@ -440,41 +481,45 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           try {
             dump = await withSetup(dump, ex.setup);
           } catch (e) {
-            warnings.push(`${u.topic} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
-            failed++;
-            continue;
+            outcome.setupError = String(e.message).split('\n')[0];
           }
         }
-        let shared = null;   // SELECT-only solutions share a database; DDL needs a clean one
-        for (const step of ex.steps || []) {
-          if (!step.solution) continue;
-          const fresh = isDDL(step.solution);
-          const db = fresh
-            ? new PGlite({ loadDataDir: dump, extensions: EXTENSIONS })
-            : (shared ||= new PGlite({ loadDataDir: dump, extensions: EXTENSIONS }));
-          try {
-            const res = await db.exec(step.solution);
-            const last = res[res.length - 1];
-            step.expected = {
-              fields: (last?.fields || []).map(f => f.name),
-              // Values are deliberately not carried for a non-deterministic step: they
-              // would be compared against nothing and only mislead anyone reading the JSON.
-              rows: step.nondeterministic ? [] : (last?.rows || []).slice(0, 1000),
-              rowCount: last?.rows?.length ?? 0,
-              ordered: /\border\s+by\b/i.test(step.solution),
-              nondeterministic: !!step.nondeterministic,
-              ddl: fresh,
-            };
-            computed++;
-          } catch (e) {
-            warnings.push(`${u.topic} ${ex.file}: solution failed - ${String(e.message).split('\n')[0]}`);
-            failed++;
-          } finally { if (fresh) await db.close(); }
+        if (!outcome.setupError) {
+          let shared = null;   // SELECT-only solutions share a database; DDL needs a clean one
+          for (const step of ex.steps || []) {
+            // Held as a null rather than skipped: `record` reads the array positionally
+            // against ex.steps, so dropping an entry would shift every later result onto
+            // the wrong step.
+            if (!step.solution) { outcome.steps.push(null); continue; }
+            const fresh = isDDL(step.solution);
+            const db = fresh
+              ? new PGlite({ loadDataDir: dump, extensions: EXTENSIONS })
+              : (shared ||= new PGlite({ loadDataDir: dump, extensions: EXTENSIONS }));
+            try {
+              const res = await db.exec(step.solution);
+              const last = res[res.length - 1];
+              outcome.steps.push({ expected: {
+                fields: (last?.fields || []).map(f => f.name),
+                // Values are deliberately not carried for a non-deterministic step: they
+                // would be compared against nothing and only mislead anyone reading the JSON.
+                rows: step.nondeterministic ? [] : (last?.rows || []).slice(0, 1000),
+                rowCount: last?.rows?.length ?? 0,
+                ordered: /\border\s+by\b/i.test(step.solution),
+                nondeterministic: !!step.nondeterministic,
+                ddl: fresh,
+              } });
+            } catch (e) {
+              outcome.steps.push({ error: String(e.message).split('\n')[0] });
+            } finally { if (fresh) await db.close(); }
+          }
+          await shared?.close();
         }
-        await shared?.close();
+        cache.put(key, outcome);
+        record(u, ex, outcome);
       }
     }
   }
+  cache.sweep();
 
   // ---- emit ----
   const manifest = [];
@@ -578,7 +623,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   }
 
   for (const w of warnings) log(`  ! ${w}`);
-  log(`  precomputed ${computed} expected result sets${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
+  const { hits } = cache.stats();
+  log(`  precomputed ${computed} expected result sets`
+      + `${hits ? ` (${hits} exercise${hits === 1 ? '' : 's'} from cache)` : ''}`
+      + `${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
   warnings.push(...missingImages, ...missingApps, ...missingSections);
   return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,

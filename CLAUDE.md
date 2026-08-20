@@ -72,6 +72,15 @@ never shown to a student.
   would silently drop its slides, and every topic's closing section with them.
 - `verify` fails if a `section:` points past the end of its deck. A topic with no `section:`
   anywhere simply doesn't interleave.
+- **A slide step is walled to its section.** `SlidesStep.vue` clamps the frame's hash to
+  `[slide, end]` on `hashchange`, because Slidev's Next walks the whole topic deck and
+  paging out of a section skips the exercises interleaved after it. `hashchange` rather than
+  the controls: arrows, keys, swipe and clicking a slide in the overview all end up there.
+- **Which nav controls a student gets lives in `slidev-theme-ice/styles/nav.css`**, not in
+  CSS the player injects. A deck is also watched in a tab, at its published URL, and under
+  `slidev dev`; the set has to be the same in all of them. Matched on each button's `title`,
+  so a Slidev upgrade that rewords one brings that control back - re-read
+  `@slidev/client/internals/NavControls.vue` if one reappears.
 - **`@slidev/parser` is resolved from the course's `slides/`**, not from here — it has to
   match the Slidev that builds the decks. So `npm ci --prefix slides` is a prerequisite of
   building *content*, not just of building decks. Miss it and every topic loses its
@@ -183,6 +192,15 @@ Don't re-strip it.
 - Booting a PGlite instance is slow (seconds in Node). That's why expected results are
   precomputed at build time rather than graded live; don't reintroduce per-check database
   creation.
+- **Precomputed results are cached on disk** by [`src/expected-cache.mjs`](src/expected-cache.mjs),
+  under the course's gitignored `.icecore/cache/expected/`. Cold that pass is ~218s for the
+  Data Analyst course; warm it is ~0.9s, which is the difference between `icecore dev` being
+  usable and not. The key is per **exercise** - dataset content, setup, and every step's
+  solution and `nondeterministic` flag, plus the installed PGlite version - because steps of
+  one exercise share a database and a per-step key would hit on step 3 after step 2's
+  `INSERT` changed the rows underneath it. Failures are cached too, and replay goes through
+  the same `record()` as a fresh computation so a warm run and a cold run cannot report
+  different numbers. `ICECORE_NO_CACHE=1` bypasses it.
 - **Signed cookies covering more than one file need a *custom* policy.** Passing
   `dateLessThan` to `getSignedCookies` yields a canned policy, which CloudFront rebuilds
   from `CloudFront-Expires` and the URL being requested — so a signed `…/*` matches nothing

@@ -61,13 +61,44 @@ const REVEAL = `
   transform-origin: 0 0 !important;
 }`;
 
+/* KEEP THE STUDENT INSIDE THE SECTION.
+ *
+ * The deck is the whole topic - every section of it - and Slidev's Next quite reasonably
+ * walks the lot. That is wrong here: a slide step IS one section, and paging out of it
+ * lands the student in the next section's slides having skipped the exercises that sit
+ * between the two. The interleaving is the entire point of splitting them up, so the
+ * range has to be a wall rather than a suggestion.
+ *
+ * Enforced on `hashchange` rather than by intercepting the controls, because there are far
+ * too many ways to move: the bar's arrows, arrow keys, space, PageDown, a swipe, and
+ * clicking any slide in the overview. All of them end in the hash, so that is the one place
+ * that catches every route out.
+ *
+ * `replace` and not an assignment: bouncing back would otherwise leave the out-of-range
+ * slide in the frame's history, and one Back would take the student straight to it.
+ *
+ * The hash is `#/<slide>` or `#/<slide>/<click>` on a slide with v-clicks, so only the
+ * leading number is read - clamping must not disturb where they are within a slide. */
+const clamp = win => {
+  const n = Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]);
+  if (!n || (n >= props.row.slide && n <= props.row.end)) return;
+  win.location.replace(`#/${n < props.row.slide ? props.row.slide : props.row.end}`);
+};
+
 const onLoad = () => {
+  const win = frame.value?.contentWindow;
   const doc = frame.value?.contentDocument;
   if (!doc || doc.getElementById('ice-reveal-controls')) return;
   const style = doc.createElement('style');
   style.id = 'ice-reveal-controls';
   style.textContent = REVEAL;
   doc.head.appendChild(style);
+  /* No teardown: the listener is on the frame's own window, which the browser destroys
+   * when the iframe navigates or the step is left. The iframe is keyed on `src`, so
+   * moving between two sections of one deck builds a new element rather than reusing
+   * this one with a stale range closed over. */
+  win.addEventListener('hashchange', () => clamp(win));
+  clamp(win);
 };
 </script>
 
