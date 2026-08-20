@@ -238,9 +238,20 @@ export class IcecoreStack extends Stack {
       maxSessionDuration: Duration.hours(1),
       assumedBy: new iam.WebIdentityPrincipal(github.openIdConnectProviderArn, {
         StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
+        // Two patterns, and both are needed. GitHub is moving to *immutable* subject
+        // claims, which carry numeric ids: the sub becomes
+        //   repo:icemaltacode@132367313/icecore-x@1338407739:ref:refs/heads/main
+        // rather than repo:icemaltacode/icecore-x:ref:refs/heads/main. The `@<id>` lands
+        // before the slash, so a pattern anchored on `icemaltacode/` stops matching and
+        // STS reports it as a flat "not authorized" - it will not tell an unauthenticated
+        // caller that a trust policy failed to match, so the error looks identical to a
+        // missing role. StringLike takes a list and passes if any entry matches, so this
+        // covers both shapes and survives the rollout in either direction.
         StringLike: {
           'token.actions.githubusercontent.com:sub':
-            this.node.tryGetContext('publisherRepos') || 'repo:icemaltacode/icecore*:*',
+            [this.node.tryGetContext('publisherRepos')].flat().filter(Boolean).length
+              ? [this.node.tryGetContext('publisherRepos')].flat()
+              : ['repo:icemaltacode/icecore*:*', 'repo:icemaltacode@*/icecore*:*'],
         },
       }),
     });
