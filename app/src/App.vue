@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { loadManifest, loadCourse } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
 import { load as loadProgress, mark as markProgress, remember } from './progress.js';
@@ -37,18 +37,57 @@ const unitOfCurrent = computed(() => (course.value?.modules || [])
  * hundred exercises in a permanent tree is not navigation, it is a wall. */
 const showContents = ref(false);
 
-/* Pinned or not, and nothing else: the pin *is* the visibility, so the state that decides
- * what the student sees on their next visit is the one they can see and press. A separate
- * "open for now" would need its own close button and would leave the pin looking like a
- * setting buried somewhere.
+/* Two states, and only one of them is remembered.
  *
- * Collapsed unless pinned. The exercise is the work, and the rail keeps the two things
- * worth reaching from it. Click to toggle, never reveal-on-hover - the pointer crosses the
- * left edge constantly on the way to the editor, and a sidebar that opens itself on the way
- * past is a twitch, not an affordance. */
+ *   pinned  the permanent answer, written to storage, owned entirely by the pin. Pinned,
+ *           the sidebar is a column of the layout like it always was.
+ *   peek    open for now. Hovering the edge, or the rail's arrow, or a click that has not
+ *           landed outside yet. Unpinned it floats over the exercise rather than taking a
+ *           column, so a hover never reflows the page under the pointer.
+ *
+ * The delays are what make hover-to-open usable rather than a twitch: the pointer crosses
+ * this edge constantly on the way to the editor, and without them the sidebar flickers
+ * every time it does. Long enough to mean it, short enough not to feel stuck. */
 const SIDEBAR_KEY = 'ice-sidebar-pinned';
-const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) === 'yes');
-watch(sidebarOpen, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
+const OPEN_AFTER = 180, CLOSE_AFTER = 250;
+
+const pinned = ref(localStorage.getItem(SIDEBAR_KEY) === 'yes');
+const peek = ref(false);
+/* Set by an explicit collapse, so the pointer sitting on the rail it just uncovered does
+ * not immediately open it again. Cleared by leaving the edge - the next approach is a new
+ * intention. */
+const dismissed = ref(false);
+const sidebarOpen = computed(() => pinned.value || peek.value);
+
+watch(pinned, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
+
+let enterT, leaveT;
+const hoverIn = () => {
+  clearTimeout(leaveT);
+  if (pinned.value || dismissed.value) return;
+  enterT = setTimeout(() => { peek.value = true; }, OPEN_AFTER);
+};
+const hoverOut = () => {
+  clearTimeout(enterT);
+  dismissed.value = false;
+  if (pinned.value) return;
+  leaveT = setTimeout(() => { peek.value = false; }, CLOSE_AFTER);
+};
+const collapse = () => { clearTimeout(enterT); peek.value = false; dismissed.value = true; };
+/* Unpinning does not slam it shut under the cursor - it just stops being permanent, and
+ * the ordinary peek rules take it from there. */
+const togglePin = () => {
+  pinned.value = !pinned.value;
+  if (!pinned.value) peek.value = true;
+};
+
+/* Covers the paths hover cannot: opened by the rail's arrow, or on a touch screen, where
+ * there is no pointer to move away. */
+const outside = e => {
+  if (!pinned.value && peek.value && !e.target.closest('.dock')) peek.value = false;
+};
+onMounted(() => addEventListener('pointerdown', outside));
+onBeforeUnmount(() => removeEventListener('pointerdown', outside));
 
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
 const goTopic = d => {
@@ -191,23 +230,31 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
       :loading="loading" :error="loadError"
       @open="open" />
 
-    <div v-else class="shell" :class="{ collapsed: !sidebarOpen }">
-      <!-- Collapsed, the sidebar leaves a rail rather than nothing: a toggle that has to be
-           hunted for is a toggle nobody finds twice, and Contents is worth reaching without
-           reopening anything. -->
-      <aside v-if="!sidebarOpen" class="rail">
-        <button class="railbtn loose" title="Pin the sidebar open" :aria-pressed="false"
-                @click="sidebarOpen = true"><Icon name="pin" :size="16" /></button>
-        <button class="railbtn" title="Contents" @click="showContents = true">
-          <Icon name="contents" :size="16" />
-        </button>
-      </aside>
+    <div v-else class="shell" :class="{ railed: !pinned }">
+      <!-- One hover target covering the rail and the panel that floats out of it, so
+           crossing between the two is not a leave followed by a re-enter. -->
+      <div class="dock" @pointerenter="hoverIn" @pointerleave="hoverOut">
+        <!-- Unpinned, the sidebar leaves a rail rather than nothing: an edge you can only
+             find by hovering it is one most people never find, and Contents is worth
+             reaching without opening anything. -->
+        <aside v-if="!pinned" class="rail">
+          <button class="railbtn" title="Open the sidebar" @click="peek = true">
+            <Icon name="expand" :size="16" />
+          </button>
+          <button class="railbtn" title="Contents" @click="showContents = true">
+            <Icon name="contents" :size="16" />
+          </button>
+        </aside>
 
-      <aside v-else>
+        <aside v-if="sidebarOpen" class="panel" :class="{ floating: !pinned }">
         <div class="brand">
           <strong>{{ course?.title || 'Loading…' }}</strong>
-          <button class="collapse" title="Unpin the sidebar" :aria-pressed="true"
-                  @click="sidebarOpen = false"><Icon name="pin" :size="16" /></button>
+          <button class="pin" :class="{ on: pinned }" :aria-pressed="pinned"
+                  :title="pinned ? 'Unpin the sidebar' : 'Keep the sidebar open'"
+                  @click="togglePin"><Icon name="pin" :size="16" /></button>
+          <button class="collapse" title="Collapse the sidebar" @click="collapse">
+            <Icon name="collapse" :size="16" />
+          </button>
         </div>
 
         <button class="courses" @click="backToCourses">&larr; All courses</button>
@@ -245,8 +292,8 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
             <span class="label">{{ e.title }}</span>
           </button>
         </nav>
-
-      </aside>
+        </aside>
+      </div>
 
       <main :class="{ 'with-slides': showSlides && slidesUrl }">
         <div v-if="loadError" class="state error">
@@ -298,25 +345,36 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
 .app { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
 .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
 .shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
-.shell.collapsed { grid-template-columns: 44px minmax(0, 1fr); }
-.shell.collapsed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
+.shell.railed { grid-template-columns: 44px minmax(0, 1fr); }
+.shell.railed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
+
+/* The hover target. Unpinned it is only as wide as the rail, and the panel floats out of
+   it over the exercise - hovering an edge must never reflow the page under the pointer. */
+.dock { position: relative; min-height: 0; display: flex; }
+.dock > aside { flex: 1; min-width: 0; }
+.panel.floating { position: absolute; top: 0; bottom: 0; left: 0; width: 272px; z-index: 30;
+                  flex: none; box-shadow: 12px 0 32px var(--ice-scrim); }
 aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border);
         display: flex; flex-direction: column; min-height: 0; }
 .brand { display: flex; gap: 10px; align-items: center; padding: 16px 18px 12px; }
 .brand strong { min-width: 0; font-size: 13px; line-height: 1.35;
                 overflow: hidden; text-overflow: ellipsis; }
-/* Pinned upright and in the accent, unpinned tilted and grey - the pin says which state it
-   is in, not which state pressing it would reach. */
-.collapse { margin-left: auto; flex: none; background: none; border: 0; cursor: pointer;
-            padding: 3px; border-radius: 6px; color: var(--ice-primary); line-height: 0; }
-.collapse:hover { background: var(--ice-raise-strong); }
+/* Pin upright and in the accent when it is holding the sidebar open, tilted and grey when
+   it is not - it says which state it is in, not which state pressing it would reach. The
+   collapse beside it only affects now, so it stays plain. */
+.pin, .collapse { flex: none; background: none; border: 0; cursor: pointer; line-height: 0;
+                  padding: 3px; border-radius: 6px; color: var(--ice-fg-muted); }
+.pin { margin-left: auto; }
+.pin:hover, .collapse:hover { background: var(--ice-raise-strong); color: var(--ice-fg); }
+.pin :deep(.icon) { transform: rotate(45deg); transition: transform .12s; }
+.pin.on { color: var(--ice-primary); }
+.pin.on :deep(.icon) { transform: none; }
 
 .rail { align-items: center; padding: 16px 0; gap: 8px; }
 .railbtn { width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
            background: none; border: 1px solid transparent; border-radius: 8px;
            color: var(--ice-fg-muted); font-size: 14px; line-height: 1; }
 .railbtn:hover { color: var(--ice-fg); border-color: var(--ice-border); background: var(--ice-bg); }
-.railbtn.loose :deep(.icon) { transform: rotate(45deg); }
 
 /* Where they are. The unit is context and the topic is the heading, so the topic is the
    one that gets the weight. */
