@@ -10,7 +10,7 @@
  * It is also why the student can page through the section with the deck's own keyboard
  * shortcuts once they have clicked into it.
  */
-import { computed } from 'vue';
+import { computed, ref, onBeforeUnmount } from 'vue';
 
 const props = defineProps({
   /* `slides` off the topic - `slides/1.1.1/index.html`, or an absolute URL when a deck
@@ -24,6 +24,36 @@ const base = computed(() => /^https?:\/\//.test(props.deck || '')
   : `${import.meta.env.BASE_URL}${props.deck}`);
 const src = computed(() => `${base.value}#/${props.row.slide}`);
 const count = computed(() => (props.row.end - props.row.slide) + 1);
+
+/* A section is ONE step in the run but several slides, and the deck's own controls are
+ * hidden until the mouse moves inside it - so without this the student sees the section's
+ * first slide, no way to reach the rest, and a Next button that skips them entirely.
+ *
+ * The frame is same-origin (see the note on the sandbox in CLAUDE.md), so the hash can be
+ * set directly and a hashchange listener keeps this in step with the deck's own keyboard
+ * navigation rather than fighting it. */
+const frame = ref(null);
+const at = ref(props.row.slide);
+
+const read = () => {
+  const m = frame.value?.contentWindow?.location.hash.match(/^#\/(\d+)/);
+  at.value = m ? Number(m[1]) : props.row.slide;
+};
+const onLoad = () => {
+  read();
+  frame.value?.contentWindow?.addEventListener('hashchange', read);
+};
+onBeforeUnmount(() => frame.value?.contentWindow?.removeEventListener('hashchange', read));
+
+/* Clamped to the section. Paging past its end would walk into the next section's slides,
+ * which the run reaches on its own terms a few steps later. */
+const go = d => {
+  const to = Math.min(Math.max(at.value + d, props.row.slide), props.row.end);
+  const w = frame.value?.contentWindow;
+  if (w) { w.location.hash = `#/${to}`; at.value = to; }
+};
+const pos = computed(() =>
+  Math.min(Math.max(at.value - props.row.slide + 1, 1), count.value));
 </script>
 
 <template>
@@ -31,7 +61,13 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
     <header>
       <span class="eyebrow">Slides</span>
       <h2>{{ row.title }}</h2>
-      <span class="count">{{ count }} slide{{ count === 1 ? '' : 's' }}</span>
+      <div class="pager">
+        <button class="page" :disabled="at <= row.slide" title="Previous slide"
+                @click="go(-1)">&lsaquo;</button>
+        <span class="count">{{ pos }} / {{ count }}</span>
+        <button class="page" :disabled="at >= row.end" title="Next slide"
+                @click="go(1)">&rsaquo;</button>
+      </div>
       <a class="link" :href="src" target="_blank" rel="noopener">Open in a tab</a>
     </header>
     <!-- The frame is held at 16:9 rather than filled to the pane. A deck letterboxes itself
@@ -44,7 +80,8 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
       <!-- Keyed on src so moving between two sections of the same deck reloads the frame at
            the new hash. Without it the iframe keeps its old location: same document, and the
            router has already consumed the hash it booted with. -->
-      <iframe :key="src" :src="src" :title="`Slides: ${row.title}`"></iframe>
+      <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
+              @load="onLoad"></iframe>
     </div>
   </article>
 </template>
@@ -66,7 +103,16 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
 .slidestep .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
            font-family: var(--ice-font-mono); color: var(--ice-primary-strong); }
 .slidestep h2 { margin: 0; font-size: 18px; line-height: 1.3; }
-.slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
+.slidestep .count { font-size: 11px; font-family: var(--ice-font-mono);
+                    color: var(--ice-fg-muted); min-width: 42px; text-align: center; }
+/* The deck's own controls only fade in on mouse movement inside the frame, which is not an
+   affordance a student will find. This one is always there. */
+.slidestep .pager { display: flex; align-items: center; gap: 2px; }
+.slidestep .page { width: 24px; height: 22px; display: grid; place-items: center; cursor: pointer;
+                   background: var(--ice-bg); border: 1px solid var(--ice-border);
+                   border-radius: 6px; color: var(--ice-fg-muted); font-size: 13px; line-height: 1; }
+.slidestep .page:hover:not(:disabled) { color: var(--ice-fg); border-color: var(--ice-primary-soft); }
+.slidestep .page:disabled { opacity: .35; cursor: not-allowed; }
 .slidestep .link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
 .slidestep .link:hover { color: var(--ice-fg); }
 /* Centres the deck in whatever space the pane has, and owns the surround. */
