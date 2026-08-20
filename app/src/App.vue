@@ -11,7 +11,7 @@ import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
 import Icon from './components/Icon.vue';
-import { badgeFor } from './badges.js';
+import Badge from './components/Badge.vue';
 import SlidesPanel from './components/SlidesPanel.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
@@ -308,7 +308,7 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
             :class="{ active: r.id === currentId, done: r.kind !== 'slides' && solved.has(r.id),
                       section: r.kind === 'slides' }"
             @click="currentId = r.id">
-            <span class="badge">{{ badgeFor(r, solved.has(r.id)) }}</span>
+            <Badge :row="r" :done="solved.has(r.id)" />
             <span class="label">{{ r.title }}</span>
           </button>
         </nav>

@@ -10,7 +10,7 @@
  * through eleven units.
  */
 import { ref, computed, watch, onMounted, nextTick } from 'vue';
-import { badgeFor } from '../badges.js';
+import Badge from './Badge.vue';
 import { walkTopic } from '../walk.js';
 
 const props = defineProps({
@@ -128,7 +128,7 @@ watch(query, () => { if (box.value) box.value.scrollTop = 0; });
                         :class="{ active: r.id === currentId, section: r.kind === 'slides',
                                   done: r.kind !== 'slides' && solved?.has(r.id) }"
                         @click="emit('pick', r.id)">
-                  <span class="badge">{{ badgeFor(r, solved?.has(r.id)) }}</span>
+                  <Badge :row="r" :done="solved?.has(r.id)" />
                   <span class="label">{{ r.title }}</span>
                 </button>
               </div>
