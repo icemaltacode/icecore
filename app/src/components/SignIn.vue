@@ -100,6 +100,6 @@ input { font: inherit; font-size: 14px; padding: 9px 11px; margin-bottom: 16px;
         background: var(--ice-bg); color: var(--ice-fg);
         border: 1px solid var(--ice-border); border-radius: 8px; }
 input:focus { outline: none; border-color: var(--ice-primary); }
-.err { color: #fca5a5; font-size: 13px; margin: 0 0 14px; }
+.err { color: var(--ice-bad); font-size: 13px; margin: 0 0 14px; }
 .btn { margin-top: 4px; }
 </style>

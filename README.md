@@ -107,6 +107,20 @@ Progress on each card is the count of solved exercises over the course total, so
 returning student sees where they are before opening anything. Opening a course puts
 `?course=` in the URL — coming back to that tab resumes the course rather than the grid.
 
+### Light and dark
+
+The picker in the top bar offers System, Light and Dark, and remembers the choice. Only two
+values ever reach the CSS: `theme.js` resolves System to a concrete `data-theme="light"` or
+`"dark"` on `<html>`, which is why `styles.css` writes each palette once and every rule
+takes a single selector. The same resolution runs as an inline script in `index.html`,
+before the bundle — without it the first paint is the wrong colour and the page visibly
+flips.
+
+Everything is a token, including the SQL editor: a CodeMirror `HighlightStyle` emits
+ordinary CSS, so `var(--ice-syn-*)` resolves per theme. Two colours are deliberately
+literal — the white behind a figure and behind an embedded app, which are drawn for a light
+page whatever the player is wearing.
+
 ### Getting around a course
 
 The sidebar carries **one topic** — the exercises either side of the one open, the unit and

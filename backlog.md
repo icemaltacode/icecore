@@ -12,6 +12,8 @@ the session endpoint can set cookies that content requests will actually send.
       domain, and the session Lambda signs for whatever host it was called on, so adding a
       domain later needs no code change.
 
+- [ ] Check cognito invite email does not go to spam after the above change.
+
 ## Publishing pipeline
 
 - [ ] **A platform change needs the course repo's lockfile refreshed.** npm pins a git
@@ -45,10 +47,9 @@ Ownership: you were last in md.js, so it's yours — I'll keep out of it. Conten
 
 ## UX
 
-- We need light/dark theme support. Currently, there's only a dark theme. We nee da light theme. Also, in the top bar, a theme selector drop-down button. Defaults to user's last selected preference, or system preference if there isn't that. 
-
 - The editor (SQL) colours can be hard to read in dark mode. For example, typing a keyords such as SELECT turns dark purple, but in dark mode that's hard to read. We need a proper dark/light theme for syntax colouring. 
 
 - Are we actually tracking XP?
 
 - Icons are ugly
+

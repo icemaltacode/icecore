@@ -6,7 +6,8 @@
  * and the sidebar each grew their own copy of the brand and their own sign-out before
  * this.
  */
-import { computed } from 'vue';
+import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { theme, resolved, CHOICES } from '../theme.js';
 
 const props = defineProps({
   name: String,
@@ -23,6 +24,15 @@ const initials = computed(() => {
   const words = label.value.split(/[\s._-]+/).filter(Boolean);
   return (words.slice(0, 2).map(w => w[0]).join('') || '?').toUpperCase();
 });
+
+/* The theme picker. The button shows what is in force, not what was chosen, so a student
+ * on System can see which way it went without opening anything. */
+const GLYPH = { light: '☀', dark: '☾' };
+const menu = ref(false);
+const wrap = ref(null);
+const away = e => { if (!wrap.value?.contains(e.target)) menu.value = false; };
+onMounted(() => addEventListener('pointerdown', away));
+onBeforeUnmount(() => removeEventListener('pointerdown', away));
 </script>
 
 <template>
@@ -35,6 +45,19 @@ const initials = computed(() => {
 
     <div class="right">
       <button v-if="admin" class="btn ghost" @click="$emit('admin')">Manage enrolment</button>
+
+      <div ref="wrap" class="theme" @keydown.esc="menu = false">
+        <button class="pick" :title="`Theme: ${theme}`" :aria-expanded="menu"
+                @click="menu = !menu">{{ GLYPH[resolved] }}</button>
+        <ul v-if="menu" class="menu">
+          <li v-for="c in CHOICES" :key="c.value">
+            <button :class="{ on: theme === c.value }"
+                    @click="theme = c.value; menu = false">
+              <span class="tick">{{ theme === c.value ? '✓' : '' }}</span>{{ c.label }}
+            </button>
+          </li>
+        </ul>
+      </div>
       <div v-if="label" class="who">
         <span class="avatar">{{ initials }}</span>
         <span class="name">{{ label }}</span>
@@ -59,10 +82,26 @@ const initials = computed(() => {
 .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .who { display: flex; align-items: center; gap: 8px; padding-left: 4px; }
 .avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid;
-          place-items: center; font-size: 11px; font-weight: 600; color: #06121e;
+          place-items: center; font-size: 11px; font-weight: 600; color: var(--ice-on-primary);
           background: var(--ice-primary); }
 .name { font-size: 13px; max-width: 180px;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.theme { position: relative; display: flex; }
+.pick { width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
+        background: var(--ice-bg); border: 1px solid var(--ice-border); border-radius: 8px;
+        color: var(--ice-fg-muted); font-size: 14px; line-height: 1; }
+.pick:hover { color: var(--ice-fg); border-color: var(--ice-primary-soft); }
+.menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; margin: 0;
+        padding: 4px; list-style: none; min-width: 140px;
+        background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
+        border-radius: 8px; box-shadow: 0 8px 24px var(--ice-scrim); }
+.menu button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+               padding: 7px 8px; border: 0; border-radius: 6px; background: none;
+               cursor: pointer; font: inherit; font-size: 13px; color: var(--ice-fg); }
+.menu button:hover { background: var(--ice-raise-strong); }
+.menu button.on { color: var(--ice-primary-strong); }
+.tick { width: 12px; font-size: 11px; }
 
 /* Below a certain width the name is the first thing worth losing - the avatar still says
    who is signed in, and the actions still work. */

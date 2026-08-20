@@ -39,5 +39,5 @@ th { position: sticky; top: 0; background: var(--ice-bg-soft); color: var(--ice-
 td.isnull { color: var(--ice-fg-muted); font-style: italic; }
 .muted { color: var(--ice-fg-muted); padding: 10px 12px; margin: 0; font-size: 13px; }
 .count { border-top: 1px solid var(--ice-border); }
-.err { color: #fca5a5; font-family: var(--ice-font-mono); font-size: 13px; padding: 10px 12px; margin: 0; white-space: pre-wrap; }
+.err { color: var(--ice-bad); font-family: var(--ice-font-mono); font-size: 13px; padding: 10px 12px; margin: 0; white-space: pre-wrap; }
 </style>

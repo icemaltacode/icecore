@@ -1,19 +1,81 @@
 /* Tokens mirror slidev-theme-ice so the platform and the decks read as one product.
-   Rebrand by changing values here, same as the theme's tokens.css. */
+   Rebrand by changing values here, same as the theme's tokens.css.
+
+   Two themes, one attribute. `data-theme` on <html> is always a concrete "light" or
+   "dark" - theme.js resolves the system preference before the app renders and follows it
+   if it changes, so nothing here has to express prefers-color-scheme and the dark palette
+   is written once rather than twice. The attribute is set by an inline script in
+   index.html too, or the first paint would be the wrong colour. */
 :root {
   --ice-font-sans: 'Circular Std', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --ice-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --ice-radius: 10px;
 
+  color-scheme: light;
+  --ice-primary: #0284c7;
+  --ice-primary-strong: #0369a1;
+  --ice-primary-soft: #bae6fd;
+  --ice-on-primary: #ffffff;
+  --ice-fg: #0f172a;
+  --ice-fg-muted: #64748b;
+  --ice-bg: #ffffff;
+  --ice-bg-soft: #f8fafc;
+  --ice-border: #e2e8f0;
+  --ice-code-bg: #f8fafc;
+
+  /* Depth, as a tint over whatever ground it lands on: nested panels cannot use a fixed
+     colour without picking one that is wrong in the other theme. */
+  --ice-raise: rgba(15, 23, 42, .04);
+  --ice-raise-soft: rgba(15, 23, 42, .025);
+  --ice-raise-strong: rgba(15, 23, 42, .07);
+  --ice-scrim: rgba(15, 23, 42, .45);
+
+  --ice-good: #15803d;
+  --ice-good-line: #16a34a;
+  --ice-good-fill: rgba(22, 163, 74, .1);
+  --ice-bad: #b91c1c;
+  --ice-bad-line: #dc2626;
+  --ice-bad-fill: rgba(220, 38, 38, .08);
+
+  --ice-syn-keyword: #1d4ed8;
+  --ice-syn-string: #15803d;
+  --ice-syn-number: #b45309;
+  --ice-syn-comment: #94a3b8;
+  --ice-syn-name: #0f172a;
+  --ice-syn-operator: #64748b;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
   --ice-primary: #38bdf8;
   --ice-primary-strong: #7dd3fc;
   --ice-primary-soft: #075985;
+  --ice-on-primary: #06121e;
   --ice-fg: #f1f5f9;
   --ice-fg-muted: #94a3b8;
   --ice-bg: #0b1220;
   --ice-bg-soft: #111827;
   --ice-border: #1f2937;
   --ice-code-bg: #0f172a;
-  --ice-radius: 10px;
+
+  --ice-raise: rgba(255, 255, 255, .04);
+  --ice-raise-soft: rgba(255, 255, 255, .03);
+  --ice-raise-strong: rgba(255, 255, 255, .06);
+  --ice-scrim: rgba(2, 6, 16, .72);
+
+  --ice-good: #86efac;
+  --ice-good-line: #4ade80;
+  --ice-good-fill: rgba(74, 222, 128, .08);
+  --ice-bad: #fca5a5;
+  --ice-bad-line: #f87171;
+  --ice-bad-fill: rgba(248, 113, 113, .08);
+
+  --ice-syn-keyword: #93c5fd;
+  --ice-syn-string: #86efac;
+  --ice-syn-number: #fbbf24;
+  --ice-syn-comment: #64748b;
+  --ice-syn-name: #e2e8f0;
+  --ice-syn-operator: #94a3b8;
 }
 
 * { box-sizing: border-box; }
@@ -37,7 +99,7 @@ button { font-family: inherit; }
 }
 .btn:hover:not(:disabled) { border-color: var(--ice-primary-soft); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
-.btn.primary { background: var(--ice-primary); border-color: var(--ice-primary); color: #06121e; font-weight: 600; }
+.btn.primary { background: var(--ice-primary); border-color: var(--ice-primary); color: var(--ice-on-primary); font-weight: 600; }
 .btn.primary:hover:not(:disabled) { background: var(--ice-primary-strong); border-color: var(--ice-primary-strong); }
 
 .link {

@@ -194,7 +194,7 @@ h2 { margin: 0 0 8px; font-size: 22px; }
 
 .foot { margin-top: 24px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .feedback { margin: 0 auto 0 0; font-size: 14px; }
-.feedback.pass { color: #86efac; }
-.feedback.fail { color: #fca5a5; }
+.feedback.pass { color: var(--ice-good); }
+.feedback.fail { color: var(--ice-bad); }
 .muted { margin-right: auto; color: var(--ice-fg-muted); font-size: 12px; }
 </style>

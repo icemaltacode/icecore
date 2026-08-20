@@ -119,7 +119,7 @@ watch(query, () => { if (box.value) box.value.scrollTop = 0; });
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; background: rgba(2, 6, 16, .72); z-index: 50;
+.scrim { position: fixed; inset: 0; background: var(--ice-scrim); z-index: 50;
          display: grid; place-items: center; padding: 5vh 20px; }
 .sheet { width: min(680px, 100%); max-height: 100%; display: flex; flex-direction: column;
          background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
@@ -143,13 +143,13 @@ h4 { margin: 16px 8px 8px; font-size: 11px; letter-spacing: .06em; text-transfor
 .unithead { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
             border: 0; background: none; cursor: pointer; font: inherit; font-size: 13px;
             font-weight: 600; padding: 10px 11px; color: var(--ice-fg); }
-.unithead:hover { background: rgba(255, 255, 255, .03); }
+.unithead:hover { background: var(--ice-raise-soft); }
 .caret { flex: none; width: 10px; color: var(--ice-fg-muted); font-size: 10px; }
 .tally { flex: none; margin-left: auto; font-size: 10px; font-family: var(--ice-font-mono);
          color: var(--ice-fg-muted); }
 
 .topics { padding: 0 8px 8px; }
-.topic { background: rgba(255, 255, 255, .04); border-radius: 8px;
+.topic { background: var(--ice-raise); border-radius: 8px;
          padding: 4px 7px 7px; margin-top: 6px; }
 h5 { margin: 6px 4px 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
      color: var(--ice-fg-muted); font-weight: 500; }
@@ -157,7 +157,7 @@ h5 { margin: 6px 4px 4px; font-size: 11px; letter-spacing: .04em; text-transform
 .entry { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
          border: 0; background: none; cursor: pointer; font: inherit; font-size: 13px;
          padding: 6px 6px; border-radius: 7px; color: var(--ice-fg-muted); }
-.entry:hover { background: rgba(255, 255, 255, .05); color: var(--ice-fg); }
+.entry:hover { background: var(--ice-raise-strong); color: var(--ice-fg); }
 .entry.done { color: var(--ice-fg); }
 .entry.active { background: var(--ice-bg); color: var(--ice-fg);
                 box-shadow: inset 2px 0 0 var(--ice-primary); }

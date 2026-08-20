@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ICE Practice</title>
+    <!-- Before the bundle, or the first paint is the wrong theme and the page flips. Kept
+         in step with app/src/theme.js, which owns the same key and the same resolution. -->
+    <script>
+      try {
+        var t = localStorage.getItem('ice-theme');
+        document.documentElement.dataset.theme =
+          t === 'light' || t === 'dark' ? t
+            : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
   </head>
   <body>
     <div id="app"></div>

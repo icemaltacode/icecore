@@ -27,6 +27,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.2",
     "@electric-sql/pglite": "^0.4.2",
+    "@lezer/highlight": "^1.2.1",
     "@vitejs/plugin-vue": "^6.0.0",
     "amazon-cognito-identity-js": "^6.3.20",
     "codemirror": "^6.0.1",

@@ -62,7 +62,7 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
 main { width: 100%; max-width: 1080px; margin: 0 auto; padding: 32px 28px 56px; }
 h1 { margin: 0 0 24px; font-size: 22px; }
 .muted { color: var(--ice-fg-muted); }
-.err { color: #fca5a5; }
+.err { color: var(--ice-bad); }
 
 .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); }
 .card { display: flex; flex-direction: column; gap: 0; text-align: left; padding: 0;
@@ -76,6 +76,7 @@ h1 { margin: 0 0 24px; font-size: 22px; }
 .cover { display: block; aspect-ratio: 1; background: var(--ice-bg); }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fallback { display: grid; place-items: center; width: 100%; height: 100%;
+            /* Not a token: the tile behind it is always a mid-tone hue, in either theme. */
             font-size: 56px; font-weight: 600; color: #06121e;
             background: linear-gradient(140deg,
               hsl(var(--h) 70% 62%), hsl(calc(var(--h) + 40) 65% 44%)); }

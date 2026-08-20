@@ -110,8 +110,8 @@ select, input { width: 100%; font: inherit; font-size: 14px; padding: 9px 11px;
 select:focus, input:focus { outline: none; border-color: var(--ice-primary); }
 .add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; margin-top: 20px; }
 .add .btn { height: 38px; }
-.err { color: #fca5a5; font-size: 13px; }
-.ok { color: #86efac; font-size: 13px; }
+.err { color: var(--ice-bad); font-size: 13px; }
+.ok { color: var(--ice-good); font-size: 13px; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
      color: var(--ice-fg-muted); margin: 32px 0 10px; }
 .count { background: var(--ice-bg-soft); border: 1px solid var(--ice-border); border-radius: 5px;
