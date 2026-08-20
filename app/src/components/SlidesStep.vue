@@ -34,10 +34,18 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
       <span class="count">{{ count }} slide{{ count === 1 ? '' : 's' }}</span>
       <a class="link" :href="src" target="_blank" rel="noopener">Open in a tab</a>
     </header>
-    <!-- Keyed on src so moving between two sections of the same deck reloads the frame at
-         the new hash. Without it the iframe keeps its old location: same document, and the
-         router has already consumed the hash it booted with. -->
-    <iframe :key="src" :src="src" :title="`Slides: ${row.title}`"></iframe>
+    <!-- The frame is held at 16:9 rather than filled to the pane. A deck letterboxes itself
+         to that ratio against a BLACK #slide-container, so any other shape puts black bands
+         above and below the slide, with Slidev's own controls sitting in them - which reads
+         as the deck using the wrong theme. Giving it exactly the shape it renders at means
+         there is no letterbox to colour, and the controls sit over the slide where they
+         were designed to. What is left over is the player's own themed ground. -->
+    <div class="frame">
+      <!-- Keyed on src so moving between two sections of the same deck reloads the frame at
+           the new hash. Without it the iframe keeps its old location: same document, and the
+           router has already consumed the hash it booted with. -->
+      <iframe :key="src" :src="src" :title="`Slides: ${row.title}`"></iframe>
+    </div>
   </article>
 </template>
 
@@ -61,8 +69,14 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
 .slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
 .slidestep .link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
 .slidestep .link:hover { color: var(--ice-fg); }
-/* White behind it deliberately: a deck is its own site with its own light theme, and the
+/* Centres the deck in whatever space the pane has, and owns the surround. */
+.slidestep .frame { display: grid; place-items: center; min-height: 0; overflow: hidden;
+                    padding: 0 20px 20px; border-top: 1px solid var(--ice-border); }
+/* aspect-ratio with both maxima: wide panes are limited by height and tall ones by width,
+   so the frame is always exactly 16:9 and never overflows in either direction.
+   White behind it deliberately - a deck is its own site with its own light theme, and the
    player's dark ground showing through while it loads reads as a broken frame. */
-.slidestep iframe { width: 100%; height: 100%; border: 0; min-height: 0; background: #fff;
-         border-top: 1px solid var(--ice-border); }
+.slidestep iframe { aspect-ratio: 16 / 9; width: 100%; height: auto;
+         max-width: 100%; max-height: 100%; border: 0; background: #fff;
+         border-radius: var(--ice-radius); box-shadow: 0 2px 18px var(--ice-scrim); }
 </style>
