@@ -20,7 +20,17 @@ that could be shown externally or open-sourced.
 - `src/build.mjs` — content builder. Parses exercise markdown, precomputes expected results
   by running each reference solution in PGlite, emits per-course static files.
 - `bin/icecore.mjs` — the CLI. `root` and `publicDir` are supplied here, not in
-  `app/vite.config.js`, so the same app builds against any course repo.
+  `app/vite.config.js`, so the same app builds against any course repo. `icecore slides`
+  also lives here: the platform owns the deck build, so the selection logic exists once.
+- `src/decks.mjs` — the **only** place a deck is parsed. One `@slidev/parser` load yields
+  both the section ranges the player interleaves with and the transitive `src:` include
+  graph selective building needs. Parsing decks twice for the two features is how they
+  drift apart.
+- `app/src/walk.js` — pure, like `compare.js` and `dragdrop.js`. The order a student moves
+  through a topic. `App.vue` and `ContentsModal.vue` both draw it, and the two disagreeing
+  reads as exercises going missing.
+- `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
+  There is no template to copy any more; the two copies had already drifted.
 
 ## The shape of a course
 
@@ -31,6 +41,67 @@ above exist so a few hundred exercises stay navigable.
 Use these words exactly -- a fourth vocabulary is how the old model ended up calling a unit
 a course and a topic a unit. Importing from DataCamp: their *track* is a module, their
 *course* is a unit, their *chapter* is a topic.
+
+## Slides, sections and interleaving
+
+**A topic has a deck when `slides/topic-<topic>.md` exists** — the *source*, never built
+output. Deriving it from `content/slides/<topic>/index.html` coupled the content pipeline to
+the deck pipeline: skipping the deck build then published a course with no slides links at
+all, silently. That decoupling is what makes selective deck building safe, so don't undo it.
+
+**A section is not a fifth level.** It is an annotation on a run of exercises within a topic
+— a label and a slide range — so topics still hold the exercises and the numbering stays at
+three components. `CLAUDE.md` is emphatic that a fourth vocabulary is how the old model came
+to call a unit a course; a fifth level would be the same mistake. The ordinal is internal and
+never shown to a student.
+
+- A section opens on `layout: statement` and closes on the `layout: statement_alt`
+  ("Let's practice!") that follows. **That is a contract now, not a style choice.** A deck
+  that opens a section with any other layout drops it silently. A full-bleed heading that
+  *isn't* a section needs a different layout name.
+- **`routerMode: hash` must stay** in every topic deck. Deep links are `#/<n>` and resolve
+  client-side; drop it and every link 404s in production while still working in dev.
+- **Slide numbers are composed-deck numbers.** `topic-1.1.1.md` pulls in the module frame,
+  the unit frame and its page file, so a regex over the page counts from the wrong place.
+  Only the parser resolves `src:`.
+- `section: N` on an exercise is derived from `content/raw/**` by `dc-sections` in the
+  importer, never typed. **Anything that regenerates an exercise file must carry it** — a
+  forced `dc-convert` in particular, the same standing hazard `### Nondeterministic` has.
+- The walk is driven by the **deck's** sections, not by which sections have exercises. 1.10.4
+  lost both of section 1's exercises to `VisualExercise` on import; driving off exercises
+  would silently drop its slides, and every topic's closing section with them.
+- `verify` fails if a `section:` points past the end of its deck. A topic with no `section:`
+  anywhere simply doesn't interleave.
+- **`@slidev/parser` is resolved from the course's `slides/`**, not from here — it has to
+  match the Slidev that builds the decks. So `npm ci --prefix slides` is a prerequisite of
+  building *content*, not just of building decks. Miss it and every topic loses its
+  interleaving and ships that way without failing.
+
+## Publishing
+
+One definition, in `.github/workflows/publish.yml`, called by each course repo with its four
+variables. Pass them explicitly: `vars` does not resolve inside a called workflow.
+
+- **Never `aws s3 sync --delete` against `slides/` as a whole.** With a partial `dist/slides`
+  — which is now the normal case — it deletes every deck that wasn't rebuilt. Sync one deck
+  prefix at a time and reconcile removed decks explicitly.
+- **Each deck ships only the images it references.** Slidev copies all of `public/` into
+  every build; that was 84MB and 861 objects for a deck whose own content is 6.4MB. Pruned
+  after the build, so `slidev dev` still sees all of `public/` and the markdown is untouched.
+  The brief's `/slides/_shared/` idea fights Vite, which rewrites absolute asset URLs against
+  each deck's `--base`.
+- Remaining per-deck weight is ~6.4MB of assets, **3.6MB of which is the theme's
+  `bg_main.png`** — one identical file, ~212MB across the site. That lives in
+  `slidev-theme-ice`.
+- CI only works as of 2026-08-20. GitHub now issues OIDC subject claims carrying numeric ids
+  (`repo:icemaltacode@132367313/icecore-x@1338407739:...`) and STS reports a condition
+  mismatch identically to a missing role. Both claim shapes are trusted while the rollout is
+  in progress. If publishing breaks with "Not authorized to perform
+  sts:AssumeRoleWithWebIdentity", check `GET /repos/{owner}/{repo}/actions/oidc/customization/sub`
+  before suspecting the variables.
+- AWS work needs `AWS_PROFILE=ice` (account 845106282768). The default profile is a different
+  account that also has a GitHub OIDC provider installed, so a wrong-account `cdk diff`
+  reports the whole stack as new rather than failing.
 
 ## Embedded apps
 

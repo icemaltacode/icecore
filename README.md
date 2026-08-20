@@ -60,8 +60,13 @@ content/
   exercises/<topic>/_topic.json    { topic, title, unit, unitTitle }
   exercises/<topic>/NN-slug.md     one exercise: frontmatter + markdown sections
   data/<table>.sql                 CREATE TABLE + INSERTs
-  slides/<topic>/                  optional: a built slide deck for that topic
+  raw/<source>/chapter-*.json      importer-only: where the section boundaries came from
+  slides/<topic>/                  generated: a built deck, written by `icecore slides`
   courses.json                     importer-only: source slug -> ICE unit mapping
+slides/
+  topic-<topic>.md                 the deck source — this is what gives a topic a Slides button
+  pages/*.md                       the slides themselves, pulled in by `src:` includes
+  public/images/<topic>/*          figures, referenced as /images/<topic>/...
 ```
 
 ### The shape of a course
@@ -314,25 +319,57 @@ and `icecore build` produces:
 dist/content/courses.json                 manifest of published courses
 dist/content/<course>/index.json          units + exercises + expected results
 dist/content/<course>/data/<table>.sql    datasets, fetched on demand
-dist/slides/<unit>/                       decks, copied through as-is
+dist/slides/<topic>/                      decks that have been built, images pruned
 ```
 
 ### Slides
 
-A unit has a deck when `content/slides/<unit>/index.html` exists — derived from what's on
-disk rather than declared, so the two can't disagree. The player then offers a **Slides**
-button that opens the deck beside the exercise. Set `slides:` in `_unit.json` to an absolute
-URL to point somewhere else instead.
+A topic has a deck when the course repo has a **source** for one, at
+`slides/topic-<topic>.md`. Derived from the source rather than from built output on purpose:
+deriving it from `content/slides/<topic>/index.html` coupled the content pipeline to the deck
+pipeline, so publishing without rebuilding every deck first quietly shipped a course with no
+slides links at all. Set `slides:` in `_topic.json` to an absolute URL to point somewhere
+else instead.
+
+Build them with `icecore slides`, which knows where each deck goes:
+
+```
+icecore slides content                    # every deck
+icecore slides content --since <sha>      # only those a change since <sha> affects
+icecore slides content --only 1.2.3       # just this one
+icecore slides content --list             # say what would be built, build nothing
+```
+
+`--since` resolves each deck's transitive `src:` includes, so editing `pages/_unit-1.5.md`
+rebuilds four decks and editing `pages/_frame-close.md` rebuilds all of them. Anything under
+`slides/` that isn't markdown — `public/`, the theme, the lockfile — is shared by every deck
+and rebuilds the lot.
+
+Each deck ships only the images it references. Slidev copies the whole of `public/` into
+every build, which meant one deck carried every topic's figures: 84MB and 861 objects for a
+deck whose own content was 6.4MB and 18 images. They are pruned after the build, so
+`slidev dev` still sees all of `public/` and no `/images/...` reference in the markdown
+changes.
 
 Decks land at the site root, not under `content/`, because a built deck is a small site of
-its own with absolute asset paths. Build them with a matching base:
+its own with absolute asset paths, and `--base` has to match where it lands. Note the player
+links `slides/<topic>/index.html`, not the bare directory: S3 behind CloudFront applies its
+root object only to the root, so a directory URL 404s in production.
 
-```
-slidev build unit-1.2.3.md --base /slides/1.2.3/ --out content/slides/1.2.3
-```
+#### Interleaving
 
-Note the player links `slides/<unit>/index.html`, not the bare directory: S3 behind
-CloudFront applies its root object only to the root, so a directory URL 404s in production.
+Where a topic's exercises carry `section: N`, the player deals the deck's slides into the
+run at the section boundaries, so **Next** walks slides → exercises → slides rather than
+offering the whole deck up front. A section is a `layout: statement` slide in the deck and
+the run of slides under it; `N` is that section's ordinal.
+
+A section is **not** a fifth level of the hierarchy — it's an annotation on a run of
+exercises within a topic. Topics still hold the exercises and numbering stays at three
+components. Deep links need no infrastructure: the decks set `routerMode: hash`, so `#/<n>`
+resolves client-side.
+
+`verify` fails if a `section:` points past the end of its deck, the same way it fails on a
+missing figure. A topic with no `section:` anywhere simply doesn't interleave.
 
 Content is fetched at **runtime**, not compiled into the bundle. Publishing a course, or
 fixing a typo in an exercise, is a file upload — no app rebuild. A student downloads only
@@ -367,9 +404,30 @@ enforces them yet — that's the next piece of work if it turns out to matter pe
 
 ## Publishing from a course repo
 
-`templates/publish.yml` is a GitHub Actions workflow to copy into a course repo as
-`.github/workflows/publish.yml`. It verifies, builds, and syncs content and decks to S3 on
-every push that touches `content/` or `slides/`.
+`.github/workflows/publish.yml` **in this repo** is the pipeline, and every course repo
+calls it. `icecore` is public, so a private course repo can. A course's own workflow is
+about twelve lines:
+
+```yaml
+jobs:
+  publish:
+    uses: icemaltacode/icecore/.github/workflows/publish.yml@main
+    with:
+      aws-role-arn: ${{ vars.AWS_ROLE_ARN }}
+      aws-region: ${{ vars.AWS_REGION }}
+      site-bucket: ${{ vars.SITE_BUCKET }}
+      distribution-id: ${{ vars.DISTRIBUTION_ID }}
+```
+
+Pass the variables explicitly — `vars` does not resolve inside a called workflow. This
+replaced a template each course copied, which had already drifted.
+
+It is selective. A slides-only push skips verify and the content build; a content-only push
+builds no decks. Only the decks a change actually reached are rebuilt, and each is synced to
+its own prefix — `aws s3 sync --delete` against `slides/` as a whole would delete every deck
+that wasn't rebuilt, so `--delete` is never scoped wider than one deck. Decks whose sources
+are gone are reconciled away explicitly. Run it from the Actions tab with **force-all** to
+rebuild and republish everything.
 
 It authenticates by OIDC — there is no access key in any repo — and assumes a role that can
 write objects and invalidate the CDN, nothing more. **Content publishing never runs
@@ -384,9 +442,14 @@ player changes.
 The workflow needs `icecore` resolvable in CI, so a course repo should depend on
 `"icecore": "github:icemaltacode/icecore"` rather than `file:../icecore` once it is
 publishing — and its `package-lock.json` has to be regenerated to match, or `npm ci` refuses
-to run. It builds the decks before the content, because `content/slides/` is generated and
-absent from a fresh checkout; skip that and the publish quietly succeeds with no slides. The four repository variables it expects are listed at the top of the file, and
+to run. The four repository variables it expects are listed at the top of the workflow, and
 all four are stack outputs.
+
+It installs the course's `slides/` dependencies on **every** run, including content-only
+pushes that build no decks. That isn't waste: `build` reads the deck sources through
+`@slidev/parser` to work out each topic's section ranges, so without it every topic loses
+its interleaving and `index.json` ships that way — a content push would silently undo what
+the previous slides push published.
 
 ## Deployment
 
