@@ -46,4 +46,15 @@ Ownership: you were last in md.js, so it's yours — I'll keep out of it. Conten
 ## UX
 
 - The sidebar is very busy. We need to simplify it, whilst still allowing the user to navigate through the course quickly. UX/UI however are not my strongpoint. My idea is:
-  - When the user first visits 
+  - The sidebar shows content from at most one TOPIC at a time. For example, 1.1.2 Querying.
+  - We then have an 'index' (or better named) button. This brings up a modal containing the course strcture, collapsible - basically similar to what is currently all in the sidebar. 
+  - The sidebar auto-hides by default, but can be pinned. 
+  - When the user visits a course for the first time, they are taken to the first activity of the first topic of the first unit of the first module of the course. Subsequent visits take them to where they left off. 
+
+- We need a top bar. Our (eventual) logo moves there. On the right, we have the user's name/avatar, the sign out button. 
+
+- We need light/dark theme support. Currently, there's only a dark theme. We nee da light theme. Also, in the top bar, a theme selector drop-down button. Defaults to user's last selected preference, or system preference if there isn't that. 
+
+- The editor (SQL) colours can be hard to read in dark mode. For example, typing a keyords such as SELECT turns dark purple, but in dark mode that's hard to read. We need a proper dark/light theme for syntax colouring. 
+
+- Are we actually tracking XP?

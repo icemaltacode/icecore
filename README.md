@@ -107,6 +107,21 @@ Progress on each card is the count of solved exercises over the course total, so
 returning student sees where they are before opening anything. Opening a course puts
 `?course=` in the URL — coming back to that tab resumes the course rather than the grid.
 
+### Getting around a course
+
+The sidebar carries **one topic** — the exercises either side of the one open, the unit and
+topic they belong to, and a step either way. Everything else is behind **Contents**, a modal
+holding the whole collapsible structure with a filter across every exercise, topic and unit
+title. Four hundred exercises in a permanent tree is a wall, not navigation.
+
+It collapses to a rail, by click rather than by hover, and the choice is remembered. The
+rail keeps the reopen and Contents buttons, so nothing has to be hunted for.
+
+Opening a course for the first time starts at its first exercise; after that it resumes
+where the student left off. The place-marker is stored per course beside the progress
+record — server-side where there is auth, so it follows them between machines, and in
+localStorage otherwise.
+
 (For anyone importing from DataCamp: their *track* is a module, their *course* is a unit,
 their *chapter* is a topic.)
 

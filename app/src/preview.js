@@ -39,6 +39,7 @@ const seed = course => {
 };
 
 const progressKey = course => `ice-platform-progress:${course}`;
+const placeKey = course => `ice-platform-place:${course}`;
 
 /**
  * Stands in for `api()`. Same contract: resolves to the parsed body, throws an Error
@@ -57,7 +58,11 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
   if (route === 'progress') {
     const course = method === 'GET' ? q.get('course') : body.course;
     const solved = new Set(JSON.parse(localStorage.getItem(progressKey(course)) || '[]'));
-    if (method === 'GET') return { solved: [...solved] };
+    if (method === 'GET')
+      return { solved: [...solved], last: localStorage.getItem(placeKey(course)) || null };
+    // The place-marker and a solved exercise are separate PUT shapes, told apart the same
+    // way the real handler tells them apart.
+    if (body.last) { localStorage.setItem(placeKey(course), body.last); return { ok: true }; }
     body.solved ? solved.add(body.exercise) : solved.delete(body.exercise);
     localStorage.setItem(progressKey(course), JSON.stringify([...solved]));
     return { ok: true };

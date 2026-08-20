@@ -2,12 +2,13 @@
 import { ref, computed, watch, onMounted } from 'vue';
 import { loadManifest, loadCourse } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
-import { load as loadProgress, mark as markProgress } from './progress.js';
+import { load as loadProgress, mark as markProgress, remember } from './progress.js';
 import CodingExercise from './components/CodingExercise.vue';
 import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
 import CourseGrid from './components/CourseGrid.vue';
+import ContentsModal from './components/ContentsModal.vue';
 import SlidesPanel from './components/SlidesPanel.vue';
 import SignIn from './components/SignIn.vue';
 
@@ -30,20 +31,22 @@ const currentTopic = computed(() =>
 const unitOfCurrent = computed(() => (course.value?.modules || [])
   .flatMap(m => m.units).find(u => u.topics.some(t => t === currentTopic.value)));
 
-// Units collapse: one flat list of every exercise in a course is unusable. The unit
-// holding the current exercise opens itself, so moving through a course never needs a click
-// in the sidebar.
-const openUnits = ref(new Set());
-const toggleUnit = u => {
-  const next = new Set(openUnits.value);
-  next.has(u) ? next.delete(u) : next.add(u);
-  openUnits.value = next;
-};
-watch(unitOfCurrent, u => { if (u) openUnits.value = new Set([...openUnits.value, u.unit]); });
+/* The sidebar carries one topic, and the whole structure lives behind Contents. Four
+ * hundred exercises in a permanent tree is not navigation, it is a wall. */
+const showContents = ref(false);
 
-const doneIn = t => t.exercises.filter(e => solved.value.has(e.id)).length;
-const unitDone = u => u.topics.reduce((n, t) => n + doneIn(t), 0);
-const unitTotal = u => u.topics.reduce((n, t) => n + t.exercises.length, 0);
+/* Collapsing it is a preference, so it is remembered. Deliberately click-to-toggle rather
+ * than reveal-on-hover: the pointer crosses the left edge constantly on the way to the
+ * editor, and a sidebar that opens itself on the way past is a twitch, not an affordance. */
+const SIDEBAR_KEY = 'ice-platform-sidebar';
+const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) !== 'closed');
+watch(sidebarOpen, v => localStorage.setItem(SIDEBAR_KEY, v ? 'open' : 'closed'));
+
+const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
+const goTopic = d => {
+  const t = topics.value[topicIndex.value + d];
+  if (t?.exercises.length) currentId.value = t.exercises[0].id;
+};
 
 const slidesUrl = computed(() => {
   const s = currentTopic.value?.slides;
@@ -69,9 +72,13 @@ async function open(id) {
   loading.value = true; loadError.value = '';
   try {
     course.value = await loadCourse(id);
-    solved.value = await loadProgress(id);
-    courseProgress.value = { ...courseProgress.value, [id]: solved.value.size };
-    currentId.value = flat.value[0]?.id ?? null;
+    const { solved: done, last } = await loadProgress(id);
+    solved.value = done;
+    courseProgress.value = { ...courseProgress.value, [id]: done.size };
+    // Where they left off, if that exercise still exists - content gets renumbered, and a
+    // bookmark pointing at something that has been deleted should send them to the start
+    // rather than nowhere.
+    currentId.value = flat.value.find(e => e.id === last)?.id ?? flat.value[0]?.id ?? null;
     const url = new URL(location.href);
     url.searchParams.set('course', id);
     history.replaceState({}, '', url);
@@ -97,7 +104,7 @@ async function loadCourses() {
     // not awaited, though: the grid is worth showing before the numbers land on it.
     for (const c of manifest.value)
       loadProgress(c.id)
-        .then(s => { courseProgress.value = { ...courseProgress.value, [c.id]: s.size }; })
+        .then(({ solved: s }) => { courseProgress.value = { ...courseProgress.value, [c.id]: s.size }; })
         .catch(() => {});
     // A course named in the URL opens straight away. That is what makes returning to the
     // tab resume where they were, rather than sending them back through the grid.
@@ -149,6 +156,10 @@ const markSolved = id => {
   markProgress(course.value.id, id);
 };
 const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value = n.id; };
+
+/* Every move is a bookmark. Guarded on `course` because currentId is also cleared on the
+ * way back to the grid, and "nowhere" is not a place to resume. */
+watch(currentId, id => { if (course.value && id) remember(course.value.id, id); });
 </script>
 
 <template>
@@ -164,14 +175,23 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
     :loading="loading" :error="loadError"
     @open="open" @admin="showAdmin = true" @signout="signOut" />
 
-  <div v-else class="shell">
-    <aside>
+  <div v-else class="shell" :class="{ collapsed: !sidebarOpen }">
+    <!-- Collapsed, the sidebar leaves a rail rather than nothing: a toggle that has to be
+         hunted for is a toggle nobody finds twice, and Contents is worth reaching without
+         reopening anything. -->
+    <aside v-if="!sidebarOpen" class="rail">
+      <button class="railbtn" title="Show the sidebar" @click="sidebarOpen = true">&raquo;</button>
+      <button class="railbtn" title="Contents" @click="showContents = true">&#9776;</button>
+    </aside>
+
+    <aside v-else>
       <div class="brand">
         <span class="dot"></span>
         <div>
           <strong>ICE Practice</strong>
           <small>{{ course?.title || 'Loading…' }}</small>
         </div>
+        <button class="collapse" title="Hide the sidebar" @click="sidebarOpen = false">&laquo;</button>
       </div>
 
       <button class="courses" @click="backToCourses">&larr; All courses</button>
@@ -181,32 +201,33 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
         <small>{{ doneCount }} of {{ total }} complete</small>
       </div>
 
+      <!-- Where they are, and the two moves either side of it. The whole structure is one
+           click away in Contents; this is the part they need without asking. -->
+      <div class="here" v-if="currentTopic">
+        <div class="hop">
+          <button class="step" :disabled="topicIndex <= 0"
+                  title="Previous topic" @click="goTopic(-1)">&lsaquo;</button>
+          <button class="step" :disabled="topicIndex >= topics.length - 1"
+                  title="Next topic" @click="goTopic(1)">&rsaquo;</button>
+        </div>
+        <small>{{ unitOfCurrent?.unit }} {{ unitOfCurrent?.title }}</small>
+        <strong>{{ currentTopic.topic }} {{ currentTopic.title }}</strong>
+      </div>
+
+      <button class="contents" @click="showContents = true">
+        <span>Contents</span>
+        <span class="hint">{{ total }} exercises</span>
+      </button>
+
       <nav>
-        <template v-for="m in course?.modules || []" :key="m.module">
-          <h4 class="module">Module {{ m.module }} &middot; {{ m.title }}</h4>
-
-          <template v-for="u in m.units" :key="u.unit">
-            <button class="unit" :class="{ open: openUnits.has(u.unit) }" @click="toggleUnit(u.unit)">
-              <span class="caret">{{ openUnits.has(u.unit) ? '▾' : '▸' }}</span>
-              <span class="label">{{ u.unit }} {{ u.title }}</span>
-              <span class="tally">{{ unitDone(u) }}/{{ unitTotal(u) }}</span>
-            </button>
-
-            <template v-if="openUnits.has(u.unit)">
-              <template v-for="t in u.topics" :key="t.topic">
-                <h5>{{ t.topic }} {{ t.title }}</h5>
-                <button
-                  v-for="e in t.exercises" :key="e.id"
-                  class="navitem"
-                  :class="{ active: e.id === currentId, done: solved.has(e.id) }"
-                  @click="currentId = e.id">
-                  <span class="badge">{{ solved.has(e.id) ? '✓' : (badgeFor[e.type] || 'SQL') }}</span>
-                  <span class="label">{{ e.title }}</span>
-                </button>
-              </template>
-            </template>
-          </template>
-        </template>
+        <button
+          v-for="e in currentTopic?.exercises || []" :key="e.id"
+          class="navitem"
+          :class="{ active: e.id === currentId, done: solved.has(e.id) }"
+          @click="currentId = e.id">
+          <span class="badge">{{ solved.has(e.id) ? '✓' : (badgeFor[e.type] || 'SQL') }}</span>
+          <span class="label">{{ e.title }}</span>
+        </button>
       </nav>
 
       <button v-if="isAdmin" class="signout" @click="showAdmin = true">Manage enrolment</button>
@@ -246,15 +267,54 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
       v-if="showSlides && slidesUrl"
       :src="slidesUrl" :label="currentTopic?.label"
       @close="showSlides = false" />
+
+    <ContentsModal
+      v-if="showContents"
+      :course="course" :current-id="currentId" :solved="solved" :current-unit="unitOfCurrent?.unit"
+      @pick="id => { currentId = id; showContents = false; }"
+      @close="showContents = false" />
   </div>
 </template>
 
 <style scoped>
 .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100vh; }
 .shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
+.shell.collapsed { grid-template-columns: 44px minmax(0, 1fr); }
+.shell.collapsed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
 aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border);
         display: flex; flex-direction: column; min-height: 0; }
 .brand { display: flex; gap: 10px; align-items: center; padding: 18px 18px 14px; }
+.brand > div { min-width: 0; }
+.collapse { margin-left: auto; background: none; border: 0; cursor: pointer; padding: 2px 4px;
+            color: var(--ice-fg-muted); font-size: 15px; line-height: 1; }
+.collapse:hover { color: var(--ice-fg); }
+
+.rail { align-items: center; padding: 16px 0; gap: 8px; }
+.railbtn { width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
+           background: none; border: 1px solid transparent; border-radius: 8px;
+           color: var(--ice-fg-muted); font-size: 14px; line-height: 1; }
+.railbtn:hover { color: var(--ice-fg); border-color: var(--ice-border); background: var(--ice-bg); }
+
+/* Where they are. The unit is context and the topic is the heading, so the topic is the
+   one that gets the weight. */
+.here { padding: 4px 18px 12px; display: flex; flex-direction: column; }
+.here small { color: var(--ice-fg-muted); font-size: 11px; order: 1;
+              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.here strong { font-size: 14px; line-height: 1.35; order: 2; margin-top: 2px; }
+.hop { order: 3; display: flex; gap: 4px; margin-top: 8px; }
+.step { width: 26px; height: 22px; display: grid; place-items: center; cursor: pointer;
+        background: var(--ice-bg); border: 1px solid var(--ice-border); border-radius: 6px;
+        color: var(--ice-fg-muted); font-size: 13px; line-height: 1; }
+.step:hover:not(:disabled) { color: var(--ice-fg); border-color: var(--ice-primary-soft); }
+.step:disabled { opacity: .35; cursor: not-allowed; }
+
+.contents { margin: 0 18px 10px; padding: 8px 10px; display: flex; align-items: center;
+            gap: 8px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+            background: var(--ice-bg); color: var(--ice-fg);
+            border: 1px solid var(--ice-border); border-radius: 8px; }
+.contents:hover { border-color: var(--ice-primary-soft); }
+.contents .hint { margin-left: auto; font-weight: 400; font-size: 10px;
+                  font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
 .brand small { display: block; color: var(--ice-fg-muted); font-size: 11px; }
 .dot { width: 12px; height: 12px; border-radius: 3px; background: var(--ice-primary); flex: none; }
 .courses { margin: 0 18px 12px; padding: 6px 8px; font: inherit; font-size: 12px;
@@ -267,18 +327,6 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .bar i { display: block; height: 100%; background: var(--ice-primary); transition: width .3s; }
 .progress small { color: var(--ice-fg-muted); font-size: 11px; display: block; margin-top: 6px; }
 nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
-h4.module { margin: 18px 8px 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-            color: var(--ice-primary-strong); }
-h5 { margin: 10px 8px 4px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
-     color: var(--ice-fg-muted); font-weight: 500; }
-.unit { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left;
-        padding: 7px 8px; border-radius: 8px; border: 0; background: none; cursor: pointer;
-        color: var(--ice-fg); font: inherit; font-size: 13px; font-weight: 600; }
-.unit:hover { background: var(--ice-bg); }
-.caret { flex: none; width: 10px; color: var(--ice-fg-muted); font-size: 10px; }
-.tally { flex: none; margin-left: auto; font-size: 10px; font-family: var(--ice-font-mono);
-         color: var(--ice-fg-muted); }
-.navitem { padding-left: 26px; }
 .navitem { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
            padding: 7px 8px; border-radius: 8px; border: 0; background: none; cursor: pointer;
            color: var(--ice-fg-muted); font: inherit; font-size: 13px; }
