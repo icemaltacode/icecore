@@ -26,7 +26,7 @@ const initials = computed(() => {
 </script>
 
 <template>
-  <header class="bar">
+  <header class="topbar">
     <!-- Placeholder for the logo. Keep it a button: it is the way home from anywhere. -->
     <button class="mark" @click="$emit('home')">
       <span class="dot"></span>
@@ -45,8 +45,11 @@ const initials = computed(() => {
 </template>
 
 <style scoped>
-.bar { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 52px;
-       background: var(--ice-bg-soft); border-bottom: 1px solid var(--ice-border); }
+/* Not `.bar`: a parent's scoped styles also apply to a child component's root element, and
+   App.vue has a `.bar` for the progress meter. That collision put a 999px radius on the
+   corners of the top bar and would have kept finding new ways to be wrong. */
+.topbar { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 52px;
+          background: var(--ice-bg-soft); border-bottom: 1px solid var(--ice-border); }
 .mark { display: flex; align-items: center; gap: 10px; background: none; border: 0;
         padding: 6px 8px; margin-left: -8px; border-radius: 8px; cursor: pointer;
         color: var(--ice-fg); font: inherit; }
