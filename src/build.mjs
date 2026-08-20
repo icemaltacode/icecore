@@ -102,7 +102,10 @@ export function parseExercise(file, text) {
   if (fm.type === 'mcq') {
     const { options, answer } = optionsIn(secs.find(s => s.title === 'Options')?.body);
     const feedback = orderedIn(secs.find(s => s.title === 'Feedback')?.body);
-    return { ...fm, file, prompt: intro, options, answer, feedback };
+    // Every imported multiple-choice exercise carries a hint, and until now all of them
+    // were dropped on the floor.
+    const hint = secs.find(s => s.title === 'Hint')?.body || '';
+    return { ...fm, file, prompt: intro, options, answer, feedback, hint };
   }
 
   if (fm.type === 'dragdrop') {

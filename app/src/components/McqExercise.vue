@@ -15,8 +15,11 @@ const mdx = text => md(text, {
 
 const picked = ref(null);
 const submitted = ref(false);
+const showHint = ref(false);
 
-watch(() => props.exercise.id, () => { picked.value = null; submitted.value = false; });
+watch(() => props.exercise.id, () => {
+  picked.value = null; submitted.value = false; showHint.value = false;
+});
 
 const correct = () => picked.value === props.exercise.answer;
 
@@ -54,6 +57,15 @@ function submit() {
         </li>
       </ul>
 
+      <!-- No answer reveal and no tutor here: the answer is one of four things on screen,
+           and a nudge towards it would just be the answer. So this holds the hint alone. -->
+      <div class="help" v-if="exercise.hint">
+        <button class="link" @click="showHint = !showHint">
+          {{ showHint ? 'Hide hint' : 'Take a hint' }}
+        </button>
+        <div v-if="showHint" class="prose hintbody" v-html="mdx(exercise.hint)"></div>
+      </div>
+
       <div class="foot">
         <p v-if="submitted" class="feedback" :class="{ pass: correct(), fail: !correct() }"
            v-html="mdx(exercise.feedback?.[picked] || (correct() ? 'Correct.' : 'Not quite.'))"></p>
@@ -86,6 +98,9 @@ h2 { margin: 0 0 8px; font-size: 22px; }
 .option:disabled { cursor: default; }
 .marker { flex: none; width: 24px; height: 24px; border-radius: 6px; display: grid; place-items: center;
           font-size: 12px; font-weight: 600; background: var(--ice-bg); border: 1px solid var(--ice-border); }
+.help { margin-top: 22px; }
+.hintbody { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft);
+            border-radius: var(--ice-radius); }
 .foot { margin-top: 24px; display: flex; align-items: center; gap: 16px; }
 .feedback { margin: 0; margin-right: auto; font-size: 14px; }
 .feedback.pass { color: #86efac; }

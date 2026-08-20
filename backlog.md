@@ -7,9 +7,6 @@ So the queue is:
 - [x] then the 6 presentation apps
 - [ ] then the 22 interactive apps, *(1 done: 1.7.1 Choosing a measure)*
 
-
-1.9.1 q1?
-
 ## The 28 embedded-app exercises
 
 **All 28 are rippable.** The apps are public static bundles — no login, no API — at a
