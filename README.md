@@ -73,6 +73,16 @@ touches a database.
 **`mcq`** — `## Options` as a numbered list, the right one marked `← correct`, with an
 optional `## Feedback` list in the same order.
 
+**Markdown in prompts** covers paragraphs, `-` lists, fenced code, pipe tables,
+single-level blockquotes, and inline bold, italic, code, links and images. Deliberately no
+headings, numbered lists or nested quotes — an exercise prompt that needs those wants
+splitting up.
+
+A table needs a header row and a separator row containing at least one pipe, so a bare
+`---` under a line of prose stays prose. Alignment markers parse but do nothing; nothing in
+the course needs them. Result sets inside ```` ```sql ```` fences are pipe tables too, and
+stay code — the fence rule is tested first, deliberately.
+
 **Figures.** An exercise's images live beside it in `exercises/<topic>/images/` and are
 referenced by bare filename:
 

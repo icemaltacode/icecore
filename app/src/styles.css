@@ -62,6 +62,16 @@ button { font-family: inherit; }
 .prose img { display: block; max-width: 100%; height: auto; margin: 14px 0;
              border-radius: var(--ice-radius); background: #fff; }
 .prose.inline img { display: inline-block; margin: 4px 0; vertical-align: middle; }
+.prose blockquote { margin: 0 0 12px; padding: 8px 14px; border-left: 3px solid var(--ice-primary-soft);
+                    background: var(--ice-bg-soft); border-radius: 0 var(--ice-radius) var(--ice-radius) 0; }
+.prose blockquote > :last-child { margin-bottom: 0; }
+/* Wide comparison tables scroll inside the prose column rather than stretching it. */
+.prose .tablewrap { overflow-x: auto; margin: 0 0 12px; }
+.prose table { border-collapse: collapse; width: 100%; font-size: .95em; }
+.prose th, .prose td { text-align: left; padding: 7px 12px; border-bottom: 1px solid var(--ice-border);
+                       vertical-align: top; }
+.prose th { color: var(--ice-primary-strong); font-weight: 600; white-space: nowrap;
+            border-bottom-color: var(--ice-primary-soft); }
 .prose a { color: var(--ice-primary-strong); }
 .prose.inline > p:last-child { margin-bottom: 0; }
 .prose.inline > p:first-child { margin-top: 0; }

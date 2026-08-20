@@ -1,22 +1,29 @@
 /* Deliberately tiny markdown renderer — the content is ours and uses a known subset. */
-const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+/* `>` is deliberately not escaped: it is only special after a `<`, which is escaped, and
+ * leaving it alone is what lets the blockquote rule below still see its own marker. */
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
 /**
  * `base` is where an exercise's own images live. Image sources are written as bare
  * filenames in the markdown - the exercise shouldn't have to know the course id or where
  * the bundle is mounted - so they're resolved against it here.
+ *
+ * `escaped` is internal: a blockquote renders its own body by calling back in, and escaping
+ * twice would turn &amp; into &amp;amp;.
  */
-export function md(src = '', { base = '' } = {}) {
-  const lines = esc(src).split('\n');
+export function md(src = '', { base = '', escaped = false } = {}) {
+  const lines = (escaped ? src : esc(src)).split('\n');
   const out = [];
   let list = null, para = [], fence = null;
 
   const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join(' '), base)}</p>`); para = []; } };
   const flushList = () => { if (list) { out.push(`<ul>${list.join('')}</ul>`); list = null; } };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     // Fenced blocks come through verbatim - exercise prompts are full of SQL, and joining
-    // those lines into a paragraph turns a query into an unreadable smear.
+    // those lines into a paragraph turns a query into an unreadable smear. This has to stay
+    // the first test: result sets inside ```sql fences are pipe tables, and they are code.
     const rule = line.match(/^\s*```(\w*)\s*$/);
     if (rule) {
       if (fence) { out.push(`<pre><code${fence.lang ? ` class="language-${fence.lang}"` : ''}>${fence.body.join('\n')}</code></pre>`); fence = null; }
@@ -24,6 +31,36 @@ export function md(src = '', { base = '' } = {}) {
       continue;
     }
     if (fence) { fence.body.push(line); continue; }
+
+    // A pipe table: a header row, then a row of dashes. The separator must contain a pipe,
+    // so a bare `---` under a line of prose stays prose rather than becoming a one-column
+    // table.
+    if (line.includes('|') && isSeparator(lines[i + 1])) {
+      flushPara(); flushList();
+      const head = cells(line);
+      i++;                                   // step over the separator
+      const body = [];
+      while (i + 1 < lines.length && lines[i + 1].includes('|') && lines[i + 1].trim())
+        body.push(cells(lines[++i]));
+      out.push(
+        '<div class="tablewrap"><table><thead><tr>' +
+        head.map(c => `<th>${inline(c, base)}</th>`).join('') +
+        '</tr></thead><tbody>' +
+        body.map(r => `<tr>${r.map(c => `<td>${inline(c, base)}</td>`).join('')}</tr>`).join('') +
+        '</tbody></table></div>');
+      continue;
+    }
+
+    // Blockquotes, one level. Rendered by calling back in so a quote can hold paragraphs
+    // and lists rather than only a single line.
+    if (/^\s*>/.test(line)) {
+      flushPara(); flushList();
+      const quoted = [line.replace(/^\s*>\s?/, '')];
+      while (i + 1 < lines.length && /^\s*>/.test(lines[i + 1]))
+        quoted.push(lines[++i].replace(/^\s*>\s?/, ''));
+      out.push(`<blockquote>${md(quoted.join('\n'), { base, escaped: true })}</blockquote>`);
+      continue;
+    }
 
     const item = line.match(/^\s*[-*]\s+(.*)$/);
     if (item) { flushPara(); (list ||= []).push(`<li>${inline(item[1], base)}</li>`); continue; }
@@ -36,6 +73,17 @@ export function md(src = '', { base = '' } = {}) {
   flushPara(); flushList();
   return out.join('\n');
 }
+
+/* Cells of a pipe row, without the empties an outer pipe leaves behind. */
+const cells = row => {
+  const parts = row.split('|');
+  if (parts[0].trim() === '') parts.shift();
+  if (parts.length && parts[parts.length - 1].trim() === '') parts.pop();
+  return parts.map(c => c.trim());
+};
+const isSeparator = row =>
+  !!row && row.includes('|') && row.includes('-') &&
+  cells(row).length > 0 && cells(row).every(c => /^:?-+:?$/.test(c));
 
 const resolve = (src, base) =>
   /^(https?:)?\/\//.test(src) || src.startsWith('/') ? src : base + src;
