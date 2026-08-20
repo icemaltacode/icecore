@@ -107,6 +107,19 @@ It resolves each deck's transitive `src:` includes, so it knows that editing
 them. **Building decks is no longer a prerequisite of publishing content** — a topic gets its
 Slides button from `slides/topic-<topic>.md` existing, not from built output.
 
+**Until the course repo's lockfile is refreshed, `npx icecore` in that repo runs a stale
+build that predates the `slides` subcommand.** Symptoms: `npx icecore slides content` prints
+the help text, and `--list` fails with `icecore: --list needs a value` — the old argument
+parser required a value for every flag and dies before it even reaches the command. Neither
+is a bug in the current code. Run it from the icecore working tree until the lockfile lands
+(see *Publishing pipeline* above); npm pins a git dependency to a commit, so `npm ci` will
+keep installing the old one however many times the platform is pushed.
+
+An **unclosed** final section — a `layout: statement` wrap-up with no `statement_alt` after
+it, as in 1.3.4, 1.6.4, 1.7.4 and 1.8.4 — is fine and needs no fixing. The reader runs the
+section to the last content slide and stops before the deck's `closing_slide`. Closing it is
+an editorial consistency choice, not a technical requirement.
+
 ## Images: each deck now ships only what it references
 
 Slidev copies all of `slides/public/` into every build, which meant one deck carried every
