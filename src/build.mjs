@@ -17,6 +17,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
+import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -198,7 +199,8 @@ export function stepProblems(ex) {
 /**
  * Build a content directory. Returns the full model, which is also what gets written.
  */
-export async function buildContent({ contentDir, outDir, write = true, log = console.log }) {
+export async function buildContent({ contentDir, outDir, write = true, log = console.log,
+                                     slidesSrc = null }) {
   const exDir = path.join(contentDir, 'exercises');
   if (!fs.existsSync(exDir)) throw new Error(`No exercises/ in ${contentDir}`);
 
@@ -309,24 +311,74 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const courses = new Map([[course.id, course]]);
 
   // ---- discover slide decks ----
-  // A unit has a deck when the course repo has built one to slides/<unit>/index.html.
-  // Derived rather than declared: a `slides:` key in _unit.json would be a second source
-  // of truth that could disagree with what's actually on disk. `slides:` may still be set
-  // to an absolute URL when a deck lives somewhere else entirely.
-  const slidesDir = path.join(contentDir, 'slides');
-  const decks = new Set(fs.existsSync(slidesDir)
+  //
+  // A topic has a deck when the course repo has a *source* deck for it, at
+  // slides/topic-<topic>.md. Deliberately not "when a deck has been built to
+  // content/slides/<topic>/": that coupled the content pipeline to the deck pipeline, so
+  // publishing without rebuilding every deck first quietly shipped a course with no slides
+  // links at all. Source is the thing that is true regardless of what any given CI run
+  // chose to rebuild - which is what makes selective deck building safe.
+  //
+  // Still derived rather than declared: a `slides:` key in _topic.json would be a second
+  // source of truth that could disagree with the repo. `slides:` may still be set to an
+  // absolute URL when a deck lives somewhere else entirely.
+  const slidesDir = path.join(contentDir, 'slides');       // build output, copied to dist
+  const srcDir = slidesSrc || slidesSrcDir(contentDir);    // authored decks
+  const sources = deckFiles(srcDir);
+  const built = new Set(fs.existsSync(slidesDir)
     ? fs.readdirSync(slidesDir).filter(d => fs.existsSync(path.join(slidesDir, d, 'index.html')))
     : []);
+  for (const d of fs.existsSync(slidesDir) ? fs.readdirSync(slidesDir) : [])
+    if (!built.has(d) && fs.statSync(path.join(slidesDir, d)).isDirectory())
+      warnings.push(`${d}: slides/${d}/ has no index.html - half-built deck`);
+
+  // Sections come from the source decks too, and for the same reason: a selective build
+  // leaves most of content/slides/ untouched, so anything read from there is stale by
+  // design. Parsing is ~300ms for 59 decks and buys one source of truth.
+  const deckErrors = [];
+  const decks = await readDecks(srcDir, {
+    onError: (topic, msg) => deckErrors.push(`${topic}: deck will not parse - ${msg}`),
+  });
+  warnings.push(...deckErrors);
+
+  const missingSections = [];   // verify fails on these - see below
   for (const course of courses.values())
     for (const u of topicsOf(course)) {
-      if (u.slides) continue;                          // an explicit URL from _topic.json wins
       // index.html is named explicitly rather than relying on a directory index: S3 behind
       // CloudFront only applies defaultRootObject to the root, so `slides/1.2.3/` would
       // 404 in production, and a dev server answers it with the app's own index page -
       // which then loads the whole player inside the iframe.
-      if (decks.has(u.topic)) u.slides = `slides/${u.topic}/index.html`;
-      else if (fs.existsSync(path.join(slidesDir, u.topic)))
-        warnings.push(`${u.topic}: slides/${u.topic}/ has no index.html - deck not published`);
+      if (!u.slides && sources.has(u.topic)) u.slides = `slides/${u.topic}/index.html`;
+
+      /* Interleaving. A section is an annotation on a run of exercises within a topic - a
+       * label and a slide range - not a level of the hierarchy that owns them. Topics still
+       * hold the exercises; `section:` just groups them. That keeps "only topics are
+       * directories, only topics hold exercises" true, and keeps the vocabulary at four
+       * words. The ordinal is internal and never shown to a student.
+       *
+       * A topic with no `section:` on anything simply doesn't interleave, which is how a
+       * course with no raw data behaves and how every course behaved before this. */
+      const sections = decks.get(u.topic)?.sections;
+      const numbered = u.exercises.filter(e => e.section != null);
+      if (!numbered.length) continue;
+      if (!sections?.length) {
+        missingSections.push(`${u.topic}: exercises carry section: but the deck has no `
+          + '"layout: statement" sections (or there is no deck)');
+        continue;
+      }
+      // A section pointing past the end of the deck is the failure this exists to catch:
+      // the prompt still reads fine, the exercise still grades, and the slide link lands on
+      // nothing. Same treatment as a missing figure.
+      for (const e of numbered)
+        if (!(e.section >= 1 && e.section <= sections.length))
+          missingSections.push(`${u.topic} ${e.file}: section ${e.section} does not exist `
+            + `- the deck has ${sections.length}`);
+      if (numbered.length !== u.exercises.length)
+        warnings.push(`${u.topic}: ${u.exercises.length - numbered.length} of `
+          + `${u.exercises.length} exercises have no section: - the topic won't interleave`);
+      // Carried only when every exercise is placed: a partial mapping interleaves some of
+      // the topic and silently drops the rest, which reads as lost exercises.
+      else u.sections = sections;
     }
 
   // ---- load datasets ----
@@ -503,19 +555,26 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
 
     // Decks sit at the site root, not under content/: a built Slidev deck is a small site
     // of its own with absolute asset paths, and its --base has to match where it lands.
+    //
+    // What lands here is whatever has actually been *built*, not every deck the course has
+    // a source for. Under selective building that is only the decks this push rebuilt, and
+    // the publish step syncs them one prefix at a time for exactly that reason: an
+    // `s3 sync --delete` of the whole slides/ prefix against a partial dist would delete
+    // every deck that wasn't rebuilt.
     const slidesOut = path.join(outDir, 'slides');
     fs.rmSync(slidesOut, { recursive: true, force: true });
-    if (decks.size) {
-      for (const unit of decks)
-        fs.cpSync(path.join(slidesDir, unit), path.join(slidesOut, unit), { recursive: true });
-      log(`  slides: ${decks.size} deck${decks.size === 1 ? '' : 's'} [${[...decks].sort().join(', ')}]`);
+    if (built.size) {
+      for (const topic of built)
+        fs.cpSync(path.join(slidesDir, topic), path.join(slidesOut, topic), { recursive: true });
+      log(`  slides: ${built.size} built deck${built.size === 1 ? '' : 's'} of ${sources.size} `
+          + `[${[...built].sort(byNumber).join(', ')}]`);
     }
   }
 
   for (const w of warnings) log(`  ! ${w}`);
   log(`  precomputed ${computed} expected result sets${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
-  warnings.push(...missingImages, ...missingApps);
+  warnings.push(...missingImages, ...missingApps, ...missingSections);
   return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,
-           missingImages, missingApps };
+           missingImages, missingApps, missingSections, decks, deckSources: sources };
 }

@@ -14,10 +14,12 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
+import { slidesSrcDir, deckFiles, readDecks, affectedDecks } from '../src/decks.mjs';
 import { compareResults } from '../app/src/compare.js';
 import { validate as validateDragDrop, allItems } from '../app/src/dragdrop.js';
 
@@ -29,8 +31,10 @@ const cmd = argv[0];
 
 // One pass, so a flag's value is consumed rather than also counting as a positional -
 // `icecore bundle --out dist` must not read "dist" as the content directory. Both
-// `--name value` and `--name=value` are accepted; every flag takes a value today, so a
-// missing one is an error rather than a boolean.
+// `--name value` and `--name=value` are accepted. Flags take a value unless they are named
+// here, and a missing value is an error rather than a silent boolean: `--since` with
+// nothing after it must not quietly mean "rebuild everything".
+const BOOLEAN = new Set(['list', 'dry-run']);
 const flags = {};
 const positional = [];
 for (let i = 1; i < argv.length; i++) {
@@ -39,12 +43,15 @@ for (let i = 1; i < argv.length; i++) {
   if (!arg.startsWith('--')) continue;
   const eq = arg.indexOf('=');
   if (eq !== -1) { flags[arg.slice(2, eq)] = arg.slice(eq + 1); continue; }
+  const name = arg.slice(2);
+  if (BOOLEAN.has(name)) { flags[name] = true; continue; }
   const value = argv[i + 1];
   if (value === undefined || value.startsWith('-')) die(`${arg} needs a value`);
-  flags[arg.slice(2)] = value;
+  flags[name] = value;
   i++;
 }
 const flag = (name, fallback) => (name in flags ? flags[name] : fallback);
+const has = name => name in flags;
 
 const contentDir = path.resolve(positional[0] || 'content');
 if (!fs.existsSync(contentDir)) die(`No content directory at ${contentDir}`);
@@ -56,6 +63,7 @@ switch (cmd) {
   case 'verify': await cmdVerify(); break;
   case 'dev':    await cmdDev(); break;
   case 'bundle': await cmdBundle(); break;
+  case 'slides': await cmdSlides(); break;
   default:
     console.log(`icecore - ICE practice platform
 
@@ -64,6 +72,10 @@ switch (cmd) {
   icecore dev    [contentDir] [--port n]    run the player against a content directory
                  [--as student|admin|signin]  ...as a signed-in user, with no AWS
   icecore bundle [contentDir] [--out dir]   build a deployable site (app + content)
+  icecore slides [contentDir]               build the course's per-topic decks
+                 [--since <sha>]              ...only those a change since <sha> affects
+                 [--only 1.1.1,1.2.3]         ...only these
+                 [--list]                     say what would be built, build nothing
 
 contentDir defaults to ./content.`);
     process.exit(cmd ? 1 : 0);
@@ -81,7 +93,8 @@ async function cmdBuild(outDir = path.resolve(flag('out', 'dist'))) {
 async function cmdVerify() {
   console.log(`verifying ${path.relative(process.cwd(), contentDir) || '.'}`);
   // built in memory: reference solutions never touch the disk
-  const { courses, datasets, missingImages, missingApps } = await buildContent({ contentDir, write: false });
+  const { courses, datasets, missingImages, missingApps, missingSections } =
+    await buildContent({ contentDir, write: false });
 
   const seeded = new Map();
   const template = async name => {
@@ -125,8 +138,9 @@ async function cmdVerify() {
   let pass = 0, fail = 0, sample = null, dnd = 0, mcqSteps = 0, setups = 0, loose = 0;
   const bad = [];
   // A figure that isn't there is why this check exists: the prompt still reads fine and the
-  // exercise still grades, so nothing else would ever notice.
-  for (const m of [...missingImages, ...missingApps]) { fail++; bad.push(m); }
+  // exercise still grades, so nothing else would ever notice. A section pointing at a slide
+  // the deck doesn't have is the same shape of bug, and gets the same treatment.
+  for (const m of [...missingImages, ...missingApps, ...missingSections]) { fail++; bad.push(m); }
   for (const course of courses) {
     for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
       for (const ex of unit.exercises) {
@@ -206,6 +220,116 @@ async function cmdDev() {
   });
   await server.listen();
   server.printUrls();
+}
+
+/* Build the course's per-topic decks - all of them, or only the ones a change actually
+ * touched.
+ *
+ * This used to be a shell loop in each course's package.json:
+ *
+ *     for f in topic-*.md; do slidev build "$f" --base ... --out ...; done
+ *
+ * an unconditional glob with no change detection, which is how fixing a typo in one slide
+ * came to rebuild 59 decks. The selection lives here rather than in the course repo so
+ * there is one copy of it, and so the include graph it needs is the same one the sections
+ * come out of.
+ *
+ * IT WRITES A MANIFEST. `<contentDir>/slides/.built.json` records what this run produced
+ * and what the course currently has sources for. The publish step needs both: it syncs one
+ * prefix per rebuilt deck (never `--delete` against slides/ as a whole, which would erase
+ * every deck that wasn't rebuilt) and reconciles the rest against `all`.
+ */
+async function cmdSlides() {
+  const srcDir = slidesSrcDir(contentDir);
+  if (!fs.existsSync(srcDir)) die(`No slides/ beside ${contentDir} - nothing to build`);
+  const outRoot = path.join(contentDir, 'slides');
+
+  const sources = deckFiles(srcDir);
+  if (!sources.size) die(`No topic-*.md in ${srcDir}`);
+  const decks = await readDecks(srcDir, {
+    onError: (topic, msg) => console.error(`  ! ${topic}: ${msg}`),
+  });
+  if (!decks.size)
+    die(`@slidev/parser is not installed in ${srcDir} - run npm ci there first`);
+
+  // What to build.
+  let topics, why = 'no filter given, so all of them';
+  let reasons = new Map();
+  if (has('only')) {
+    topics = String(flag('only')).split(',').map(s => s.trim()).filter(Boolean);
+    const unknown = topics.filter(t => !decks.has(t));
+    if (unknown.length) die(`no deck for ${unknown.join(', ')}`);
+    why = '--only';
+  } else if (has('since')) {
+    const since = String(flag('since'));
+    const changed = changedSince(since, path.dirname(srcDir));
+    if (changed === null) {
+      topics = [...decks.keys()];
+      why = `cannot diff against ${since.slice(0, 8)} - falling back to every deck`;
+    } else {
+      const a = affectedDecks(decks, changed);
+      ({ topics, reasons } = a);
+      why = a.global.length
+        ? `shared files changed (${a.global.slice(0, 3).join(', ')}`
+          + `${a.global.length > 3 ? `, +${a.global.length - 3} more` : ''}), so every deck`
+        : `${changed.length} file(s) changed since ${since.slice(0, 8)}`;
+    }
+  } else {
+    topics = [...decks.keys()];
+  }
+  topics.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+
+  console.log(`slides: ${topics.length} of ${decks.size} deck(s) to build - ${why}`);
+  // Said out loud, because the failure mode of selective building is publishing less than
+  // you meant to and never finding out.
+  for (const t of topics) {
+    const r = [...new Set(reasons.get(t) || [])];
+    console.log(`  ${t}${r.length ? `  <- ${r.join(', ')}` : ''}`);
+  }
+  if (flags.list) return;
+  if (!topics.length) { writeManifest(outRoot, [], [...decks.keys()]); return; }
+
+  // Resolved from the course's own node_modules rather than npx: npx would happily go to
+  // the network for a Slidev that must match the theme and the lockfile.
+  const bin = path.join(srcDir, 'node_modules', '.bin', 'slidev');
+  if (!fs.existsSync(bin)) die(`slidev is not installed in ${srcDir} - run npm ci there first`);
+
+  const t0 = Date.now();
+  for (const [i, topic] of topics.entries()) {
+    const out = path.join(outRoot, topic);
+    console.log(`\n[${i + 1}/${topics.length}] building ${topic}`);
+    // --base has to match where the deck lands, or every asset it asks for 404s in
+    // production while working perfectly from a dev server at the root.
+    const r = spawnSync(bin, [
+      'build', sources.get(topic),
+      '--base', `/slides/${topic}/`,
+      '--out', path.relative(srcDir, out),
+    ], { cwd: srcDir, stdio: 'inherit' });
+    if (r.status !== 0) die(`slidev build failed for ${topic}`);
+  }
+  writeManifest(outRoot, topics, [...decks.keys()]);
+  console.log(`\nbuilt ${topics.length} deck(s) in ${Math.round((Date.now() - t0) / 1000)}s`);
+}
+
+/* Repo-relative paths changed between <sha> and the working tree. Null - not an empty list
+ * - when git cannot answer, so the caller falls back to building everything: a first push,
+ * a force-push and a shallow clone all produce a sha that isn't there, and treating that as
+ * "nothing changed" publishes nothing and says it succeeded. */
+function changedSince(sha, repoDir) {
+  if (/^0+$/.test(sha)) return null;             // GitHub's "no before commit" sentinel
+  try {
+    const out = execFileSync('git', ['diff', '--name-only', `${sha}`, '--'],
+      { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return out.split('\n').map(s => s.trim()).filter(Boolean);
+  } catch { return null; }
+}
+
+function writeManifest(outRoot, built, all) {
+  fs.mkdirSync(outRoot, { recursive: true });
+  // Dot-prefixed and never copied to dist: build.mjs only carries directories that hold an
+  // index.html, so this stays on the build machine where it belongs.
+  fs.writeFileSync(path.join(outRoot, '.built.json'),
+    JSON.stringify({ built, all }, null, 2));
 }
 
 async function cmdBundle() {

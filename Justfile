@@ -36,7 +36,8 @@ verify:
 build:
     {{icecore}} build {{course}}/content
 
-# Decks are only picked up if already built — run `just decks` first, or use `just deploy`.
+# Carries whatever decks have been built into content/slides/; run `just decks` first if
+# you want them fresh. The course still gets its Slides buttons either way.
 # Build the full deployable site — app + content — into dist/.
 bundle:
     {{icecore}} bundle {{course}}/content
@@ -45,17 +46,13 @@ bundle:
 slides:
     cd {{course}} && npm run slides
 
-# `bundle` and `build` only discover decks something else has already written, so anything
-# that publishes comes through here first or ships a course with no slides and says nothing.
-# Build the course's per-unit slide decks into its content/slides/.
-decks:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if ! node -e "process.exit(require('{{justfile_directory()}}/{{course}}/package.json').scripts?.['slides:build'] ? 0 : 1)"; then
-      echo "warning: {{course}} has no slides:build script - publishing without decks" >&2
-      exit 0
-    fi
-    npm --prefix {{course}} run slides:build
+# No longer a prerequisite of publishing: the Slides button is derived from the deck
+# *sources* in slides/, so content can publish on its own and a deck that wasn't rebuilt
+# keeps whatever is already live. Pass --since <sha> to build only what a change touched,
+# or --list to see what would be built without building it.
+# Build the course's per-topic slide decks into its content/slides/.
+decks *args:
+    {{icecore}} slides {{course}}/content {{args}}
 
 clean:
     rm -rf dist {{course}}/.icecore
