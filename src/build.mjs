@@ -217,6 +217,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const warnings = [];
   const usedImages = new Set();   // "<topic>/<file>", so unreferenced files aren't shipped
   const missingImages = [];       // verify fails on these - a dropped figure is the bug
+  const usedApps = new Set();     // "<topic>/<name>", same idea for embedded apps
+  const missingApps = [];
   const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
   const course = { id: courseMeta.id, title: courseMeta.title, modules: [] };
   const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
@@ -233,6 +235,12 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     const imgDir = path.join(dir, 'images');
     const haveImages = new Set(fs.existsSync(imgDir) ? fs.readdirSync(imgDir) : []);
 
+    // An embedded app is a static bundle mirrored beside the exercise that uses it. It has
+    // to bring its own index.html: that is what the iframe loads.
+    const appDir = path.join(dir, 'apps');
+    const haveApps = new Set((fs.existsSync(appDir) ? fs.readdirSync(appDir) : [])
+      .filter(a => fs.existsSync(path.join(appDir, a, 'index.html'))));
+
     const exercises = fs.readdirSync(dir).filter(f => f.endsWith('.md')).sort(byNumber)
       .map(f => {
         const text = fs.readFileSync(path.join(dir, f), 'utf8');
@@ -242,6 +250,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           if (/^(https?:)?\/\//.test(src) || src.startsWith('/')) continue;
           if (!haveImages.has(src)) missingImages.push(`${topicId} ${f}: no image at images/${src}`);
           else usedImages.add(`${topicId}/${src}`);
+        }
+        for (const [, name] of text.matchAll(/^\s*::app\s+([\w.-]+)(?:\s+height=\d+)?\s*::\s*$/gm)) {
+          if (!haveApps.has(name)) missingApps.push(`${topicId} ${f}: no app at apps/${name}/index.html`);
+          else usedApps.add(`${topicId}/${name}`);
         }
         return parseExercise(f, text);
       });
@@ -425,6 +437,16 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         images++;
       }
 
+      // Whole directories, not single files: an app is a shell plus its own assets.
+      let apps = 0;
+      for (const ref of usedApps) {
+        const [topicId, name] = [ref.slice(0, ref.indexOf('/')), ref.slice(ref.indexOf('/') + 1)];
+        const from = path.join(exDir, topicId, 'apps', name);
+        if (!fs.existsSync(from)) continue;
+        fs.cpSync(from, path.join(dir, 'apps', topicId, name), { recursive: true });
+        apps++;
+      }
+
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({
         ...course,
         datasets: shipped,
@@ -445,7 +467,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       });
       log(`  ${course.id}: ${course.modules.length} module${course.modules.length === 1 ? '' : 's'}, ` +
           `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
-          `${images} image${images === 1 ? '' : 's'}, datasets [${shipped.join(', ') || 'none'}]`);
+          `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
+          `datasets [${shipped.join(', ') || 'none'}]`);
     }
     fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
 
@@ -463,6 +486,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   for (const w of warnings) log(`  ! ${w}`);
   log(`  precomputed ${computed} expected result sets${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
-  warnings.push(...missingImages);
-  return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings, missingImages };
+  warnings.push(...missingImages, ...missingApps);
+  return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,
+           missingImages, missingApps };
 }

@@ -32,6 +32,30 @@ Use these words exactly -- a fourth vocabulary is how the old model ended up cal
 a course and a topic a unit. Importing from DataCamp: their *track* is a module, their
 *course* is a unit, their *chapter* is a topic.
 
+## Embedded apps
+
+A prompt can host a self-contained static app: a line reading `::app <name>::`, optionally
+`::app <name> height=720::`, renders an iframe. The app is a directory beside the exercise
+at `content/exercises/<topic>/apps/<name>/` with its own `index.html`, mirrored to
+`content/<course>/apps/<topic>/<name>/` at build time and shipped whole. `verify` fails on
+a reference with no `index.html` behind it, the same way it does for a missing figure.
+
+The iframe is sandboxed, but **with** `allow-same-origin`, and it has to be. Without it the
+frame gets an opaque origin, its own assets become cross-origin requests to a host that
+sends no CORS headers, and a module script — always fetched in CORS mode, `crossorigin`
+attribute or not — can never load at all. Serving CORS headers instead works in dev and
+403s in production: `/content/*` is behind the CloudFront key group and an anonymous
+cross-origin fetch carries no cookies.
+
+So the sandbox is worth keeping for the rest of its list — no top-level navigation, no
+popups, no forms — but it does **not** isolate the app from the player. A mirrored bundle is
+first-party code and has to be treated that way: read what it loads before shipping it.
+`dc-pull-app` warns when one reaches a DataCamp host at runtime, which is the loudest
+version of that check but not the only one worth doing.
+
+It has to be an iframe and not inlined markup: these bundles bring their own framework, their
+own stylesheet and their own opinion about what `body` looks like.
+
 ## Grading semantics
 
 Result-set comparison, not pattern matching on SQL:

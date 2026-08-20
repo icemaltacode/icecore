@@ -5,15 +5,18 @@ import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
-import { imageBase } from '../content.js';
+import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
 
-// Figures are written as bare filenames in the markdown; this is what turns them
-// into a URL under the course's content.
-const mdx = text => md(text, { base: imageBase(props.courseId, props.exercise.topicId) });
+// Figures and embedded apps are named bare in the markdown - a filename, an app
+// directory - and this is what turns them into URLs under the course's content.
+const mdx = text => md(text, {
+  base: imageBase(props.courseId, props.exercise.topicId),
+  apps: appBase(props.courseId, props.exercise.topicId),
+});
 
 const stepIndex = ref(0);
 const code = ref('');

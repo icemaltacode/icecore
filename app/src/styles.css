@@ -72,6 +72,11 @@ button { font-family: inherit; }
                        vertical-align: top; }
 .prose th { color: var(--ice-primary-strong); font-weight: 600; white-space: nowrap;
             border-bottom-color: var(--ice-primary-soft); }
+/* An embedded app carries its own layout, so it gets a fixed box and its own background
+   rather than inheriting the player's. The height comes from the `::app` line. */
+.prose .appframe { margin: 14px 0; border: 1px solid var(--ice-border);
+                   border-radius: var(--ice-radius); overflow: hidden; background: #fff; }
+.prose .appframe iframe { display: block; width: 100%; height: 100%; border: 0; }
 .prose a { color: var(--ice-primary-strong); }
 .prose.inline > p:last-child { margin-bottom: 0; }
 .prose.inline > p:first-child { margin-top: 0; }

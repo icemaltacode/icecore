@@ -20,6 +20,10 @@ export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.jso
 export const imageBase = (courseId, topic) =>
   `${BASE}${encodeURIComponent(courseId)}/images/${encodeURIComponent(topic)}/`;
 
+/** Where a topic's embedded apps live. Each is a directory holding its own index.html. */
+export const appBase = (courseId, topic) =>
+  `${BASE}${encodeURIComponent(courseId)}/apps/${encodeURIComponent(topic)}/`;
+
 /** A dataset's seed SQL, fetched only when an exercise actually needs it. */
 export async function loadDatasetSql(courseId, dataset) {
   const url = `${BASE}${encodeURIComponent(courseId)}/data/${encodeURIComponent(dataset)}.sql`;

@@ -8,10 +8,13 @@ const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
  * filenames in the markdown - the exercise shouldn't have to know the course id or where
  * the bundle is mounted - so they're resolved against it here.
  *
+ * `apps` is the same idea for embedded apps: a `::app <name>::` line names a directory,
+ * and the player decides where that directory is published.
+ *
  * `escaped` is internal: a blockquote renders its own body by calling back in, and escaping
  * twice would turn &amp; into &amp;amp;.
  */
-export function md(src = '', { base = '', escaped = false } = {}) {
+export function md(src = '', { base = '', apps = '', escaped = false } = {}) {
   const lines = (escaped ? src : esc(src)).split('\n');
   const out = [];
   let list = null, para = [], fence = null;
@@ -31,6 +34,27 @@ export function md(src = '', { base = '', escaped = false } = {}) {
       continue;
     }
     if (fence) { fence.body.push(line); continue; }
+
+    // An embedded app: `::app <name>::`, optionally with a height. The app is a static
+    // bundle of its own, so it goes in an iframe rather than into this page - it brings its
+    // own React, its own stylesheet and its own idea of what `body` should look like.
+    // allow-same-origin is not optional, tempting as it looks: without it the frame gets an
+    // opaque origin, its own assets become cross-origin requests to a host that sends no
+    // CORS headers, and a module script - always fetched in CORS mode, attribute or not -
+    // can never load. Serving CORS headers instead would work here and 403 in production,
+    // where /content/* sits behind the CloudFront key group and an anonymous cross-origin
+    // fetch carries no cookies. So the sandbox buys the rest of its list - no top-level
+    // navigation, no popups, no forms - and the app itself has to be trusted.
+    const embed = line.match(/^\s*::app\s+([\w.-]+)(?:\s+height=(\d+))?\s*::\s*$/);
+    if (embed) {
+      flushPara(); flushList();
+      const [, name, height] = embed;
+      out.push(
+        `<div class="appframe" style="height:${height || 620}px">` +
+        `<iframe src="${apps}${encodeURIComponent(name)}/index.html" title="${name}" ` +
+        `loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe></div>`);
+      continue;
+    }
 
     // A pipe table: a header row, then a row of dashes. The separator must contain a pipe,
     // so a bare `---` under a line of prose stays prose rather than becoming a one-column
@@ -58,7 +82,7 @@ export function md(src = '', { base = '', escaped = false } = {}) {
       const quoted = [line.replace(/^\s*>\s?/, '')];
       while (i + 1 < lines.length && /^\s*>/.test(lines[i + 1]))
         quoted.push(lines[++i].replace(/^\s*>\s?/, ''));
-      out.push(`<blockquote>${md(quoted.join('\n'), { base, escaped: true })}</blockquote>`);
+      out.push(`<blockquote>${md(quoted.join('\n'), { base, apps, escaped: true })}</blockquote>`);
       continue;
     }
 

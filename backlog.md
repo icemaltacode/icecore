@@ -5,7 +5,10 @@ So the queue is:
 - [x] the 11 image ones, 
 - [x] the 5 broken published ones, 
 - [x] then the 6 presentation apps
-- [ ] then the 22 interactive apps,
+- [ ] then the 22 interactive apps, *(1 done: 1.7.1 Choosing a measure)*
+
+
+1.9.1 q1?
 
 ## The 28 embedded-app exercises
 
@@ -22,10 +25,18 @@ Two routes:
   space-saving device in DataCamp's narrow pane, not pedagogy: showing both blocks at once
   loses nothing.
 - **Interactive (22)** — all of 1.7 and 1.10, plus three of 1.11. Either the widget
-  recomputes from input, or it draws a chart the question depends on. Mirror the bundle
-  into the course repo and embed it; where the interaction is incidental, a screenshot of
-  the chart shipped as an image would do instead. Mirroring needs the platform to host an
-  app inside an exercise, and a decision on shipping DataCamp's brand fonts.
+  recomputes from input, or it draws a chart the question depends on, so the bundle gets
+  mirrored into the course repo and embedded.
+
+  **This route now works end to end.** The platform renders `::app <name>::` as a sandboxed
+  iframe over `content/exercises/<topic>/apps/<name>/`, `verify` fails on a reference with
+  no app behind it, and `npx dc-pull-app <slug> <exercise-id> --topic <topic>` does the
+  mirroring. `1.7.1 Choosing a measure` is the first one through; the remaining 21 are
+  authoring, not engineering.
+
+  The font question turned out to be nothing — the bundles carry no fonts and no DataCamp
+  branding, only a two-origin `postMessage` allowlist. `dc-pull-app` warns if a bundle
+  reaches a DataCamp host for anything else, which would be the one case a mirror can't fix.
 
 `chart-redesign`, `chart-type-explorer` and `slide-redesign` were counted as presentation
 until their own copy gave them away — "hover the chart bars to see values". Lift only their
