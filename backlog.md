@@ -168,35 +168,39 @@ Their topics cannot be sectioned until that is pulled, so pulling them is what u
 interleaving for module 2 — not authoring the exercises, which will land unsectioned
 without it.
 
-## 1.10.4 section 1 has slides and no exercises — decide what to do
+## 1.10 is short FIVE exercises — a converter bug, not a decision
 
-`Understanding Data Visualization` chapter 4 opens with **Polar coordinates**, and both of
-its exercises are `VisualExercise` — questions about a DataCamp-hosted plot — so conversion
-correctly skipped them:
+*Superseded by the practicals ripping agent, who owns this and is fixing it. Recorded here
+because the original version of this note was wrong and someone may have read it.*
+
+`convert.mjs` skips on `type === 'VisualExercise'` regardless of what the asset actually is.
+Most of those are genuinely un-convertible — a DataCamp-hosted interactive widget — but five
+carry `asset.assetType: "Image"`: a static PNG plus a multiple-choice question, which the
+importer has handled since the figures work landed. They need no app mirroring and no
+editorial judgement.
+
+Verified against all 42 raw chapters: 33 `VisualExercise` in total, **28 `EmbeddedApp` and
+exactly 5 `Image`**, all five in `understanding-data-visualization`:
 
 ```
--- section 1: Polar coordinates
-     2. Pie plots       SKIPPED (VisualExercise)
-     3. Rose plots      SKIPPED (VisualExercise)
--- section 2: Axes of evil        -> 2 exercises
--- section 3: Sensory overload    -> 2 exercises
--- section 4: Congratulations
+ch78077 ex2   Motivating visualization           -> 1.10.1
+ch78078 ex6   Logarithmic scales for line plots  -> 1.10.2
+ch78078 ex9   Interpreting stacked bar plots     -> 1.10.2
+ch78080 ex2   Pie plots                          -> 1.10.4
+ch78080 ex3   Rose plots                         -> 1.10.4
 ```
 
-The platform handles this gracefully: the walk is driven by the **deck's** sections, not by
-which sections happen to have exercises, so students still see the polar-coordinates slides
-in sequence. Nothing is broken and nothing is hidden.
+Only the last two left a section with no exercises at all, which is why the other three
+never surfaced — they are missing just the same. **So this was never "one topic needs a
+decision"; it is a converter bug affecting three topics.** The earlier claim that 1.10.4 was
+the only topic with the problem was true of *empty sections* and false of *missing
+exercises*, which is the thing that actually matters.
 
-But that section teaches something nobody practises. Worth one of:
-
-- author two replacement exercises for it by hand — pie/rose plots are answerable from a
-  static figure if one is pulled across, and 1.10 already has figures;
-- pull the DataCamp plots as embedded apps (`dc-pull-app`) and convert the originals;
-- decide it is fine as read-only material and leave it.
-
-**This is the only topic in the course with the problem**, so it is a decision, not a
-pattern. Every other exercise-less section is a trailing "Congratulations!" wrap-up, which
-is exactly what it should be.
+Nothing on the platform side caches section counts, so the backfill needs no coordination:
+section numbers are video ordinals and do not renumber when exercises are added. The one
+thing to watch is that `build.mjs` only interleaves a topic when **every** exercise in it
+carries `section:` — so a newly converted exercise landing without one silently switches
+that topic's interleaving off. Run `dc-sections` after converting, then re-run `verify`.
 
 ## Publishing changed under you
 
@@ -208,3 +212,36 @@ is exactly what it should be.
 - Decks sync one prefix at a time. Never add an `aws s3 sync --delete` against `slides/` as
   a whole — with a partial `dist/slides`, which is now the normal case, it deletes every
   deck that wasn't rebuilt.
+
+
+---
+
+# PLATFORM — INHERITED, MINE NOW
+
+Handed over from the platform agent on 2026-08-20 with a clean tree and nothing in flight.
+Its last commit was `be91553`. Verified each of these against the code rather than taking
+them on trust.
+
+- [ ] **`just infra-deploy` IS REQUIRED BEFORE THE NEXT `just deploy`.** The progress Lambda
+      changed shape in `4a45523`: `GET /api/progress` now returns `{ solved, last }` and
+      `PUT` accepts `{ course, last }`, writing a `LAST#<course>` row. That is the
+      resume-where-you-left-off feature. `app/src/progress.js:28` destructures `last`
+      unconditionally and **its catch falls back to local storage** — so against the
+      *deployed* Lambda the player gets no `last`, fails soft, and silently restarts every
+      student at exercise one. No error, no log, just wrong. Shipping app changes without
+      the infra deploy is what produces it.
+
+- [ ] **The course grid has no card art.** `course.json` reads two optional fields, `image`
+      and `blurb`; the content repo supplies neither, so every card draws the fallback tile.
+      `image` is relative to `content/` and must be **square** — the card crops 1:1.
+      Ordering trap: naming an image that does not exist *fails verify*
+      (`build.mjs` pushes `course.json: no image at …` into `missingImages`), so the field
+      and the file have to land in the same commit.
+
+- [ ] **`-c alertEmail=` has never been set**, so the five CloudWatch alarms publish to an
+      SNS topic with no subscriber. Cosmetic until something breaks, at which point it is
+      the opposite.
+
+- [ ] `the_big_merge.md` is fully implemented as of `0d9cbb0` — both requirement sets,
+      verified end to end. Mark it done or delete it so nobody actions it twice. Its factual
+      findings still hold and are worth keeping until then.
