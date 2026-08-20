@@ -16,7 +16,10 @@ that could be shown externally or open-sourced.
 
 - `app/` — Vue 3 player. `src/compare.js` is pure and dependency-free so the CLI can share
   it; everything else in `app/src/` is browser-only (`content.js` uses `import.meta.env`,
-  so Node can't import it).
+  so Node can't import it). **Anything the builder imports out of `app/src` must stay
+  dependency-free and must never reach `import.meta.env`** — that is the whole rule.
+  `compare.js` and `dragdrop.js` obey it. `walk.js` and `appframe.js` are only imported by
+  the app, so they are free of it today; don't let that change without checking.
 - `src/build.mjs` — content builder. Parses exercise markdown, precomputes expected results
   by running each reference solution in PGlite, emits per-course static files.
 - `bin/icecore.mjs` — the CLI. `root` and `publicDir` are supplied here, not in
