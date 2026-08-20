@@ -246,7 +246,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         const text = fs.readFileSync(path.join(dir, f), 'utf8');
         // The whole point of this feature is that figures were being dropped in silence,
         // so a reference with no file behind it is worth saying out loud.
-        for (const [, src] of text.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)) {
+        for (const [, src] of text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) {
           if (/^(https?:)?\/\//.test(src) || src.startsWith('/')) continue;
           if (!haveImages.has(src)) missingImages.push(`${topicId} ${f}: no image at images/${src}`);
           else usedImages.add(`${topicId}/${src}`);

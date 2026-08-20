@@ -138,5 +138,11 @@ Don't re-strip it.
   an item dropped in the wrong zone score as correct in both. `withIds` takes a shared
   `used` map for exactly this, and `validate()` re-checks it as a backstop — the check looks
   redundant and is not.
+- **A figure's filename must not contain a space**, and `dc-convert` slugifies on the way in
+  for that reason. The image rule and the builder's missing-figure check both tolerate one
+  now, but a space used to make the rule miss entirely: the reference fell through to the
+  link rule, rendered as a stray `!` in front of a hyperlink, and the check that exists to
+  catch a dropped figure skipped it for the same reason. Three of DataCamp's assets were
+  named that way.
 - Run `icecore verify` against a real course repo after touching the builder or the grader.
   It's the only end-to-end check.

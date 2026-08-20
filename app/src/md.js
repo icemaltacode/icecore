@@ -109,16 +109,19 @@ const isSeparator = row =>
   !!row && row.includes('|') && row.includes('-') &&
   cells(row).length > 0 && cells(row).every(c => /^:?-+:?$/.test(c));
 
+/* encodeURI, not encodeURIComponent: a bare filename is the contract but a subdirectory
+ * shouldn't break, and a filename with a space in it should resolve rather than silently
+ * become a link - which is what a space-intolerant image rule used to do to it. */
 const resolve = (src, base) =>
-  /^(https?:)?\/\//.test(src) || src.startsWith('/') ? src : base + src;
+  /^(https?:)?\/\//.test(src) || src.startsWith('/') ? src : base + encodeURI(src);
 
 function inline(s, base = '') {
   return s
     .replace(/`([^`]+)`/g, (_, c) => `<code>${c}</code>`)
     // Images before links: ![alt](src) would otherwise match the link rule and leave a
     // stray "!" in front of it, which is exactly what it did before.
-    .replace(/!\[([^\]]*)\]\(([^)\s]+)\)/g,
-      (_, alt, src) => `<img src="${resolve(src, base)}" alt="${alt}" loading="lazy">`)
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g,
+      (_, alt, src) => `<img src="${resolve(src.trim(), base)}" alt="${alt}" loading="lazy">`)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
