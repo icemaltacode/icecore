@@ -13,6 +13,8 @@ import TopBar from './components/TopBar.vue';
 import Icon from './components/Icon.vue';
 import { badgeFor } from './badges.js';
 import SlidesPanel from './components/SlidesPanel.vue';
+import SlidesStep from './components/SlidesStep.vue';
+import { walkCourse, gradable } from './walk.js';
 import SignIn from './components/SignIn.vue';
 
 const manifest = ref([]);
@@ -26,10 +28,11 @@ const needsSignIn = ref(false);
 const authed = ref(false);
 const showAdmin = ref(false);
 const showSlides = ref(false);
-/* The deck belongs to the unit the current exercise sits in, so it follows the student
- * through the unit and swaps when they cross into the next one. */
+/* The deck belongs to the topic the current row sits in, so it follows the student through
+ * the topic and swaps when they cross into the next one. Taken off the row rather than by
+ * searching the exercises: a slide row is not in any topic's exercise list. */
 const currentTopic = computed(() =>
-  topics.value.find(t => t.exercises.some(e => e.id === currentId.value)));
+  topics.value.find(t => t.topic === current.value?.topicId));
 const unitOfCurrent = computed(() => (course.value?.modules || [])
   .flatMap(m => m.units).find(u => u.topics.some(t => t === currentTopic.value)));
 
@@ -92,8 +95,14 @@ onBeforeUnmount(() => removeEventListener('pointerdown', outside));
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
 const goTopic = d => {
   const t = topics.value[topicIndex.value + d];
-  if (t?.exercises.length) currentId.value = t.exercises[0].id;
+  // The first *row*, which for an interleaved topic is its opening slides rather than an
+  // exercise dropped on the student with no lead-in.
+  const first = flat.value.find(r => r.topicId === t?.topic);
+  if (first) currentId.value = first.id;
 };
+
+const topicRows = computed(() =>
+  flat.value.filter(r => r.topicId === currentTopic.value?.topic));
 
 const slidesUrl = computed(() => {
   const s = currentTopic.value?.slides;
@@ -107,13 +116,20 @@ const isAdmin = computed(() => session.admin);
  * above exist to make 200-odd exercises navigable. */
 const topics = computed(() =>
   (course.value?.modules || []).flatMap(m => m.units.flatMap(u => u.topics)));
-const flat = computed(() => topics.value.flatMap(t => t.exercises.map(e => ({ ...e, topicId: t.topic }))));
+/* Every row the student walks, slides included - see walk.js. Where a topic interleaves,
+ * its slides are dealt in at the section boundaries; where it doesn't, this is just its
+ * exercises and everything below behaves as it always did. */
+const flat = computed(() => walkCourse(course.value));
 const current = computed(() => flat.value.find(e => e.id === currentId.value));
 const index = computed(() => flat.value.findIndex(e => e.id === currentId.value));
 const total = computed(() => flat.value.length);
+/* Two different totals, deliberately. The footer counts the walk, because that is what
+ * Previous and Next move through. Progress counts only what can be solved: slides are
+ * taught, not graded, and a bar that fills as you page past them measures nothing. */
+const exercises = computed(() => gradable(flat.value));
 
 const solved = ref(new Set());
-const doneCount = computed(() => flat.value.filter(e => solved.value.has(e.id)).length);
+const doneCount = computed(() => exercises.value.filter(e => solved.value.has(e.id)).length);
 
 async function open(id) {
   loading.value = true; loadError.value = '';
@@ -259,9 +275,9 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
 
         <button class="courses" @click="backToCourses">&larr; All courses</button>
 
-        <div class="progress" v-if="total">
-          <div class="bar"><i :style="{ width: (doneCount / total * 100) + '%' }"></i></div>
-          <small>{{ doneCount }} of {{ total }} complete</small>
+        <div class="progress" v-if="exercises.length">
+          <div class="bar"><i :style="{ width: (doneCount / exercises.length * 100) + '%' }"></i></div>
+          <small>{{ doneCount }} of {{ exercises.length }} complete</small>
         </div>
 
         <!-- Where they are, and the two moves either side of it. The whole structure is one
@@ -279,17 +295,21 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
 
         <button class="contents" @click="showContents = true">
           <span>Contents</span>
-          <span class="hint">{{ total }} exercises</span>
+          <span class="hint">{{ exercises.length }} exercises</span>
         </button>
 
+        <!-- The topic's run, slides included, in the order Next moves through it. A slide
+             row is a heading you can click as well as a step: it names the run of exercises
+             under it, which is the thing the sidebar never used to say. -->
         <nav>
           <button
-            v-for="e in currentTopic?.exercises || []" :key="e.id"
+            v-for="r in topicRows" :key="r.id"
             class="navitem"
-            :class="{ active: e.id === currentId, done: solved.has(e.id) }"
-            @click="currentId = e.id">
-            <span class="badge">{{ badgeFor(e, solved.has(e.id)) }}</span>
-            <span class="label">{{ e.title }}</span>
+            :class="{ active: r.id === currentId, done: r.kind !== 'slides' && solved.has(r.id),
+                      section: r.kind === 'slides' }"
+            @click="currentId = r.id">
+            <span class="badge">{{ badgeFor(r, solved.has(r.id)) }}</span>
+            <span class="label">{{ r.title }}</span>
           </button>
         </nav>
         </aside>
@@ -303,6 +323,13 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
         <div v-else-if="loading" class="state">
           <p>Loading…</p>
         </div>
+        <!-- Slides are a step of the run, not an exercise, so they get their own player
+             rather than being squeezed through the exercise components. -->
+        <SlidesStep
+          v-else-if="current?.kind === 'slides'"
+          :key="current.id"
+          :deck="currentTopic?.slides"
+          :row="current" />
         <component
           v-else-if="current"
           :is="componentFor[current.type] || CodingExercise"
@@ -315,9 +342,11 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
         <footer v-if="total">
           <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>
           <span class="muted">{{ index + 1 }} / {{ total }}</span>
-          <!-- In the footer rather than inside an exercise, so every exercise type gets it. -->
-          <button v-if="slidesUrl" class="btn ghost" :class="{ on: showSlides }"
-                  @click="showSlides = !showSlides">
+          <!-- In the footer rather than inside an exercise, so every exercise type gets it.
+               Hidden while the slides are themselves the step: offering to open the deck
+               beside a full-pane copy of the same deck reads as a bug. -->
+          <button v-if="slidesUrl && current?.kind !== 'slides'" class="btn ghost"
+                  :class="{ on: showSlides }" @click="showSlides = !showSlides">
             {{ showSlides ? 'Hide slides' : 'Slides' }}
           </button>
           <button class="btn ghost" :disabled="index >= total - 1" @click="go(1)">Next</button>
@@ -325,7 +354,7 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
       </main>
 
       <SlidesPanel
-        v-if="showSlides && slidesUrl"
+        v-if="showSlides && slidesUrl && current?.kind !== 'slides'"
         :src="slidesUrl" :label="currentTopic?.label"
         @close="showSlides = false" />
 
@@ -412,6 +441,12 @@ nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
 .navitem:hover { background: var(--ice-bg); color: var(--ice-fg); }
 .navitem.active { background: var(--ice-bg); color: var(--ice-fg); box-shadow: inset 2px 0 0 var(--ice-primary); }
 .navitem.done { color: var(--ice-fg); }
+/* A section row is a heading first and a step second: it gets the weight and a rule above
+   it, so the sidebar reads as three labelled runs rather than one undifferentiated list. */
+.navitem.section { color: var(--ice-fg); font-weight: 600; margin-top: 10px; }
+.navitem.section:first-child { margin-top: 0; }
+.navitem.section .badge { background: var(--ice-primary-soft); border-color: transparent;
+                          color: var(--ice-fg); }
 .badge { flex: none; min-width: 26px; height: 20px; padding: 0 4px; border-radius: 5px;
          display: grid; place-items: center; font-size: 9px; letter-spacing: .04em;
          font-family: var(--ice-font-mono); background: var(--ice-bg); border: 1px solid var(--ice-border); }

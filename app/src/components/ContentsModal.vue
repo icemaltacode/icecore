@@ -11,6 +11,7 @@
  */
 import { ref, computed, watch, onMounted, nextTick } from 'vue';
 import { badgeFor } from '../badges.js';
+import { walkTopic } from '../walk.js';
 
 const props = defineProps({
   course: Object,
@@ -34,16 +35,19 @@ const matches = e => {
 };
 
 /* Flattened once per course, with the searchable text baked in - re-lowercasing four
- * hundred titles on every keystroke is work nobody asked for. */
+ * hundred titles on every keystroke is work nobody asked for.
+ *
+ * `rows`, not `exercises`: this is the same walk App.vue moves through, slides included, so
+ * the modal and the sidebar cannot disagree about what comes next. */
 const tree = computed(() => (props.course?.modules || []).map(m => ({
   ...m,
   units: m.units.map(u => ({
     ...u,
     topics: u.topics.map(t => ({
       ...t,
-      exercises: t.exercises.map(e => ({
-        ...e,
-        haystack: `${e.title} ${t.topic} ${t.title} ${u.unit} ${u.title}`.toLowerCase(),
+      rows: walkTopic(t).map(r => ({
+        ...r,
+        haystack: `${r.title} ${t.topic} ${t.title} ${u.unit} ${u.title}`.toLowerCase(),
       })),
     })),
   })),
@@ -52,19 +56,38 @@ const tree = computed(() => (props.course?.modules || []).map(m => ({
 /* When filtering, a unit is open if it has a hit: a search that leaves everything collapsed
  * has answered nothing. */
 const filtering = computed(() => !!query.value.trim());
+/* A slide row survives the filter when the section it names matches, or when anything
+ * under it does - a section heading with its exercises filtered out from under it is a
+ * heading for nothing. */
 const shown = computed(() => tree.value
   .map(m => ({ ...m, units: m.units
     .map(u => ({ ...u, topics: u.topics
-      .map(t => ({ ...t, exercises: t.exercises.filter(matches) }))
-      .filter(t => t.exercises.length) }))
+      .map(t => ({ ...t, rows: keep(t.rows) }))
+      .filter(t => t.rows.length) }))
     .filter(u => u.topics.length) }))
   .filter(m => m.units.length));
 
+function keep(rows) {
+  if (!filtering.value) return rows;
+  const out = [];
+  for (const r of rows) {
+    if (r.kind === 'slides') { out.push(r); continue; }
+    if (matches(r)) out.push(r);
+  }
+  // Drop a section heading that ended up with nothing under it, unless it matched itself.
+  return out.filter((r, i) =>
+    r.kind !== 'slides' || matches(r) || out[i + 1]?.kind === 'exercise');
+}
+
 const isOpen = u => filtering.value || open.value.has(u.unit);
-const done = t => t.exercises.filter(e => props.solved?.has(e.id)).length;
+/* Tallies count exercises only - slides are taught, not graded, and a unit reading 12/20
+ * when eight of the twenty are slide decks says nothing useful. */
+const gradableOf = t => t.rows.filter(r => r.kind !== 'slides');
+const done = t => gradableOf(t).filter(e => props.solved?.has(e.id)).length;
 const unitDone = u => u.topics.reduce((n, t) => n + done(t), 0);
-const unitTotal = u => u.topics.reduce((n, t) => n + t.exercises.length, 0);
-const hits = computed(() => shown.value.flatMap(m => m.units.flatMap(u => u.topics.flatMap(t => t.exercises))).length);
+const unitTotal = u => u.topics.reduce((n, t) => n + gradableOf(t).length, 0);
+const hits = computed(() => shown.value
+  .flatMap(m => m.units.flatMap(u => u.topics.flatMap(gradableOf))).length);
 
 const box = ref(null);
 onMounted(async () => {
@@ -101,11 +124,12 @@ watch(query, () => { if (box.value) box.value.scrollTop = 0; });
             <div v-if="isOpen(u)" class="topics">
               <div v-for="t in u.topics" :key="t.topic" class="topic">
                 <h5>{{ t.topic }} {{ t.title }}</h5>
-                <button v-for="e in t.exercises" :key="e.id" class="entry"
-                        :class="{ active: e.id === currentId, done: solved?.has(e.id) }"
-                        @click="emit('pick', e.id)">
-                  <span class="badge">{{ badgeFor(e, solved?.has(e.id)) }}</span>
-                  <span class="label">{{ e.title }}</span>
+                <button v-for="r in t.rows" :key="r.id" class="entry"
+                        :class="{ active: r.id === currentId, section: r.kind === 'slides',
+                                  done: r.kind !== 'slides' && solved?.has(r.id) }"
+                        @click="emit('pick', r.id)">
+                  <span class="badge">{{ badgeFor(r, solved?.has(r.id)) }}</span>
+                  <span class="label">{{ r.title }}</span>
                 </button>
               </div>
             </div>
@@ -161,6 +185,11 @@ h5 { margin: 6px 4px 4px; font-size: 11px; letter-spacing: .04em; text-transform
 .entry.done { color: var(--ice-fg); }
 .entry.active { background: var(--ice-bg); color: var(--ice-fg);
                 box-shadow: inset 2px 0 0 var(--ice-primary); }
+/* Same treatment as the sidebar: a section is a heading you can also step onto. */
+.entry.section { color: var(--ice-fg); font-weight: 600; margin-top: 6px; }
+.entry.section:first-child { margin-top: 0; }
+.entry.section .badge { background: var(--ice-primary-soft); border-color: transparent;
+                        color: var(--ice-fg); }
 /* Same badge as the sidebar, so an exercise looks like itself in both places. */
 .badge { flex: none; min-width: 26px; height: 20px; padding: 0 4px; border-radius: 5px;
          display: grid; place-items: center; font-size: 9px; letter-spacing: .04em;
