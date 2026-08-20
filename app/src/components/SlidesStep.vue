@@ -38,7 +38,28 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
  * rather than the utility classes Slidev happens to compile (`.absolute.bottom-0`), because
  * those are an implementation detail and this should not need touching when they change. */
 const frame = ref(null);
-const REVEAL = `.slidev-slide-container > div:has(nav .slidev-icon-btn) { opacity: 1 !important; }`;
+
+/* Two things, both injected into the frame rather than worked around from outside.
+ *
+ * 1. Reveal the bar, as above.
+ * 2. Put it BELOW the slide instead of over it. Slidev centres the slide in its container
+ *    (`top: 50%` plus a translate) and parks the controls at the container's bottom edge,
+ *    so on a container the exact shape of the slide they necessarily overlap it. Pinning
+ *    the slide to the top means any extra container height collects underneath, which is
+ *    where the frame's extra `--bar` pixels go - and the bar lands in that strip.
+ *
+ * The container's background is a documented Slidev variable that defaults to black; made
+ * transparent here so the strip shows the frame's own white rather than a black band. */
+const REVEAL = `
+.slidev-slide-container > div:has(nav .slidev-icon-btn) { opacity: 1 !important; }
+.slidev-slide-container { background: transparent !important; }
+.slidev-slide-content {
+  top: 0 !important;
+  left: 50% !important;
+  margin-left: calc(-960px * var(--slidev-slide-scale)) !important;
+  transform: scale(var(--slidev-slide-scale)) !important;
+  transform-origin: 0 0 !important;
+}`;
 
 const onLoad = () => {
   const doc = frame.value?.contentDocument;
@@ -65,11 +86,13 @@ const onLoad = () => {
          there is no letterbox to colour, and the controls sit over the slide where they
          were designed to. What is left over is the player's own themed ground. -->
     <div class="frame">
+      <div class="stage">
       <!-- Keyed on src so moving between two sections of the same deck reloads the frame at
            the new hash. Without it the iframe keeps its old location: same document, and the
            router has already consumed the hash it booted with. -->
       <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
               @load="onLoad"></iframe>
+      </div>
     </div>
   </article>
 </template>
@@ -95,13 +118,19 @@ const onLoad = () => {
 .slidestep .link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
 .slidestep .link:hover { color: var(--ice-fg); }
 /* Centres the deck in whatever space the pane has, and owns the surround. */
-.slidestep .frame { display: grid; place-items: center; min-height: 0; overflow: hidden;
-                    padding: 0 20px 20px; border-top: 1px solid var(--ice-border); }
+/* The extra bottom padding is the strip the control bar drops into - the stage below stays
+   exactly 16:9, and the iframe overhangs it by that much. */
+.slidestep .frame { --bar: 74px;
+                    display: grid; place-items: center; min-height: 0; overflow: hidden;
+                    padding: 0 20px calc(20px + var(--bar));
+                    border-top: 1px solid var(--ice-border); }
+.slidestep .stage { position: relative; aspect-ratio: 16 / 9;
+                    width: 100%; max-width: 100%; max-height: 100%; }
 /* aspect-ratio with both maxima: wide panes are limited by height and tall ones by width,
    so the frame is always exactly 16:9 and never overflows in either direction.
    White behind it deliberately - a deck is its own site with its own light theme, and the
    player's dark ground showing through while it loads reads as a broken frame. */
-.slidestep iframe { aspect-ratio: 16 / 9; width: 100%; height: auto;
-         max-width: 100%; max-height: 100%; border: 0; background: #fff;
+.slidestep iframe { position: absolute; inset: 0; width: 100%;
+         height: calc(100% + var(--bar)); border: 0; background: #fff;
          border-radius: var(--ice-radius); box-shadow: 0 2px 18px var(--ice-scrim); }
 </style>

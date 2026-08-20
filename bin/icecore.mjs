@@ -200,13 +200,21 @@ async function cmdVerify() {
 }
 
 async function cmdDev() {
-  const port = Number(flag('port', 5173));
   /* Per port, because buildContent WIPES its output directory on startup. Two dev servers
    * sharing one staging dir means the second one to boot deletes the first one's content
    * out from under it, and the first then answers every content request with the app's own
    * index page - a 200, with HTML, which fails as "unexpected token <" somewhere far away.
    * `bundle` already had its own directory for exactly this reason; `dev` didn't, because
-   * nobody ran two. With several sessions on one machine, two is normal. */
+   * nobody ran two. With several sessions on one machine, two is normal.
+   *
+   * THE PORT HAS TO BE SETTLED BEFORE THE BUILD, not taken from the flag. Vite quietly
+   * moves to the next free port when the requested one is taken, so two servers started
+   * with the same --port keep the same *staging* directory while ending up on different
+   * ports - and the second still wipes the first. That is not the bug's edge case, it is
+   * how it actually happened here: a server on 5175 was serving .icecore/5174 when a second
+   * invocation rebuilt exactly that directory sixteen minutes later. Claim the port first,
+   * key the staging on what was actually claimed, and tell Vite it may not drift. */
+  const port = await freePort(Number(flag('port', 5173)));
   const staging = path.join(contentDir, '..', '.icecore', String(port));
   await buildContent({ contentDir, outDir: staging });
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
@@ -223,10 +231,26 @@ async function cmdDev() {
     configFile: path.join(APP, 'vite.config.js'),
     root: APP,
     publicDir: staging,
-    server: { port, open: true },
+    server: { port, strictPort: true, open: true },
   });
   await server.listen();
   server.printUrls();
+}
+
+/* The first free port at or above `from`. Checked by actually binding, because that is the
+ * only answer that isn't a race with whatever else is starting up. */
+async function freePort(from) {
+  const net = await import('node:net');
+  for (let port = from; port < from + 50; port++) {
+    const ok = await new Promise(resolve => {
+      const srv = net.createServer();
+      srv.once('error', () => resolve(false));
+      srv.once('listening', () => srv.close(() => resolve(true)));
+      srv.listen(port, '127.0.0.1');
+    });
+    if (ok) return port;
+  }
+  die(`no free port between ${from} and ${from + 50}`);
 }
 
 /* Build the course's per-topic decks - all of them, or only the ones a change actually

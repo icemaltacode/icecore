@@ -166,23 +166,6 @@ Handed over by the platform agent and kept because each cost hours once.
 
 - Icons are ugly
 
----
+- 'Open in a tab' should be a button with an icon.
 
-# Where the contracts live now
-
-The two long briefs that used to sit here — for the slide migration agent and the
-practicals ripping agent — were delivered and are gone. Everything durable in them was
-written into the file the relevant person actually reads, which is not this one:
-
-- **[`CLAUDE.md`](CLAUDE.md)** (this repo) — `layout: statement` / `statement_alt` and
-  `routerMode: hash` as contracts, composed-deck slide numbering, why a section is not a
-  fifth level, per-deck image pruning, and never `s3 sync --delete` against `slides/`.
-- **`icecore-datacamp-data-analyst/slides/CLAUDE.md`** — the same contracts from the deck
-  author's side, plus the section *termination* rule verbatim, why divider order is
-  load-bearing, and the stale-`node_modules` trap that makes `icecore slides` look broken.
-- **`icecore-import-datacamp/CLAUDE.md`** — `content/raw/` being load-bearing, `dc-sections`
-  after any `dc-convert --force`, the three source courses with no raw data, and the
-  three-part `VisualExercise` fault (`assetType`, `question.solutionItems`, the `html2md`
-  guard).
-- **`ice_slidev/README.md`** — why theme assets must stay small: a layout's asset is bundled
-  into every deck, so its size is multiplied by the deck count.
+- Course icons
