@@ -255,6 +255,75 @@ them on trust.
       SNS topic with no subscriber. Cosmetic until something breaks, at which point it is
       the opposite.
 
+- [ ] **NOTHING PUTS ANYONE IN THE `admins` GROUP — this is a lockout risk.** Verified:
+      `infra/lib/icecore-stack.js:95` creates the `admins` CfnUserPoolGroup,
+      `infra/lambda/admin/index.mjs` only *checks* membership, and a repo-wide grep for
+      `AdminAddUserToGroup` returns nothing. So the only admin exists because someone ran a
+      console/CLI command by hand, outside the repo. **If that user pool is ever replaced
+      there is no admin, no way to invite anyone, and no code path to fix it** — you are
+      locked out of your own enrolment tool by a deploy that goes green. Fix with a
+      documented `aws cognito-idp admin-add-user-to-group --group-name admins`, or better, a
+      bootstrap in the stack. Highest priority on this list; nothing else here can lock you out.
+
+- [ ] **Both secrets are referenced, not created.** `fromSecretNameV2` at
+      `icecore-stack.js:115-116` for `icecore/cloudfront-signing-key` and
+      `icecore/openai-api-key` — they must exist *before* the first `cdk deploy`, and they
+      come from `just keys` / `just openai-key`, not CDK. Two traps: `just keys` refuses to
+      run if `infra/cloudfront-public-key.pem` exists (deliberate anti-rotation guard), so a
+      fresh region cannot be bootstrapped without deleting the committed pem; and Secrets
+      Manager is regional, so a second region deploys clean and 403s every content request.
+      The committed public pem and its private half are a pair and only one is in git.
+
+- [ ] **Resume has never run against DynamoDB.** Not once. Every test went through
+      `preview.js`, which stubs progress with localStorage. The `LAST#<course>` read and
+      write paths have only ever executed against a fake. Test on a real second device
+      before trusting it — and note this compounds the infra-deploy item above.
+
+- [ ] **The `name` claim may never arrive.** TopBar reads name/email from the id token
+      client-side; whether `name` is present depends on the app client's attribute read
+      permissions, which was never verified. If absent it falls back to the email local part
+      and looks deliberate, so the failure is invisible. Check one real signed-in user.
+
+- [ ] **Two `icecore dev` servers corrupt each other.** Both stage into `<course>/.icecore`
+      and `buildContent` wipes it on startup. `bundle` already dodges this with
+      `.icecore-bundle`; `dev` never got the same treatment because nobody ran two. With
+      several sessions on one machine it has already happened twice. Fix: stage per port
+      under `.icecore/<port>/`, which the existing .gitignore already covers.
+
+- [ ] **The importer never checks that exercises out == exercises in.** Dropped figures,
+      dropped tables, dropped MCQ hints, dropped per-step questions, unmarked volatile steps
+      and five dropped `VisualExercise` entries were each invisible until something
+      specifically looked. A per-chapter count assertion in `convert.mjs` would have caught
+      the most recent one on day one and is close to free. *(Importer-side; belongs to the
+      practicals ripping agent, recorded here because the pattern is the point.)*
+
 - [ ] `the_big_merge.md` is fully implemented as of `0d9cbb0` — both requirement sets,
       verified end to end. Mark it done or delete it so nobody actions it twice. Its factual
       findings still hold and are worth keeping until then.
+
+## Platform gotchas worth not rediscovering
+
+Handed over by the platform agent and kept because each cost hours once.
+
+- **Signed-cookie 403s have two independent causes, and both produce cookies that look
+  perfectly valid.** The diagnostic: mint a set and look at what it carries.
+  `CloudFront-Expires` means a *canned* policy, which CloudFront rebuilds from the URL being
+  requested — so a wildcard path matches nothing and everything 403s.
+  `CloudFront-Policy` means a custom policy and is correct. `getSignedCookies({ dateLessThan })`
+  silently gives you canned. Separately, the session Lambda cannot learn the site's host from
+  the `Host` header, because `AllViewerExceptHostHeader` replaces it with the API's own
+  domain — the client sends `location.origin` instead.
+- **CloudFront's `defaultRootObject` applies only to the root**, not to subdirectories. That
+  is why the player links `slides/<topic>/index.html` and never the bare directory. Deep
+  links survive only because `routerMode: hash` keeps the fragment away from CloudFront.
+- **Vue scoped CSS reaches a child component's root element.** `App.vue`'s `.bar` was
+  rounding TopBar's corners because TopBar's root happened to be `<header class="bar">`. The
+  fix is unique root class names, not overrides.
+- **The purity rule, now that shared modules exist.** Anything the *builder* imports out of
+  `app/src` must stay dependency-free and must never touch `import.meta.env`. `compare.js`
+  and `dragdrop.js` obey it; `content.js` does not, which is why Node cannot import it.
+  `walk.js` is imported only by `App.vue` and `ContentsModal.vue`, never by the builder, so
+  it is clear — don't let that change without moving it.
+- **Don't try to recover a dropped table from `information_schema.views`.** It cannot work:
+  the same view name means different rows in different exercises. That dead end is what
+  produced per-exercise `## Setup` SQL.

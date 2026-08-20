@@ -38,8 +38,16 @@ export function walkTopic(topic) {
   if (!topic.sections?.length || !topic.slides) return (topic.exercises || []).map(asExercise);
 
   const rows = [];
+  /* Tracked as we go rather than derived at the end, so a row can only ever be emitted
+   * once. sectionsOf() numbers sections 1..n and cannot produce a duplicate, but this does
+   * not trust its input: a repeated `n` would otherwise deal every exercise in that section
+   * into the walk twice, and neither the backstop below nor verify's `1 <= N <= count`
+   * check would notice - both are looking for exercises that are MISSING. */
+  const seen = new Set();
+  const emit = row => { if (!seen.has(row.id)) { seen.add(row.id); rows.push(row); } };
+
   for (const s of topic.sections) {
-    rows.push({
+    emit({
       kind: 'slides',
       id: slideId(topic.topic, s.n),
       topicId: topic.topic,
@@ -49,15 +57,13 @@ export function walkTopic(topic) {
       end: s.end,
     });
     for (const e of topic.exercises || [])
-      if (e.section === s.n) rows.push(asExercise(e));
+      if (e.section === s.n) emit(asExercise(e));
   }
   // An exercise pointing at a section the deck doesn't have would vanish from the course
   // otherwise. `icecore verify` fails on that, so it should never ship - but a browser
   // holding a stale index.json is not covered by verify, and losing an exercise silently is
   // worse than showing it out of place.
-  const placed = new Set(rows.filter(r => r.kind === 'exercise').map(r => r.id));
-  for (const e of topic.exercises || [])
-    if (!placed.has(e.id)) rows.push(asExercise(e));
+  for (const e of topic.exercises || []) emit(asExercise(e));
   return rows;
 }
 
