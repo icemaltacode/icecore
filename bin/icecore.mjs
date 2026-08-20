@@ -306,6 +306,9 @@ async function cmdSlides() {
       '--out', path.relative(srcDir, out),
     ], { cwd: srcDir, stdio: 'inherit' });
     if (r.status !== 0) die(`slidev build failed for ${topic}`);
+    const p = pruneAssets(out, decks.get(topic).images);
+    if (p.removed)
+      console.log(`  pruned ${p.removed} unused file(s), ${mb(p.freed)} - ${p.kept} kept`);
   }
   writeManifest(outRoot, topics, [...decks.keys()]);
   console.log(`\nbuilt ${topics.length} deck(s) in ${Math.round((Date.now() - t0) / 1000)}s`);
@@ -323,6 +326,60 @@ function changedSince(sha, repoDir) {
     return out.split('\n').map(s => s.trim()).filter(Boolean);
   } catch { return null; }
 }
+
+/* Drop the copied public/ files this deck never asks for.
+ *
+ * Slidev copies public/ wholesale into every build. public/ is 77MB of every topic's
+ * figures, so a deck for 1.1.1 shipped 1.10.4's images and 59 decks shipped the same 77MB
+ * 59 times - measured at 84MB and 861 objects for one deck, of which 6.4MB was the deck.
+ * That, not the build time, was the reason a one-slide typo re-uploaded gigabytes.
+ *
+ * Done as a post-pass rather than by building each deck against a trimmed publicDir: it
+ * needs no Slidev configuration, leaves `slidev dev` seeing the whole of public/ exactly as
+ * before, and leaves every `/images/...` reference in the markdown untouched.
+ *
+ * Only paths that were copied *from* public/ are candidates. Everything Vite emitted itself
+ * lives under assets/ with a content hash and is left alone - it is the deck.
+ */
+function pruneAssets(outDir, used) {
+  const keep = new Set(used);
+  let removed = 0, kept = 0, freed = 0;
+  const roots = new Set(used.map(u => u.split('/')[1]).filter(Boolean));
+  // Only walk the top-level directories the deck's own references point into - `images/`
+  // here. Anything else public/ holds is left alone rather than guessed at.
+  for (const root of roots) {
+    const dir = path.join(outDir, root);
+    if (!fs.existsSync(dir)) continue;
+    walk(dir, file => {
+      const ref = '/' + path.relative(outDir, file).split(path.sep).join('/');
+      if (keep.has(ref)) { kept++; return; }
+      freed += fs.statSync(file).size;
+      fs.rmSync(file);
+      removed++;
+    });
+    prunEmpty(dir);
+  }
+  return { removed, kept, freed };
+}
+
+function walk(dir, onFile) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) walk(full, onFile);
+    else onFile(full);
+  }
+}
+
+function prunEmpty(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true }))
+    if (e.isDirectory()) prunEmpty(path.join(dir, e.name));
+  if (!fs.readdirSync(dir).length) fs.rmdirSync(dir);
+}
+
+/* A declaration, not `const mb = ...`. The command switch at the top of this file runs
+ * before anything below it is evaluated, so a const here sits in the temporal dead zone and
+ * throws the moment the first deck finishes building. */
+function mb(bytes) { return `${(bytes / 1048576).toFixed(1)}MB`; }
 
 function writeManifest(outRoot, built, all) {
   fs.mkdirSync(outRoot, { recursive: true });

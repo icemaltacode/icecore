@@ -110,14 +110,49 @@ export async function readDeck(srcDir, topic, file) {
   // handed, so a bare `topic-1.1.1.md` only resolves when you happen to be standing in
   // slides/ - which the CLI never is.
   const data = await parser.load(srcDir, path.join(srcDir, file));
+  const includes = [...Object.keys(data.watchFiles || {})]
+    .map(p => path.relative(srcDir, path.resolve(srcDir, p)));
   return {
     topic,
     file,
     slides: data.slides.length,
     sections: sectionsOf(data.slides),
-    includes: [...Object.keys(data.watchFiles || {})]
-      .map(p => path.relative(srcDir, path.resolve(srcDir, p))),
+    includes,
+    images: imagesUsedBy(srcDir, data, includes),
   };
+}
+
+/* Which files under public/ a deck actually asks for.
+ *
+ * Slidev copies the whole of public/ into every build, and public/ is 77MB of every topic's
+ * figures - so a deck for 1.1.1 ships 1.10.4's images, and 59 decks ship the same 77MB 59
+ * times. Knowing what a deck references is what lets the build drop the rest.
+ *
+ * Two sources, unioned, because getting this wrong deletes a figure that is genuinely used
+ * and the slide renders a broken image rather than failing anything:
+ *
+ *   - what the parser saw, which is markdown and HTML `<img>` usage
+ *   - a plain scan of the source text, which additionally catches frontmatter (`image:`,
+ *     `background:`) and anything built by hand in a template
+ *
+ * The scan alone would be enough today. Both are cheap, and the parser's view is the one
+ * that keeps working if someone starts generating references.
+ */
+function imagesUsedBy(srcDir, data, includes) {
+  const used = new Set();
+  const add = ref => {
+    if (typeof ref !== 'string') return;
+    const clean = ref.split(/[?#]/)[0].trim();
+    if (clean.startsWith('/')) used.add(clean);
+  };
+  for (const s of data.slides || []) (s.source?.images || []).forEach(add);
+  for (const rel of includes) {
+    let text;
+    try { text = fs.readFileSync(path.join(srcDir, rel), 'utf8'); } catch { continue; }
+    for (const m of text.matchAll(/(\/[\w.@-]+(?:\/[\w.@%-]+)*\.(?:png|jpe?g|gif|svg|webp|avif|mp4|webm))/gi))
+      add(m[1]);
+  }
+  return [...used];
 }
 
 /* Anything under slides/ that is not markdown is shared by every deck: the theme, the
