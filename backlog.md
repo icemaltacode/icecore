@@ -31,9 +31,19 @@ Two routes:
   mirroring. `1.7.1 Choosing a measure` is the first one through; the remaining 21 are
   authoring, not engineering.
 
-  The font question turned out to be nothing — the bundles carry no fonts and no DataCamp
-  branding, only a two-origin `postMessage` allowlist. `dc-pull-app` warns if a bundle
-  reaches a DataCamp host for anything else, which would be the one case a mirror can't fix.
+  **The fonts do exist** — I checked `mean-median-explorer` and wrongly generalised from it.
+  Six of the bundles are lean; the other sixteen each carry 24 font files, including Studio
+  Feixen Sans, DataCamp's commercial brand face. Keith's call on 2026-08-20: keep them, same
+  as any other DataCamp asset.
+
+  What that leaves is weight, not licensing. The 24 files are byte-identical across all
+  sixteen apps, so the mirror holds 384 copies of 24 distinct files — 4.8MB where 0.3MB of
+  distinct bytes exist, and a student working through 1.10 downloads them once per exercise.
+  Deduplicating means breaking each app's self-containment (a shared directory plus a
+  rewritten `fonts.css`), so it is worth doing only if the size actually bites.
+
+  `dc-pull-app` warns if a bundle reaches a DataCamp host at runtime, which is the one thing
+  a mirror can't fix.
 
 `chart-redesign`, `chart-type-explorer` and `slide-redesign` were counted as presentation
 until their own copy gave them away — "hover the chart bars to see values". Lift only their
