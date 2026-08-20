@@ -47,8 +47,6 @@ Ownership: you were last in md.js, so it's yours — I'll keep out of it. Conten
 
 ## UX
 
-- The editor (SQL) colours can be hard to read in dark mode. For example, typing a keyords such as SELECT turns dark purple, but in dark mode that's hard to read. We need a proper dark/light theme for syntax colouring. 
-
 - Are we actually tracking XP?
 
 - Icons are ugly

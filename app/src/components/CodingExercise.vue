@@ -7,6 +7,7 @@ import { grade } from '../grade.js';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
+import Icon from './Icon.vue';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
@@ -153,16 +154,16 @@ async function doReset() {
       </div>
 
       <div class="help" v-if="step.hint || step.solution || isMcqStep || tutorAvailable()">
-        <div class="helplinks">
-          <button v-if="step.hint" class="link" @click="showHint = !showHint">
-            {{ showHint ? 'Hide hint' : 'Take a hint' }}
+        <div class="helpbtns">
+          <button v-if="step.hint" class="btn ghost" @click="showHint = !showHint">
+            <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
           </button>
-          <button v-if="tutorAvailable() && !isMcqStep" class="link"
+          <button v-if="tutorAvailable() && !isMcqStep" class="btn ghost"
                   @click="askForHelp" :disabled="tutorBusy">
-            {{ tutorBusy ? 'Thinking…' : 'Ask a tutor' }}
+            <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
           </button>
-          <button v-if="step.solution || isMcqStep" class="link" @click="showSolution = !showSolution">
-            {{ showSolution ? 'Hide answer' : 'Show answer' }}
+          <button v-if="step.solution || isMcqStep" class="btn ghost" @click="showSolution = !showSolution">
+            <Icon :name="showSolution ? 'hidden' : 'answer'" />{{ showSolution ? 'Hide answer' : 'Show answer' }}
           </button>
         </div>
         <div v-if="showHint" class="prose hintbody" v-html="mdx(step.hint)"></div>
@@ -227,7 +228,7 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
           font-size: 11px; font-weight: 600; background: var(--ice-bg-soft); border: 1px solid var(--ice-border); }
 
 .help { margin-top: 20px; }
-.helplinks { display: flex; gap: 16px; }
+.helpbtns { display: flex; flex-wrap: wrap; gap: 8px; }
 .hintbody { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft); border-radius: var(--ice-radius); }
 .solution { margin-top: 8px; }
 .solution pre { margin: 0; padding: 10px 12px; background: var(--ice-bg-soft); border-radius: var(--ice-radius);

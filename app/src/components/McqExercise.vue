@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
+import Icon from './Icon.vue';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
@@ -60,8 +61,8 @@ function submit() {
       <!-- No answer reveal and no tutor here: the answer is one of four things on screen,
            and a nudge towards it would just be the answer. So this holds the hint alone. -->
       <div class="help" v-if="exercise.hint">
-        <button class="link" @click="showHint = !showHint">
-          {{ showHint ? 'Hide hint' : 'Take a hint' }}
+        <button class="btn ghost" @click="showHint = !showHint">
+          <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
         </button>
         <div v-if="showHint" class="prose hintbody" v-html="mdx(exercise.hint)"></div>
       </div>

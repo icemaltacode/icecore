@@ -36,11 +36,12 @@ const unitOfCurrent = computed(() => (course.value?.modules || [])
  * hundred exercises in a permanent tree is not navigation, it is a wall. */
 const showContents = ref(false);
 
-/* Collapsing it is a preference, so it is remembered. Deliberately click-to-toggle rather
- * than reveal-on-hover: the pointer crosses the left edge constantly on the way to the
- * editor, and a sidebar that opens itself on the way past is a twitch, not an affordance. */
+/* Collapsed until asked for: the exercise is the work, and the rail keeps the two things
+ * worth reaching from it. Deliberately click-to-toggle rather than reveal-on-hover - the
+ * pointer crosses the left edge constantly on the way to the editor, and a sidebar that
+ * opens itself on the way past is a twitch, not an affordance. */
 const SIDEBAR_KEY = 'ice-platform-sidebar';
-const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) !== 'closed');
+const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) === 'open');
 watch(sidebarOpen, v => localStorage.setItem(SIDEBAR_KEY, v ? 'open' : 'closed'));
 
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));

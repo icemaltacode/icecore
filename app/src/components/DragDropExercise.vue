@@ -3,6 +3,7 @@ import { ref, computed, watch } from 'vue';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { check, allItems } from '../dragdrop.js';
+import Icon from './Icon.vue';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
@@ -20,6 +21,7 @@ const columns = ref([]);      // [{ id, title, items }] - the pool first for cla
 const verdict = ref(null);
 const dragging = ref(null);   // item id being dragged
 const selected = ref(null);   // item id picked by clicking, for the no-drag path
+const showHint = ref(false);
 
 const isOrder = computed(() => props.exercise.mode === 'order');
 
@@ -46,6 +48,9 @@ function reset() {
        ...(props.exercise.zones || []).map(z => ({ id: z.id, title: z.title, items: [] }))];
 }
 watch(() => props.exercise.id, reset, { immediate: true });
+// Separate from reset(): "Start over" clears the board, but it should not snatch away a
+// hint the student is in the middle of reading.
+watch(() => props.exercise.id, () => { showHint.value = false; });
 
 const columnOf = id => columns.value.find(c => c.items.some(i => i.id === id));
 
@@ -136,11 +141,13 @@ function showAnswer() {
         </section>
       </div>
 
+      <!-- A button rather than a <details>, so a hint looks the same here as it does on
+           every other exercise type. -->
       <div v-if="exercise.hint" class="hint">
-        <details>
-          <summary>Take a hint</summary>
-          <div class="prose" v-html="mdx(exercise.hint)"></div>
-        </details>
+        <button class="btn ghost" @click="showHint = !showHint">
+          <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
+        </button>
+        <div v-if="showHint" class="prose" v-html="mdx(exercise.hint)"></div>
       </div>
 
       <div class="foot">
@@ -149,7 +156,7 @@ function showAnswer() {
         </p>
         <span v-else class="muted">Drag items, or click one and then click where it should go.</span>
         <button class="btn ghost" @click="reset">Start over</button>
-        <button class="btn ghost" @click="showAnswer">Show answer</button>
+        <button class="btn ghost" @click="showAnswer"><Icon name="answer" />Show answer</button>
         <button class="btn primary" @click="submit">Check answer</button>
       </div>
     </div>
@@ -188,7 +195,6 @@ h2 { margin: 0 0 8px; font-size: 22px; }
 .empty { margin: auto 0 0; padding: 6px 2px 0; color: var(--ice-fg-muted); font-size: 12px; }
 
 .hint { margin-top: 20px; }
-.hint summary { cursor: pointer; color: var(--ice-primary-strong); font-size: 13px; }
 .hint .prose { margin-top: 8px; padding: 10px 12px; background: var(--ice-bg-soft);
                border-radius: var(--ice-radius); }
 

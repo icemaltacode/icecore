@@ -93,6 +93,9 @@ body {
 button { font-family: inherit; }
 
 .btn {
+  /* inline-flex, so a button that carries an icon lines it up with its label without
+     every caller inventing its own row */
+  display: inline-flex; align-items: center; gap: 7px;
   border-radius: 8px; border: 1px solid var(--ice-border); padding: 7px 14px;
   font-size: 13px; font-weight: 500; cursor: pointer; background: var(--ice-bg);
   color: var(--ice-fg); transition: background .12s, border-color .12s, opacity .12s;

@@ -33,7 +33,7 @@ in their own repos and depend on this one.
 ### Working on the player's own UI
 
 `icecore dev` runs the platform **open** — no sign-in, and none of the affordances that
-only exist for a signed-in student: the tutor button, the enrolment filter, sign-out, the
+only exist for a signed-in student: the Ask AI button, the enrolment filter, sign-out, the
 admin panel. That makes the screens hardest to design the ones you cannot see locally.
 
 ```
@@ -43,7 +43,7 @@ icecore dev content --as signin    # start logged out, at the sign-in screen
 ```
 
 There is no Cognito, no API and no AWS account behind any of it — `app/src/preview.js`
-stands in for the lot. Progress goes to localStorage; the tutor returns a canned reply that
+stands in for the lot. Progress goes to localStorage; Ask AI returns a canned reply that
 says so; enrolments are in memory and reset on reload. In the `signin` role any password
 works, except the literal `temp`, which raises the first-login choose-a-password challenge.
 
@@ -128,8 +128,9 @@ topic they belong to, and a step either way. Everything else is behind **Content
 holding the whole collapsible structure with a filter across every exercise, topic and unit
 title. Four hundred exercises in a permanent tree is a wall, not navigation.
 
-It collapses to a rail, by click rather than by hover, and the choice is remembered. The
-rail keeps the reopen and Contents buttons, so nothing has to be hunted for.
+It starts collapsed to a rail and expands by click rather than by hover; the choice is
+remembered. The rail keeps the reopen and Contents buttons, so nothing has to be hunted
+for.
 
 Opening a course for the first time starts at its first exercise; after that it resumes
 where the student left off. The place-marker is stored per course beside the progress
