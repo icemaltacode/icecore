@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
-import SqlEditor from './SqlEditor.vue';
+import CodeEditor from './CodeEditor.vue';
 import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
 import { grade } from '../grade.js';
@@ -182,7 +182,7 @@ async function doReset() {
           <span class="tab active">query.sql</span>
           <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
         </div>
-        <SqlEditor v-model="code" @run="doRun" />
+        <CodeEditor v-model="code" @run="doRun" />
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>

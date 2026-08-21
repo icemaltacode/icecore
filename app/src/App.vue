@@ -6,6 +6,7 @@ import { load as loadProgress, mark as markProgress, remember } from './progress
 import CodingExercise from './components/CodingExercise.vue';
 import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
+import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
@@ -23,7 +24,7 @@ const loading = ref(true);
 const loadError = ref('');
 const currentId = ref(null);
 // Coding is the default; anything else declares its own player.
-const componentFor = { mcq: McqExercise, dragdrop: DragDropExercise };
+const componentFor = { mcq: McqExercise, dragdrop: DragDropExercise, python: PythonExercise };
 const needsSignIn = ref(false);
 const authed = ref(false);
 const showAdmin = ref(false);

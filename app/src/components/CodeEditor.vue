@@ -4,6 +4,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
+import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
@@ -20,7 +21,13 @@ const highlight = HighlightStyle.define([
   { tag: [tags.typeName, tags.function(tags.variableName)], color: 'var(--ice-syn-name)' },
 ]);
 
-const props = defineProps({ modelValue: String });
+/* One editor, two languages. It was SqlEditor until module 2 needed a Python one, and the
+ * only thing that differs is which CodeMirror language extension is installed - the
+ * theming, the keymap and the Mod-Enter-to-run contract are the same editor. Two copies
+ * would have drifted the moment either was touched. */
+const LANGUAGES = { sql: () => sql({ dialect: PostgreSQL }), python: () => python() };
+
+const props = defineProps({ modelValue: String, language: { type: String, default: 'sql' } });
 const emit = defineEmits(['update:modelValue', 'run']);
 const host = ref(null);
 let view = null;
@@ -33,7 +40,7 @@ onMounted(() => {
       extensions: [
         lineNumbers(), history(), highlightActiveLine(),
         syntaxHighlighting(highlight, { fallback: true }),
-        sql({ dialect: PostgreSQL }),
+        (LANGUAGES[props.language] || LANGUAGES.sql)(),
         keymap.of([
           { key: 'Mod-Enter', run: () => (emit('run'), true) },
           indentWithTab, ...defaultKeymap, ...historyKeymap,

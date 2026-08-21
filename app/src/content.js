@@ -27,6 +27,17 @@ export const imageBase = (courseId, topic) =>
 export const appBase = (courseId, topic) =>
   `${BASE}${encodeURIComponent(courseId)}/apps/${encodeURIComponent(topic)}/`;
 
+/* Where a UNIT's Python data files live - the csv, feather and pickle files a student's
+ * own code opens by name. Per unit rather than per topic because they are shared inside
+ * one and some are megabytes; an exercise refers to them by bare filename and knows
+ * neither the course id nor the unit, exactly as it does for a figure.
+ *
+ * Note `data/` under a course holds two unrelated things: a SQL dataset - either
+ * `<name>.sql` or a `<name>/` directory of .sql concatenated - and a `<unit>/` directory of
+ * files mounted into the Python interpreter. They are told apart by NAME, not by being a
+ * file or a directory: both kinds can be directories. A unit number is the marker. */
+export const dataBase = courseId => `${BASE}${encodeURIComponent(courseId)}/data/`;
+
 /** A dataset's seed SQL, fetched only when an exercise actually needs it. */
 export async function loadDatasetSql(courseId, dataset) {
   const url = `${BASE}${encodeURIComponent(courseId)}/data/${encodeURIComponent(dataset)}.sql`;

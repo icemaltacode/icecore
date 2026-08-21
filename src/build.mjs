@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 
 /* The grader's vendored wheels, beside the app that serves them. Absolute and derived
  * from this module: the builder runs from a course repo, never from here. */
-const WHEEL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'public', 'py');
+const WHEEL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'py');
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -429,18 +429,46 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   // concatenated in filename order -- a dataset is a database, and a database may hold
   // more than one table. Either way it ships as a single <name>.sql, so the player only
   // ever fetches one file per dataset.
+  /* `content/data/` holds two unrelated kinds of thing and the difference is NOT file
+   * versus directory - both kinds can be directories:
+   *
+   *   books.sql     a SQL dataset, one file
+   *   films/        a SQL dataset, a directory of .sql concatenated in filename order
+   *   2.4/          Python data files, mounted verbatim into the interpreter
+   *
+   * What separates them is the NAME. A Python data directory is named for its unit, and a
+   * unit number is not something anyone would call a dataset. Sniffing the contents instead
+   * would work today and quietly reclassify a unit the day someone drops a .sql in it.
+   *
+   * Said out loud in the log rather than decided silently, because getting this wrong makes
+   * a dataset vanish - and a missing dataset surfaces much later, as an exercise reporting
+   * that a table does not exist. */
+  const UNIT_DIR = /^\d+\.\d+$/;
   const dataDir = path.join(contentDir, 'data');
   const datasets = {};
+  const pyUnits = [];
   for (const e of (fs.existsSync(dataDir) ? fs.readdirSync(dataDir, { withFileTypes: true }) : [])) {
     if (e.isDirectory()) {
       const dir = path.join(dataDir, e.name);
-      const parts = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort()
-        .map(f => fs.readFileSync(path.join(dir, f), 'utf8'));
-      if (parts.length) datasets[e.name] = parts.join('\n');
+      const sqlFiles = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
+      if (UNIT_DIR.test(e.name)) {
+        pyUnits.push(e.name);
+        if (sqlFiles.length)
+          warnings.push(`data/${e.name}/ is named for a unit, so it is Python data - but it `
+            + `holds ${sqlFiles.length} .sql file(s), which will not be loaded as a dataset`);
+        continue;
+      }
+      if (sqlFiles.length)
+        datasets[e.name] = sqlFiles.map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
+      else
+        warnings.push(`data/${e.name}/ has no .sql in it and is not named for a unit - ignored`);
     } else if (e.name.endsWith('.sql')) {
       datasets[e.name.replace(/\.sql$/, '')] = fs.readFileSync(path.join(dataDir, e.name), 'utf8');
     }
   }
+  if (pyUnits.length)
+    log(`  data: ${Object.keys(datasets).length} SQL dataset(s), `
+        + `Python files for unit(s) [${pyUnits.sort(byNumber).join(', ')}]`);
 
   // ---- precompute expected results ----
   //
@@ -713,6 +741,29 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         shipped.push(d);
       }
 
+      /* A unit's Python data files, shipped beside the SQL datasets under the same `data/`
+       * prefix - one is `<name>.sql`, the other a `<unit>/` directory, and a file cannot
+       * collide with a directory.
+       *
+       * Only what an exercise actually DECLARES is copied. A unit directory can hold more
+       * than the course uses, and shipping the rest is the same waste as a deck carrying
+       * every topic's figures - except here a stray file is megabytes of pickle. */
+      let pyFiles = 0;
+      for (const t of topicsOf(course))
+        for (const ex of t.exercises) {
+          if (ex.type !== 'python' || !(ex.data || []).length) continue;
+          const unit = String(t.topic).split('.').slice(0, 2).join('.');
+          for (const name of ex.data) {
+            const from = path.join(contentDir, 'data', unit, name);
+            if (!fs.existsSync(from)) continue;      // already reported by the check above
+            const to = path.join(dir, 'data', unit, name);
+            if (fs.existsSync(to)) continue;         // shared across topics within the unit
+            fs.mkdirSync(path.dirname(to), { recursive: true });
+            fs.copyFileSync(from, to);
+            pyFiles++;
+          }
+        }
+
       // Under content/, deliberately: that path is already behind the CloudFront key group
       // and already carried by the content sync, so figures inherit both for free.
       let images = 0;
@@ -773,6 +824,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       log(`  ${course.id}: ${course.modules.length} module${course.modules.length === 1 ? '' : 's'}, ` +
           `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
           `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
+          `${pyFiles ? `${pyFiles} data file${pyFiles === 1 ? '' : 's'}, ` : ''}` +
           `datasets [${shipped.join(', ') || 'none'}]`);
     }
     /* Each course also publishes its own catalogue entry beside its content.
