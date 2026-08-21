@@ -19,6 +19,7 @@ import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
+import { seedFor } from '../app/src/python.js';
 import { fileURLToPath } from 'node:url';
 
 /* The grader's vendored wheels, beside the app that serves them. Absolute and derived
@@ -690,7 +691,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         if (!fs.existsSync(path.join(dir, f)))
           missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
 
-      const key = cache.keyFor('', ex.setup, ex.steps || []);
+      /* The seed goes in where a SQL exercise puts its dataset - it is the same kind of
+       * thing, the state the run starts from - so changing `seed:` invalidates the entry
+       * rather than replaying a validation done under a different one. */
+      const key = cache.keyFor(String(seedFor(ex)), ex.setup, ex.steps || []);
       const hit = cache.get(key);
       if (hit) { record(u, ex, hit, true); continue; }
 
@@ -701,7 +705,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         if (!step.solution || !step.sct) { outcome.steps.push(null); continue; }
         try {
           const r = await g.grade({ pec: ex.setup, solution: step.solution,
-                                         submission: step.solution, sct: step.sct, cwd });
+                                         submission: step.solution, sct: step.sct, cwd,
+                                         seed: seedFor(ex) });
           outcome.steps.push(r.correct
             ? { expected: { python: true } }
             : { error: `the reference solution does not satisfy its own SCT - ${

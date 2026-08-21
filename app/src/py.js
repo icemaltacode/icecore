@@ -18,7 +18,7 @@
  * is vendored under `public/py/` and served from our own origin.
  */
 import { loadPyodide, version } from 'pyodide';
-import { createGrader, GRADER_WHEELS, WHEELS_BY_NAME } from './python.js';
+import { createGrader, WHEELS_BY_NAME, seedFor } from './python.js';
 import { dataBase } from './content.js';
 
 const INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
@@ -132,7 +132,8 @@ export async function gradePython(course, exercise, step, submission) {
     graderFor(exercise.packages || [], exercise.wheels || []),
     mountData(course, unit, exercise.data || []),
   ]);
-  return g.grade({ pec: exercise.setup, solution: step.solution, submission, sct: step.sct, cwd });
+  return g.grade({ pec: exercise.setup, solution: step.solution, submission,
+                   sct: step.sct, cwd, seed: seedFor(exercise) });
 }
 
 /**

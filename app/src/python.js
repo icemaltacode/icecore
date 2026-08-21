@@ -38,6 +38,22 @@
  *
  * asttokens, jinja2, markupsafe and six are pythonwhat dependencies and are NOT here:
  * Pyodide bundles all four, and micropip resolves those before looking anywhere else. */
+/* The seed both runs start from. Any fixed number would do; an exercise can name its own
+ * with `seed:` in its frontmatter, and `seed: null` turns it off for one that is genuinely
+ * meant to vary - though such an exercise cannot then be graded on values. */
+export const DEFAULT_SEED = 20260821;
+
+/**
+ * The seed an exercise runs under. Shared so the builder validates against exactly what the
+ * player will grade against - a different seed either side would let a solution pass the
+ * build and fail the student.
+ */
+export const seedFor = exercise => {
+  if (!exercise || !('seed' in exercise)) return DEFAULT_SEED;
+  if (/^(none|null|false|off)$/i.test(String(exercise.seed))) return null;
+  return Number(exercise.seed) || DEFAULT_SEED;
+};
+
 export const GRADER_WHEELS = [
   'markdown2-2.5.3-py3-none-any.whl',
   'dill-0.4.1-py3-none-any.whl',
@@ -68,16 +84,56 @@ export const WHEELS_BY_NAME = {
  * grades the student's submission against itself and passes everything. */
 const BRIDGE = `
 import os
+import pythonwhat.utils
 from pythonwhat.local import run_exercise
 from pythonwhat.test_exercise import test_exercise
 
-def _ice_grade(pec, sol, stu, sct, cwd):
+# pythonwhat pretty-prints code INTO A FEEDBACK MESSAGE with black, and imports it lazily
+# so the failure only appears on the paths that build such a message: seven module 2
+# exercises died with ModuleNotFoundError: No module named 'black'.
+#
+# Vendoring it would be five more wheels - black drags in click, pathspec, platformdirs and
+# mypy_extensions - for reformatting a snippet in a sentence. The function it backs already
+# falls back to the unformatted text when black raises, so this is that fallback with the
+# import removed. The student sees their own code as they typed it, which is arguably the
+# better version of the message anyway.
+pythonwhat.utils.format_code = lambda text: text
+
+# SEEDED, and it has to be.
+#
+# pythonwhat runs the solution and the submission in SEPARATE interpreters and compares what
+# each produced. Unseeded, \`np.random.normal(size=5)\` gives two different answers and the
+# REFERENCE SOLUTION FAILS AGAINST ITSELF:
+#
+#   Did you correctly define the variable five_rolls?
+#   Expected [7 2 6 5 6], but got [3 8 2 6 8]
+#
+# I had said no marker was needed because nothing is precomputed, which was the wrong
+# conclusion from a right premise: nothing goes stale, but the two runs still have to agree
+# with each other. Thirteen of module 2's sampling exercises fail on exactly this.
+#
+# Seeding the same value into both runs makes them agree while leaving the grading honest -
+# a submission that draws differently still gets different numbers and is still marked
+# wrong. It runs BEFORE the exercise's own setup, so an exercise that seeds deliberately
+# overrides this rather than fighting it.
+_ICE_SEED = '''
+import random as _ice_random
+_ice_random.seed({seed})
+try:
+    import numpy as _ice_numpy
+    _ice_numpy.random.seed({seed})
+except ImportError:
+    pass
+'''
+
+def _ice_grade(pec, sol, stu, sct, cwd, seed):
     # Where the exercise's own data files are mounted, so \`pd.read_csv("cars.csv")\` finds
     # one. Passed per call rather than set with a global chdir: one interpreter serves a
     # whole topic, and a process-wide cwd would leave the next exercise reading the last
     # one's data - which grades against the wrong numbers rather than failing.
     wd = cwd or os.getcwd()
-    sol_p, stu_p, raw, err = run_exercise(pec, sol, stu, mode="stub", sol_wd=wd, stu_wd=wd)
+    setup = (_ICE_SEED.format(seed=int(seed)) if seed is not None else "") + (pec or "")
+    sol_p, stu_p, raw, err = run_exercise(setup, sol, stu, mode="stub", sol_wd=wd, stu_wd=wd)
     result = test_exercise(
         sct=sct, student_code=stu, solution_code=sol, pre_exercise_code=pec,
         student_process=stu_p, solution_process=sol_p, raw_student_output=raw,
@@ -147,8 +203,8 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
      * argument x?" - which is worth far more to a student than anything we would write, and
      * is the second reason for running their grader rather than writing one.
      */
-    async grade({ pec = '', solution, submission, sct, cwd = '' }) {
-      const result = call(pec, solution, submission, sct, cwd);
+    async grade({ pec = '', solution, submission, sct, cwd = '', seed = DEFAULT_SEED }) {
+      const result = call(pec, solution, submission, sct, cwd, seed);
       try {
         return result.toJs({ dict_converter: Object.fromEntries });
       } finally {
