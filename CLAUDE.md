@@ -167,6 +167,15 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   greeted every student with a 36-character identifier and implied it was what they sign in
   with. There is no `{email}` placeholder. So it lives in an HTML comment and the copy tells
   them to use their email address. Deleting it breaks the deploy; surfacing it misinforms.
+- **The invitation's logo is deployed by the stack, not by `just deploy`.** A mail client
+  drops an inline `data:` URI and Cognito sends one body with no attachment, so a remote
+  image is the only route — which makes the image a dependency of the email, and the email
+  is defined in the stack. It lands under `brand/`, served by the default behaviour, which
+  has no trusted key group and so is publicly readable: the recipient is not signed in.
+  `BucketDeployment` is set `prune: false` deliberately — it defaults to deleting everything
+  in the destination prefix that is not in the source, which is the same foot-gun as an
+  `s3 sync --delete` against a bucket holding three courses and 79 decks. Most clients block
+  remote images, so the `alt` text is what most recipients actually see.
 - **Invitations send through SES, from `noreply@icecampus.com`.** Cognito's own sender is
   capped at 50 messages a day per account and arrives from an unrecognised amazonaws.com
   address. `inviteFromEmail` in `cdk.json` turns it on, and its absence falls back to the

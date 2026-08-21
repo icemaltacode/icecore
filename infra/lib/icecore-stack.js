@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   Stack, Duration, RemovalPolicy, CfnOutput,
   aws_s3 as s3,
+  aws_s3_deployment as s3deploy,
   aws_cloudfront as cf,
   aws_cloudfront_origins as origins,
   aws_certificatemanager as acm,
@@ -74,15 +75,24 @@ const PUBLIC_KEY_PEM = path.join(HERE, '..', 'cloudfront-public-key.pem');
  */
 const inviteBody = siteUrl => {
   const link = siteUrl
-    ? `<p style="margin:0 0 20px"><a href="${siteUrl}" style="display:inline-block;background:#0284c7;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">Sign in to ICE Campus</a></p>`
+    ? `<p style="margin:0 0 20px"><a href="${siteUrl}" style="display:inline-block;background:#0284c7;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">Sign in to icecore</a></p>`
     : '';
   const plainLink = siteUrl
     ? `<p style="margin:0 0 8px;color:#64748b;font-size:13px">Or paste this into your browser: <a href="${siteUrl}" style="color:#0369a1">${siteUrl}</a></p>`
     : '';
+  /* Remote, at its natural size halved, with `alt` carrying the name. Most clients block
+   * remote images until the reader allows them, so the alt text is not a nicety - it is what
+   * the majority of recipients see first, and "icecore" reading as plain text is a fine
+   * fallback where a broken-image icon is not. Width and height are set explicitly so the
+   * layout does not jump when it does load. */
+  const logo = siteUrl
+    ? `<p style="margin:0 0 18px"><img src="${siteUrl}/brand/icecore-logo.png" width="160" height="92" alt="icecore" style="display:block;border:0;outline:none;text-decoration:none;width:160px;height:auto"></p>`
+    : '';
   return `<!-- {username} - required by Cognito, renders as an internal UUID, never shown -->
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:8px">
-  <h1 style="font-size:20px;margin:0 0 16px">You have been invited to ICE Campus</h1>
-  <p style="margin:0 0 16px">ICE Campus is where you will do the practical side of your course. It holds the slides from your sessions and a few hundred hands-on exercises to work through alongside them - you write real SQL and Python in the browser, run it against real data, and get told straight away whether it is right.</p>
+  ${logo}
+  <h1 style="font-size:20px;margin:0 0 16px">You have been invited to icecore</h1>
+  <p style="margin:0 0 16px">icecore is where you will do the practical side of your course. It holds the slides from your sessions and a few hundred hands-on exercises to work through alongside them - you write real SQL and Python in the browser, run it against real data, and get told straight away whether it is right.</p>
   <p style="margin:0 0 16px">Nothing to install, and your progress is saved as you go, so you can stop mid-topic and pick it up on another machine.</p>
   <h2 style="font-size:15px;margin:24px 0 8px">Signing in for the first time</h2>
   <p style="margin:0 0 6px">Use <strong>the email address this was sent to</strong> as your username, with this temporary password:</p>
@@ -107,6 +117,32 @@ export class IcecoreStack extends Stack {
       encryption: s3.BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    /* THE LOGO THE INVITATION LINKS TO, deployed with the stack that defines the email.
+     *
+     * A mail client cannot render an inline data: URI - Gmail and Outlook both drop them -
+     * and Cognito sends a single body with no attachment, so a remote image is the only
+     * route there is. That makes the image a dependency of the email, and the email lives
+     * here; shipping it with `just deploy` instead would mean a stack deployed into a fresh
+     * environment sends invitations with a broken image until someone remembers to publish
+     * the player.
+     *
+     * `brand/` is served by the DEFAULT behaviour, which has no trusted key group - so it is
+     * publicly readable, which it has to be: the recipient is not signed in and fetches it
+     * straight from the mail client.
+     *
+     * prune: false, and not by accident. BucketDeployment defaults to deleting everything in
+     * the destination prefix that is not in the source - the same shape of foot-gun as an
+     * `s3 sync --delete`, and this bucket holds three courses and 79 decks. Scoped to its own
+     * prefix it would be survivable; set explicitly it cannot become a problem if the prefix
+     * is ever widened. */
+    new s3deploy.BucketDeployment(this, 'Brand', {
+      sources: [s3deploy.Source.asset(path.join(HERE, '..', 'assets'))],
+      destinationBucket: site,
+      destinationKeyPrefix: 'brand',
+      prune: false,
+      cacheControl: [s3deploy.CacheControl.fromString('public, max-age=604800')],
     });
 
     // Single-table. Cognito owns accounts; this owns everything about them.
@@ -147,7 +183,7 @@ export class IcecoreStack extends Stack {
       passwordPolicy: { minLength: 12, requireLowercase: true, requireDigits: true, requireSymbols: false },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       userInvitation: {
-        emailSubject: 'Your ICE Campus account is ready',
+        emailSubject: 'Your icecore account is ready',
         emailBody: inviteBody(siteUrl),
       },
       /* SEND THROUGH SES WHEN THERE IS AN ADDRESS TO SEND AS.
@@ -168,7 +204,7 @@ export class IcecoreStack extends Stack {
       ...(inviteFrom ? {
         email: cognito.UserPoolEmail.withSES({
           fromEmail: inviteFrom,
-          fromName: 'ICE Campus',
+          fromName: 'icecore',
           sesRegion: this.region,
           sesVerifiedDomain: String(inviteFrom).split('@')[1],
         }),
