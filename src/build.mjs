@@ -871,6 +871,24 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   }
 
   for (const w of warnings) log(`  ! ${w}`);
+
+  /* The missing-asset lists are what `verify` fails on, and until now a plain `build` or a
+   * `dev` said nothing about them at all - they are appended to `warnings` below, after
+   * this log has already run. 294 ungradeable exercises went past in silence that way.
+   *
+   * Not printed in full, because a real one is hundreds of lines and would bury the build.
+   * A count by kind and one example each is enough to say "go and run verify". */
+  const problems = [
+    ['figure', missingImages], ['embedded app', missingApps],
+    ['section', missingSections], ['gradeable exercise', missingChecks],
+  ].filter(([, list]) => list.length);
+  if (problems.length) {
+    const total = problems.reduce((n, [, list]) => n + list.length, 0);
+    log(`  ${total} problem${total === 1 ? '' : 's'} verify will fail on:`);
+    for (const [kind, list] of problems)
+      log(`    ${String(list.length).padStart(4)} ${kind}${list.length === 1 ? '' : 's'}`
+          + `  e.g. ${list[0].slice(0, 96)}`);
+  }
   const { hits } = cache.stats();
   log(`  precomputed ${computed} expected result sets`
       + `${hits ? ` (${hits} exercise${hits === 1 ? '' : 's'} from cache)` : ''}`
