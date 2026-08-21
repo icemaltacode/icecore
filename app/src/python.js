@@ -67,11 +67,17 @@ export const WHEELS_BY_NAME = {
  * reverse of the order `test_exercise` names its parameters in. Getting that backwards
  * grades the student's submission against itself and passes everything. */
 const BRIDGE = `
+import os
 from pythonwhat.local import run_exercise
 from pythonwhat.test_exercise import test_exercise
 
-def _ice_grade(pec, sol, stu, sct):
-    sol_p, stu_p, raw, err = run_exercise(pec, sol, stu, mode="stub")
+def _ice_grade(pec, sol, stu, sct, cwd):
+    # Where the exercise's own data files are mounted, so \`pd.read_csv("cars.csv")\` finds
+    # one. Passed per call rather than set with a global chdir: one interpreter serves a
+    # whole topic, and a process-wide cwd would leave the next exercise reading the last
+    # one's data - which grades against the wrong numbers rather than failing.
+    wd = cwd or os.getcwd()
+    sol_p, stu_p, raw, err = run_exercise(pec, sol, stu, mode="stub", sol_wd=wd, stu_wd=wd)
     result = test_exercise(
         sct=sct, student_code=stu, solution_code=sol, pre_exercise_code=pec,
         student_process=stu_p, solution_process=sol_p, raw_student_output=raw,
@@ -89,7 +95,14 @@ def _ice_grade(pec, sol, stu, sct):
  * the right arguments, never what came out - so grading never needs a real backend, and
  * asking for one inside a worker is how matplotlib hangs. Showing a student their own plot
  * is a separate job from grading it. */
-const HEADLESS = 'import matplotlib\nmatplotlib.use("Agg")\n';
+const HEADLESS = `
+import warnings, matplotlib
+matplotlib.use("Agg")
+# Every exercise that ends in plt.show() warns that Agg cannot show anything. That is the
+# backend doing what we asked, once per graded submission - 551 lines of stderr on a full
+# build, and noise a student would see in their own output pane.
+warnings.filterwarnings("ignore", message=".*non-interactive.*cannot be shown.*")
+`;
 
 /**
  * Prepare an interpreter to grade one unit's exercises, and return something that can.
@@ -128,12 +141,14 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
     /**
      * Grade one submission. Returns { correct, message, output, error }.
      *
+     * `cwd` is the directory the exercise's data files are mounted in, or '' for none.
+     *
      * `message` is DataCamp's own feedback, HTML and all - "Did you correctly specify the
      * argument x?" - which is worth far more to a student than anything we would write, and
      * is the second reason for running their grader rather than writing one.
      */
-    async grade({ pec = '', solution, submission, sct }) {
-      const result = call(pec, solution, submission, sct);
+    async grade({ pec = '', solution, submission, sct, cwd = '' }) {
+      const result = call(pec, solution, submission, sct, cwd);
       try {
         return result.toJs({ dict_converter: Object.fromEntries });
       } finally {

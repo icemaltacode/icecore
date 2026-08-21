@@ -90,11 +90,17 @@ export function openExpectedCache({ contentDir, extensions = [], log = () => {} 
    *
    * The dataset is pre-hashed rather than embedded: it runs to megabytes and would
    * otherwise be re-serialised once per exercise using it. */
+  /* The SCT is carried only when a step has one, so a SQL exercise hashes to exactly what
+   * it hashed to before Python grading existed. Adding a field unconditionally would have
+   * been tidier and would have invalidated every SQL entry in the cache - 218 seconds of
+   * recompute for a change that cannot affect a single one of them. */
   const keyFor = (datasetSql, setup, steps) => sha(JSON.stringify([
     runKey,
     sha(datasetSql || ''),
     setup || '',
-    (steps || []).map(s => [s.solution || '', !!s.nondeterministic]),
+    (steps || []).map(s => s.sct
+      ? [s.solution || '', !!s.nondeterministic, s.sct]
+      : [s.solution || '', !!s.nondeterministic]),
   ]));
 
   const file = key => path.join(dir, `${key}.json`);

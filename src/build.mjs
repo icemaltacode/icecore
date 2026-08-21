@@ -19,6 +19,11 @@ import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
+import { fileURLToPath } from 'node:url';
+
+/* The grader's vendored wheels, beside the app that serves them. Absolute and derived
+ * from this module: the builder runs from a course repo, never from here. */
+const WHEEL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'public', 'py');
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -57,6 +62,10 @@ const codeIn = body => body.match(/```[a-z]*\n([\s\S]*?)```/)?.[1].replace(/\s+$
  * holding DataCamp's Python connect() line, which must never be executed - so this insists
  * on a ```sql fence rather than taking whatever code it finds. */
 const sqlIn = body => body.match(/```sql\s*\n([\s\S]*?)```/)?.[1].replace(/\s+$/, '') ?? '';
+/* Same insistence for Python. A module 2 exercise's `## Setup` is DataCamp's
+ * pre-exercise code - it defines the dataframes the exercise talks about - and it has to be
+ * a ```python fence rather than whatever code happens to be first. */
+const pyIn = body => body.match(/```python\s*\n([\s\S]*?)```/)?.[1].replace(/\s+$/, '') ?? '';
 const bullets = body => (body || '').split('\n')
   .filter(l => /^\s*[-*]\s+/.test(l)).map(l => l.replace(/^\s*[-*]\s+/, '').trim());
 const numbered = body => (body || '').split('\n')
@@ -147,11 +156,17 @@ export function parseExercise(file, text) {
       // Marks the step's result as unreproducible - see compare.js. The body is a note to
       // whoever reads the file later, not something the player shows.
       else if (s.title === 'Nondeterministic') cur.nondeterministic = s.body?.trim() || true;
+      /* The step's SCT: a pythonwhat program, executed rather than interpreted. It is the
+       * grader for a `type: python` step the way `### Solution` plus a precomputed result
+       * set is the grader for a SQL one - see app/src/python.js. */
+      else if (s.title === 'Check') cur.sct = codeIn(s.body);
       else if (s.title === 'Options') Object.assign(cur, { kind: 'mcq' }, optionsIn(s.body));
       else if (s.title === 'Feedback') cur.feedback = orderedIn(s.body);
     }
   }
-  return { ...fm, file, prompt: intro, setup: sqlIn(setup?.body || ''), steps };
+  const setupBody = setup?.body || '';
+  return { ...fm, file, prompt: intro, steps,
+           setup: fm.type === 'python' ? pyIn(setupBody) : sqlIn(setupBody) };
 }
 
 const isDDL = q => /\b(create|drop|alter|insert|update|delete|truncate)\b/i.test(q);
@@ -185,11 +200,23 @@ export function stepProblems(ex) {
     else if (!coding && !mcq) problems.push(`${where} has neither a Solution nor Options`);
     else if (mcq && !(step.answer >= 0)) problems.push(`${where} has no correct option marked`);
 
+    /* A Python step is graded by its own SCT and by nothing else. There is no result set to
+     * fall back on, so a step that lost its `### Check` would not fail - it would accept
+     * every submission, silently, which is worse than rejecting every one. Same standing
+     * hazard as a dropped `### Nondeterministic`: the SCT comes from the capture and a
+     * forced re-convert can drop it. */
+    if (ex.type === 'python' && coding && !step.sct)
+      problems.push(`${where} has a Solution but no "### Check" - a Python step with no SCT `
+        + 'accepts every submission');
+
     // Expected values are computed at build time, so a volatile call means the step either
     // fails immediately or - worse - passes today and fails at midnight. The marker is
     // hand-written in the exercise, so a re-convert can wipe it; without this check that
     // would quietly restore strict grading and surface later as a data problem.
-    const volatile = coding && !step.nondeterministic && volatileCall(step.solution);
+    // SQL only: a Python step has no precomputed values to go stale, because it is graded
+    // live against its SCT rather than against anything recorded at build time.
+    const volatile = ex.type !== 'python'
+      && coding && !step.nondeterministic && volatileCall(step.solution);
     if (volatile)
       problems.push(`${where} uses ${volatile} but is not marked "### Nondeterministic" - `
         + 'its expected values cannot be reproduced');
@@ -228,6 +255,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const missingImages = [];       // verify fails on these - a dropped figure is the bug
   const usedApps = new Set();     // "<topic>/<name>", same idea for embedded apps
   const missingApps = [];
+  const missingChecks = [];   // a Python step with no SCT grades nothing
   const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
   // The card image for the course grid. Named in course.json and resolved beside it, the
   // same way an exercise's figures are resolved beside the exercise - a course shouldn't
@@ -442,13 +470,13 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     } finally { await db.close(); }
   };
 
-  let computed = 0, failed = 0;
+  let computed = 0, failed = 0, validated = 0;
 
   /* The single place an outcome becomes warnings, counters and `step.expected` - reached
    * identically whether it was just computed or replayed off disk. Two code paths here is
    * exactly how a cached build starts quietly reporting different numbers from a cold one,
    * which would make the cache impossible to trust. */
-  const record = (u, ex, outcome) => {
+  const record = (u, ex, outcome, validateOnly = false) => {
     if (outcome.setupError) {
       warnings.push(`${u.topic} ${ex.file}: setup failed - ${outcome.setupError}`);
       failed++;
@@ -460,6 +488,11 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       if (r.error) {
         warnings.push(`${u.topic} ${ex.file}: solution failed - ${r.error}`);
         failed++;
+      } else if (validateOnly) {
+        // A Python step carries no expected values - it is graded live against its SCT -
+        // so there is nothing to hang on the step. All this pass produces is the knowledge
+        // that the reference solution passes its own check, and a count to say so.
+        validated++;
       } else {
         step.expected = r.expected;
         computed++;
@@ -527,6 +560,133 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       }
     }
   }
+
+  // ---- validate Python solutions ----
+  //
+  // The Python analogue of precomputing expected results, and deliberately not the same
+  // shape. A SQL step is graded against values recorded here; a Python step is graded live
+  // in the browser by its own SCT, because the interpreter is already up and a check costs
+  // ~20ms. So there is nothing to record - what this pass does is CHECK, by grading every
+  // reference solution against its own SCT exactly as the player will.
+  //
+  // Worth having for the same reason `verify` is: a capture that dropped an SCT, or a
+  // re-convert that mangled one, produces an exercise that accepts everything. That fails
+  // here instead of in front of a student.
+  const python = [];
+  for (const course of courses.values())
+    for (const u of topicsOf(course))
+      for (const ex of u.exercises) {
+        if (ex.type !== 'python') continue;
+        /* A Python step graded by nothing accepts everything. `stepProblems` says so too,
+         * but that only runs under `verify` - and this is the one failure that gets WORSE
+         * the later it is found, because the exercise builds, ships, and marks every
+         * submission correct. Caught here so a build cannot produce it at all. */
+        for (const [i, st] of (ex.steps || []).entries())
+          if (st.solution && !st.sct)
+            missingChecks.push(`${u.topic} ${ex.file}: ${ex.steps.length > 1 ? `step ${i + 1}` : 'the instructions'}`
+              + ' has a Solution but no "### Check" - it would accept every submission');
+        if ((ex.steps || []).some(st => st.solution && st.sct)) python.push({ u, ex });
+      }
+
+  if (python.length) {
+    /* Imported here and not at the top: Pyodide is tens of megabytes of wasm and a course
+     * with no Python exercises must not pay for it. The grader itself comes from the app,
+     * the same way compare.js does, so the builder and the player cannot disagree about
+     * what "correct" means. */
+    /* Booted on the first cache MISS and not before. Pyodide plus pandas, matplotlib and
+     * seaborn is ~5 seconds, and a warm build has nothing for it to do - the same reason
+     * the SQL pass reaches `template()` only after the cache has been asked. A course
+     * whose Python is all unchanged should not pay to start an interpreter that then
+     * grades nothing.
+     *
+     * One interpreter for the whole build, loaded with the union of what the course needs:
+     * loading a package twice is free, so per-exercise instances buy only wall-clock. */
+    let grader = null;
+    const graderFor = async () => {
+      if (grader) return grader;
+      const { loadPyodide } = await import('pyodide');
+      const { createGrader } = await import('../app/src/python.js');
+      pyodide = await loadPyodide();
+      grader = await createGrader({
+        pyodide,
+        packages: [...new Set(python.flatMap(({ ex }) => ex.packages || []))],
+        wheels: [...new Set(python.flatMap(({ ex }) => ex.wheels || []))],
+        readWheel: name => fs.promises.readFile(path.join(WHEEL_DIR, name)),
+      });
+      return grader;
+    };
+    let pyodide = null;
+
+    /* A unit's data files, mounted where the exercise expects to find them. `data:` on an
+     * exercise names files under `content/data/<unit>/`, and the exercise refers to them by
+     * bare filename - it should no more know the course id than a figure does.
+     *
+     * Per unit rather than per topic because the files are shared within one: 2.4's
+     * casts.p is 8.6MB and duplicating it per topic is the deck-images mistake. Checked by
+     * the ripper across all 82 (unit, filename) pairs - no filename means two different
+     * things inside one unit. */
+    /* A topic knows its own number and the numbering IS the hierarchy - `2.6.1` is topic 1
+     * of unit 2.6 of module 2 - so the unit is the first two components and never needs
+     * storing twice. Course > Module > Unit > Topic, numbered 1 / 1.1 / 1.1.1. */
+    const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
+
+    const mounted = new Set();
+    const mount = unit => {
+      const dir = path.join(contentDir, 'data', unit);
+      const at = `/ice-data/${unit}`;
+      if (mounted.has(unit)) return at;
+      mounted.add(unit);
+      pyodide.FS.mkdirTree(at);
+      for (const f of (fs.existsSync(dir) ? fs.readdirSync(dir) : []))
+        if (fs.statSync(path.join(dir, f)).isFile())
+          pyodide.FS.writeFile(`${at}/${f}`, fs.readFileSync(path.join(dir, f)));
+      return at;
+    };
+
+    for (const { u, ex } of python) {
+      // A declared file that isn't there is the failure this exists to catch: the exercise
+      // reads fine, the SCT is intact, and the student gets a FileNotFoundError.
+      const unit = unitOf(u.topic);
+      const dir = path.join(contentDir, 'data', unit);
+      for (const f of ex.data || [])
+        if (!fs.existsSync(path.join(dir, f)))
+          missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
+
+      const key = cache.keyFor('', ex.setup, ex.steps || []);
+      const hit = cache.get(key);
+      if (hit) { record(u, ex, hit, true); continue; }
+
+      const g = await graderFor();
+      const cwd = mount(unit);
+      const outcome = { setupError: null, steps: [] };
+      for (const step of ex.steps || []) {
+        if (!step.solution || !step.sct) { outcome.steps.push(null); continue; }
+        try {
+          const r = await g.grade({ pec: ex.setup, solution: step.solution,
+                                         submission: step.solution, sct: step.sct, cwd });
+          outcome.steps.push(r.correct
+            ? { expected: { python: true } }
+            : { error: `the reference solution does not satisfy its own SCT - ${
+                  String(r.message || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 160)}` });
+        } catch (e) {
+          /* Last line, not first: a pythonwhat failure arrives as a Python traceback and
+           * the first line is always "Traceback (most recent call last):". The bottom line
+           * carries the exception and its message, which is the part that says what the
+           * solution actually did wrong. */
+          const lines = String(e.message).trim().split('\n').filter(Boolean);
+          outcome.steps.push({ error: `SCT raised - ${(lines[lines.length - 1] || '').trim().slice(0, 200)}` });
+        }
+      }
+      cache.put(key, outcome);
+      record(u, ex, outcome, true);
+    }
+    log(`  validated ${validated} Python solution${validated === 1 ? '' : 's'} against their own SCTs`);
+  }
+
+  /* Swept LAST, after every pass that asks the cache for a key. `get()` is what registers a
+   * key as live, so sweeping between the SQL pass and the Python one deleted every Python
+   * entry before it had been claimed - a cache that hit exactly never, and a warm build
+   * that still paid five seconds to boot an interpreter with nothing to do. */
   cache.sweep();
 
   // ---- emit ----
@@ -654,7 +814,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       + `${hits ? ` (${hits} exercise${hits === 1 ? '' : 's'} from cache)` : ''}`
       + `${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
-  warnings.push(...missingImages, ...missingApps, ...missingSections);
+  warnings.push(...missingImages, ...missingApps, ...missingSections, ...missingChecks);
   return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,
-           missingImages, missingApps, missingSections, decks, deckSources: sources };
+           missingImages, missingApps, missingSections, missingChecks, decks, deckSources: sources };
 }
