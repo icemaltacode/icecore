@@ -119,7 +119,8 @@ async function buildAll(outDir) {
 async function cmdVerify() {
   console.log(`verifying ${path.relative(process.cwd(), contentDir) || '.'}`);
   // built in memory: reference solutions never touch the disk
-  const { courses, datasets, missingImages, missingApps, missingSections, missingChecks } =
+  const { courses, datasets, missingImages, missingApps, missingSections, missingChecks,
+          missingCorrections } =
     await buildContent({ contentDir, write: false });
 
   const seeded = new Map();
@@ -166,7 +167,8 @@ async function cmdVerify() {
   // A figure that isn't there is why this check exists: the prompt still reads fine and the
   // exercise still grades, so nothing else would ever notice. A section pointing at a slide
   // the deck doesn't have is the same shape of bug, and gets the same treatment.
-  for (const m of [...missingImages, ...missingApps, ...missingSections, ...missingChecks]) { fail++; bad.push(m); }
+  for (const m of [...missingImages, ...missingApps, ...missingSections, ...missingChecks,
+                   ...missingCorrections]) { fail++; bad.push(m); }
   for (const course of courses) {
     for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
       for (const ex of unit.exercises) {

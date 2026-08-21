@@ -170,6 +170,60 @@ export function parseExercise(file, text) {
            setup: fm.type === 'python' ? pyIn(setupBody) : sqlIn(setupBody) };
 }
 
+/* Hand corrections, and the marker that proves one survived.
+ *
+ * Some imported exercises have to be fixed by hand - a library moved on, DataCamp's own
+ * content was wrong - and `dc-convert --force` regenerates from `content/raw/` and wipes
+ * every one of them. Silently. It has already happened: a forced re-convert an hour after
+ * the corrections were written undid one, and it was noticed only because someone went
+ * looking.
+ *
+ * The same standing hazard as `### Nondeterministic` and `section:`, and until now the only
+ * one without a check. A list in a file is worth exactly as much as the next person opening
+ * it.
+ *
+ * So: `content/corrections/README.md` says WHICH exercises were corrected and why, and each
+ * of those carries `corrected:` in its frontmatter. The list is the record and the marker is
+ * the evidence, and the check fires when the marker is ABSENT - because absence is the
+ * failure. A forced re-convert drops the frontmatter key along with the fix, so the file
+ * stops matching its own record and verify says so.
+ *
+ * Parsed out of the register's headings rather than from a second machine-readable file,
+ * which would be one more thing to drift:
+ *
+ *   ## 2.8.2 `09-weighted-sampling.md`
+ *   ## 2.9.2 `11-using-ttest.md`, 2.9.4 `06`, `08`, `09` - pingouin column names
+ *
+ * A backticked value ending in .md is a filename; a bare number is a prefix resolved against
+ * that topic's files. A topic carries forward to the backticks after it, which is what makes
+ * the second line mean four exercises across two topics.
+ */
+export function correctionRegister(contentDir) {
+  const file = path.join(contentDir, 'corrections', 'README.md');
+  const out = [];
+  if (!fs.existsSync(file)) return out;
+  const exDir = path.join(contentDir, 'exercises');
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!line.startsWith('## ')) continue;
+    let topic = null;
+    // Topics and backticked names in the order they appear, so a name binds to the topic
+    // most recently named to its left.
+    for (const m of line.matchAll(/(\d+(?:\.\d+)+)|`([^`]+)`/g)) {
+      if (m[1]) { topic = m[1]; continue; }
+      if (!topic) continue;
+      const value = m[2].trim();
+      const dir = path.join(exDir, topic);
+      const names = !fs.existsSync(dir) ? []
+        : value.endsWith('.md') ? [value]
+        : fs.readdirSync(dir).filter(f => f.endsWith('.md') && f.startsWith(value));
+      if (!names.length) { out.push({ topic, file: value, missing: true }); continue; }
+      for (const name of names)
+        out.push({ topic, file: name, missing: !fs.existsSync(path.join(dir, name)) });
+    }
+  }
+  return out;
+}
+
 const isDDL = q => /\b(create|drop|alter|insert|update|delete|truncate)\b/i.test(q);
 
 /* Calls whose result depends on when the query runs. Split in two because some are
@@ -257,6 +311,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const usedApps = new Set();     // "<topic>/<name>", same idea for embedded apps
   const missingApps = [];
   const missingChecks = [];   // a Python step with no SCT grades nothing
+  const missingCorrections = [];  // a hand fix a forced re-convert has wiped
   const moduleTitles = new Map((courseMeta.modules || []).map(m => [String(m.module), m.title]));
   // The card image for the course grid. Named in course.json and resolved beside it, the
   // same way an exercise's figures are resolved beside the exercise - a course shouldn't
@@ -590,6 +645,35 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     }
   }
 
+  // ---- hand corrections still in place ----
+  //
+  // See `correctionRegister`. The register says which exercises were fixed by hand; the
+  // `corrected:` frontmatter key on each is the evidence that the fix is still there. A
+  // forced re-convert takes both the fix and the marker, so the file stops matching its own
+  // record - which is the only way to notice, short of remembering.
+  {
+    const marked = new Set();
+    for (const course of courses.values())
+      for (const t of topicsOf(course))
+        for (const ex of t.exercises)
+          if (ex.corrected?.length) marked.add(`${t.topic}/${ex.file}`);
+
+    for (const entry of correctionRegister(contentDir)) {
+      const id = `${entry.topic}/${entry.file}`;
+      if (entry.missing)
+        missingCorrections.push(`${id}: named in content/corrections/README.md, but there is `
+          + 'no such exercise');
+      else if (!marked.delete(id))
+        missingCorrections.push(`${id}: recorded as hand-corrected but carries no `
+          + '`corrected:` - either a forced re-convert has wiped the fix, or the marker was '
+          + 'never added');
+    }
+    // The other direction is a warning, not a failure: a marker with no entry means the
+    // register was not updated, which loses the reason but not the fix.
+    for (const id of marked)
+      warnings.push(`${id}: carries \`corrected:\` but is not in content/corrections/README.md`);
+  }
+
   // ---- validate Python solutions ----
   //
   // The Python analogue of precomputing expected results, and deliberately not the same
@@ -701,10 +785,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         if (!fs.existsSync(path.join(dir, f)))
           missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
 
-      /* The seed goes in where a SQL exercise puts its dataset - it is the same kind of
-       * thing, the state the run starts from - so changing `seed:` invalidates the entry
-       * rather than replaying a validation done under a different one. */
-      const key = cache.keyFor(String(seedFor(ex)), ex.setup, ex.steps || []);
+      /* Where a SQL exercise puts its dataset, a Python one puts everything else that
+       * decides the answer: the package set and the seed. Both are the state the run starts
+       * from, and both change the result without changing a character of the exercise.
+       *
+       * The packages were missing here and it cost an hour of looking in the wrong place.
+       * 2.7.3 needed scipy added to its manifest; the fix landed, the key did not move, and
+       * the build cheerfully replayed the cached failure from before the fix. The converter
+       * had done its job and the evidence said otherwise. */
+      const key = cache.keyFor(`${packageKey(ex)}\n${seedFor(ex)}`, ex.setup, ex.steps || []);
       const hit = cache.get(key);
       if (hit) { record(u, ex, hit, true); continue; }
 
@@ -875,8 +964,19 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     // the publish step syncs them one prefix at a time for exactly that reason: an
     // `s3 sync --delete` of the whole slides/ prefix against a partial dist would delete
     // every deck that wasn't rebuilt.
+    /* Cleared PER DECK, not wholesale. `rmSync` on the whole of slides/ is right while a
+     * site is one course and deletes every other course's decks the moment it isn't - the
+     * same bug as wiping the whole of content/, in the one place I did not fix it. A site
+     * with an announced course in it has no decks at all, so building that course removed
+     * all 79 of the Data Analyst's; every slide step then requested a deck that was not
+     * there, got the dev server's SPA fallback, and rendered THE APP inside the iframe.
+     *
+     * A course owns the deck directories of its own topics - `sources` - and nothing else.
+     * Removing them first is what keeps the invariant the publish step relies on: what
+     * lands here is what this run BUILT, not every deck the course has a source for. */
     const slidesOut = path.join(outDir, 'slides');
-    fs.rmSync(slidesOut, { recursive: true, force: true });
+    for (const topic of sources.keys())
+      fs.rmSync(path.join(slidesOut, topic), { recursive: true, force: true });
     if (built.size) {
       for (const topic of built)
         fs.cpSync(path.join(slidesDir, topic), path.join(slidesOut, topic), { recursive: true });
@@ -896,6 +996,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const problems = [
     ['figure', missingImages], ['embedded app', missingApps],
     ['section', missingSections], ['gradeable exercise', missingChecks],
+    ['hand correction', missingCorrections],
   ].filter(([, list]) => list.length);
   if (problems.length) {
     const total = problems.reduce((n, [, list]) => n + list.length, 0);
@@ -909,7 +1010,9 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       + `${hits ? ` (${hits} exercise${hits === 1 ? '' : 's'} from cache)` : ''}`
       + `${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
-  warnings.push(...missingImages, ...missingApps, ...missingSections, ...missingChecks);
+  warnings.push(...missingImages, ...missingApps, ...missingSections, ...missingChecks,
+                ...missingCorrections);
   return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,
-           missingImages, missingApps, missingSections, missingChecks, decks, deckSources: sources };
+           missingImages, missingApps, missingSections, missingChecks, missingCorrections,
+           decks, deckSources: sources };
 }
