@@ -33,6 +33,7 @@ the session endpoint can set cookies that content requests will actually send.
       and five dropped `VisualExercise` entries were each invisible until something
       specifically looked for them. A per-chapter count check in `convert.mjs` is close to
       free and would have caught the most recent one on day one. *(Practicals ripping agent.)*
+- [ ] 2.8.3 shiny dashboard
 
 
 ## UX
