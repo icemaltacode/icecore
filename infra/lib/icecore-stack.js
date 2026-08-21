@@ -130,9 +130,21 @@ export class IcecoreStack extends Stack {
             Username: adminEmail,
             // Verified up front: an admin who cannot receive a password reset is barely
             // less locked out than no admin at all.
+            //
+            // `name` is in here because the pool declares it REQUIRED, and Cognito enforces
+            // that on adminCreateUser - without it the call is rejected as not conforming to
+            // the schema, which `ignoreErrorCodesMatching` above does not catch because it is
+            // an InvalidParameterException and not a UsernameExistsException. The one code
+            // path whose entire job is to stop a lockout would have failed the first time
+            // anyone used it. The invite Lambda has always sent it; this copy was written
+            // separately and did not, which is the drift a second copy always eventually has.
+            //
+            // A pool's schema cannot be altered after creation, so `name` stays required for
+            // the life of this pool and every future writer has to supply one.
             UserAttributes: [
               { Name: 'email', Value: adminEmail },
               { Name: 'email_verified', Value: 'true' },
+              { Name: 'name', Value: String(adminEmail).split('@')[0] },
             ],
             DesiredDeliveryMediums: ['EMAIL'],
           },
@@ -156,6 +168,11 @@ export class IcecoreStack extends Stack {
       promoted.node.addDependency(created);
     }
 
+    /* NO `readAttributes` ON PURPOSE. Left unset, Cognito grants the client read on every
+     * standard attribute, which is what puts `name` and `email` in the id token for the top
+     * bar to draw. Set it to add a custom attribute later and the standard ones are no
+     * longer implied - they have to be listed too, or the name silently disappears from the
+     * corner of every page and looks like a styling bug. */
     const client = users.addClient('Web', {
       authFlows: { userSrp: true },
       accessTokenValidity: Duration.hours(12),

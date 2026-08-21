@@ -167,6 +167,18 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   it and `just grant-admin <email>` promotes someone on a pool that is already up. The
   bootstrap is idempotent — an existing user is promoted rather than failing the deploy —
   and has no delete handler, because tearing the stack down must not delete a person.
+- **The pool declares `name` required, and a schema cannot be altered after the pool is
+  created.** So every writer supplies one, forever - the invite Lambda and the CDK admin
+  bootstrap both. Cognito rejects an `adminCreateUser` that omits it with an
+  `InvalidParameterException`, which the bootstrap's `ignoreErrorCodesMatching:
+  'UsernameExistsException'` does not catch. Default it to the email's **local part**, never
+  the whole address: `TopBar` renders `name || email.split('@')[0]`, so a name that is always
+  set means that fallback never runs and a student invited without one reads their own full
+  email address in the corner of every page.
+- **The web client has no `readAttributes` on purpose.** Unset means Cognito grants read on
+  every standard attribute, which is what puts `name` and `email` in the id token. Setting it
+  to add a custom attribute later stops implying the standard ones - list them too, or the
+  name vanishes from the top bar and reads as a styling bug.
 - AWS work needs `AWS_PROFILE=ice` (account 845106282768). The default profile is a different
   account that also has a GitHub OIDC provider installed, so a wrong-account `cdk diff`
   reports the whole stack as new rather than failing.

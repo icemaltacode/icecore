@@ -17,8 +17,13 @@ const props = defineProps({
 });
 defineEmits(['home', 'admin', 'signout']);
 
-/* Falls back through name, then the local part of the email, then nothing: an invitation
- * always carries an email and only sometimes carries a name. */
+/* Falls back through name, then the local part of the email, then nothing.
+ *
+ * A backstop rather than the normal path: the pool declares `name` required, so the invite
+ * Lambda always writes one - the local part itself when the admin typed no name. Defaulting
+ * it to the whole address there instead is what makes this second fallback dead code and
+ * puts a full email address in the corner of every page. Kept because a token predating that
+ * fix, or any future writer that forgets, should degrade quietly rather than blankly. */
 const label = computed(() => props.name || props.email?.split('@')[0] || '');
 const initials = computed(() => {
   const words = label.value.split(/[\s._-]+/).filter(Boolean);

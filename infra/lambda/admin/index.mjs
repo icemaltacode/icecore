@@ -27,6 +27,18 @@ const isAdmin = claims => {
   return Array.isArray(groups) ? groups.includes('admins') : String(groups ?? '').includes('admins');
 };
 
+/* What to write into the pool's `name` when the admin did not type one.
+ *
+ * Something has to be written: the pool declares `name` required, a schema cannot be altered
+ * after the pool is created, and so every writer supplies one forever.
+ *
+ * The local part, NOT the whole address. `name || email` looks harmless and quietly disables
+ * the fallback it was relying on: TopBar renders `name || email.split('@')[0]`, so a name
+ * that is always set means the tidy fallback never runs and a student who was invited
+ * without one reads their own full email address in the corner of every page. A default
+ * that defeats the default underneath it. */
+const displayName = (name, email) => (name || '').trim() || email.split('@')[0];
+
 /** The Cognito sub for an email address, creating and inviting the user if they're new. */
 async function findOrInvite(email, name) {
   try {
@@ -41,7 +53,7 @@ async function findOrInvite(email, name) {
     UserAttributes: [
       { Name: 'email', Value: email },
       { Name: 'email_verified', Value: 'true' },
-      { Name: 'name', Value: name || email },
+      { Name: 'name', Value: displayName(name, email) },
     ],
     DesiredDeliveryMediums: ['EMAIL'],   // sends the invitation with a temporary password
   }));
@@ -79,7 +91,11 @@ export async function handler(event) {
     } catch (e) {
       return json(400, { error: e.message });
     }
-    const item = { pk: `USER#${result.sub}`, email: email.trim().toLowerCase(), name: name || null };
+    // The same value that went into the pool, so the admin's list and the student's own
+    // top bar cannot disagree about who they are. It used to store null here while writing
+    // the email address into Cognito - one fact, two places, already diverging.
+    const address = email.trim().toLowerCase();
+    const item = { pk: `USER#${result.sub}`, email: address, name: displayName(name, address) };
     await Promise.all([
       ddb.send(new PutCommand({ TableName: TABLE, Item: { ...item, sk: `ENROL#${course}`, course } })),
       ddb.send(new PutCommand({ TableName: TABLE, Item: { ...item, sk: 'PROFILE' } })),
