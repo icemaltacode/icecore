@@ -167,6 +167,14 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   greeted every student with a 36-character identifier and implied it was what they sign in
   with. There is no `{email}` placeholder. So it lives in an HTML comment and the copy tells
   them to use their email address. Deleting it breaks the deploy; surfacing it misinforms.
+- **`just deploy` syncs an ALLOWLIST, not everything-except.** The app owns `index.html`,
+  `auth.json` and `assets/*`; every other prefix in the bucket belongs to a course pipeline,
+  to the stack, or to something not invented yet. This was an exclude list naming `content/*`
+  and `slides/*`, and the day `brand/` was added for the invitation logo the next deploy
+  deleted it — the list had been written before that prefix existed, and the post-deploy
+  check looked at the prefixes already protected, so it could not catch it. Forgetting to add
+  a new app file to the allowlist means it does not deploy, which is visible; forgetting to
+  exclude someone else's prefix means it is deleted, which is not.
 - **The invitation's logo is deployed by the stack, not by `just deploy`.** A mail client
   drops an inline `data:` URI and Cognito sends one body with no attachment, so a remote
   image is the only route — which makes the image a dependency of the email, and the email

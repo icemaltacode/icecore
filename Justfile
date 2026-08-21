@@ -179,7 +179,22 @@ deploy: bundle _auth-json
     # time. `verify` and `decks` are no longer prerequisites either: CI gates the grading,
     # and rebuilding 79 decks with their PDFs to publish an unchanged app is ten minutes
     # spent to upload nothing.
-    aws s3 sync dist/ "s3://$bucket/" --delete --exclude 'content/*' --exclude 'slides/*'
+    # AN ALLOWLIST, NOT AN EXCLUDE LIST, and that distinction has already cost us once.
+    #
+    # This was `--exclude 'content/*' --exclude 'slides/*'`, naming the prefixes the app must
+    # not touch. Then `brand/` was added for the invitation logo, deployed by the stack, and
+    # the very next `just deploy` deleted it - the exclusion list had been written before
+    # that prefix existed. The site went on serving invitations with a broken image, and the
+    # post-deploy check looked at courses and decks, which were the prefixes already
+    # protected, so it could not have caught it.
+    #
+    # The app owns exactly these three things. Everything else in the bucket belongs to a
+    # course pipeline, to the stack, or to something not yet invented. Forgetting to add a
+    # new APP file here means it does not deploy, which is visible immediately; forgetting to
+    # exclude someone else's prefix means it is deleted, which is not. Fail in the direction
+    # that shows.
+    aws s3 sync dist/ "s3://$bucket/" --delete \
+      --exclude '*' --include 'index.html' --include 'auth.json' --include 'assets/*'
     aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
     domain=$(aws cloudfront get-distribution --id "$dist" \
       --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text 2>/dev/null)
