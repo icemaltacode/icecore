@@ -224,7 +224,7 @@ jobs:
       # recent one in, and the post step saves the union. The build sweeps entries the
       # course no longer wants, so it stays bounded rather than growing per edit (~10MB).
       - name: Cache the precomputed results
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .icecore/cache
           key: expected-${{ runner.os }}-${{ github.sha }}
