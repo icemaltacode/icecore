@@ -20,6 +20,7 @@ import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
 import { seedFor, packageKey } from '../app/src/python.js';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 /* The grader's vendored wheels, beside the app that serves them. Absolute and derived
@@ -716,112 +717,65 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
      * with no Python exercises must not pay for it. The grader itself comes from the app,
      * the same way compare.js does, so the builder and the player cannot disagree about
      * what "correct" means. */
-    /* Booted on the first cache MISS and not before. Pyodide plus pandas, matplotlib and
-     * seaborn is ~5 seconds, and a warm build has nothing for it to do - the same reason
-     * the SQL pass reaches `template()` only after the cache has been asked. A course
-     * whose Python is all unchanged should not pay to start an interpreter that then
-     * grades nothing.
+    /* Grouped by package set, and each set validated in a process of its own.
      *
-     * One interpreter for the whole build, loaded with the union of what the course needs:
-     * loading a package twice is free, so per-exercise instances buy only wall-clock. */
-    /* One interpreter per package SET, not one for the course. Loading the union is the
-     * obvious implementation and is exactly what broke unit 2.4 - see `packageKey`.
+     * An interpreter must hold exactly what the exercise declared, Pyodide cannot unload a
+     * module, and it has no teardown API - so 25 package sets means 25 interpreters, and
+     * doing that in one process runs V8 out of heap. It survived a laptop and died on a CI
+     * runner after four sets. See src/python-worker.mjs.
      *
-     * Built on the first cache miss for that set and not before, so a warm build starts
-     * nothing. Only one is alive at a time: the exercises are walked grouped by set, so a
-     * given interpreter serves all of its own and is then dropped. */
-    let grader = null, graderKey = null, pyodide = null;
-    const graderFor = async ex => {
-      const key = packageKey(ex);
-      if (grader && graderKey === key) return grader;
-      const { loadPyodide } = await import('pyodide');
-      const { createGrader } = await import('../app/src/python.js');
-      pyodide = await loadPyodide();
-      mounted.clear();                    // a new interpreter has an empty filesystem
-      grader = await createGrader({
-        pyodide,
-        packages: ex.packages || [],
-        wheels: ex.wheels || [],
-        readWheel: name => fs.promises.readFile(path.join(WHEEL_DIR, name)),
-      });
-      graderKey = key;
-      return grader;
-    };
-
-    /* A unit's data files, mounted where the exercise expects to find them. `data:` on an
-     * exercise names files under `content/data/<unit>/`, and the exercise refers to them by
-     * bare filename - it should no more know the course id than a figure does.
-     *
-     * Per unit rather than per topic because the files are shared within one: 2.4's
-     * casts.p is 8.6MB and duplicating it per topic is the deck-images mistake. Checked by
-     * the ripper across all 82 (unit, filename) pairs - no filename means two different
-     * things inside one unit. */
-    /* A topic knows its own number and the numbering IS the hierarchy - `2.6.1` is topic 1
-     * of unit 2.6 of module 2 - so the unit is the first two components and never needs
-     * storing twice. Course > Module > Unit > Topic, numbered 1 / 1.1 / 1.1.1. */
+     * Only cache MISSES are handed out, so a warm build spawns nothing at all. */
     const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
+    const jobs = new Map();
+    const outcomes = new Map();
 
-    const mounted = new Set();
-    const mount = unit => {
-      const dir = path.join(contentDir, 'data', unit);
-      const at = `/ice-data/${unit}`;
-      if (mounted.has(unit)) return at;
-      mounted.add(unit);
-      pyodide.FS.mkdirTree(at);
-      for (const f of (fs.existsSync(dir) ? fs.readdirSync(dir) : []))
-        if (fs.statSync(path.join(dir, f)).isFile())
-          pyodide.FS.writeFile(`${at}/${f}`, fs.readFileSync(path.join(dir, f)));
-      return at;
-    };
-
-    // Grouped, so each set's interpreter is built once rather than once per switch.
-    python.sort((a, b) => packageKey(a.ex).localeCompare(packageKey(b.ex)));
     for (const { u, ex } of python) {
+      const unit = unitOf(u.topic);
       // A declared file that isn't there is the failure this exists to catch: the exercise
       // reads fine, the SCT is intact, and the student gets a FileNotFoundError.
-      const unit = unitOf(u.topic);
       const dir = path.join(contentDir, 'data', unit);
       for (const f of ex.data || [])
         if (!fs.existsSync(path.join(dir, f)))
           missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
 
-      /* Where a SQL exercise puts its dataset, a Python one puts everything else that
-       * decides the answer: the package set and the seed. Both are the state the run starts
-       * from, and both change the result without changing a character of the exercise.
-       *
-       * The packages were missing here and it cost an hour of looking in the wrong place.
-       * 2.7.3 needed scipy added to its manifest; the fix landed, the key did not move, and
-       * the build cheerfully replayed the cached failure from before the fix. The converter
-       * had done its job and the evidence said otherwise. */
       const key = cache.keyFor(`${packageKey(ex)}\n${seedFor(ex)}`, ex.setup, ex.steps || []);
       const hit = cache.get(key);
       if (hit) { record(u, ex, hit, true); continue; }
 
-      const g = await graderFor(ex);
-      const cwd = mount(unit);
-      const outcome = { setupError: null, steps: [] };
-      for (const step of ex.steps || []) {
-        if (!step.solution || !step.sct) { outcome.steps.push(null); continue; }
-        try {
-          const r = await g.grade({ pec: ex.setup, solution: step.solution,
-                                         submission: step.solution, sct: step.sct, cwd,
-                                         seed: seedFor(ex) });
-          outcome.steps.push(r.correct
-            ? { expected: { python: true } }
-            : { error: `the reference solution does not satisfy its own SCT - ${
-                  String(r.message || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 160)}` });
-        } catch (e) {
-          /* Last line, not first: a pythonwhat failure arrives as a Python traceback and
-           * the first line is always "Traceback (most recent call last):". The bottom line
-           * carries the exception and its message, which is the part that says what the
-           * solution actually did wrong. */
-          const lines = String(e.message).trim().split('\n').filter(Boolean);
-          outcome.steps.push({ error: `SCT raised - ${(lines[lines.length - 1] || '').trim().slice(0, 200)}` });
+      const set = packageKey(ex);
+      if (!jobs.has(set))
+        jobs.set(set, { packages: ex.packages || [], wheels: ex.wheels || [],
+                        wheelDir: WHEEL_DIR, dataDir: path.join(contentDir, 'data'),
+                        exercises: [] });
+      jobs.get(set).exercises.push({
+        key, unit, setup: ex.setup, seed: seedFor(ex),
+        steps: (ex.steps || []).map(st => ({ solution: st.solution, sct: st.sct })),
+      });
+      outcomes.set(key, { u, ex });
+    }
+
+    if (jobs.size) {
+      const { execFileSync } = await import('node:child_process');
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'icecore-py-'));
+      const worker = path.join(path.dirname(fileURLToPath(import.meta.url)), 'python-worker.mjs');
+      let n = 0;
+      for (const job of jobs.values()) {
+        const jobFile = path.join(tmp, `job-${n}.json`);
+        const outFile = path.join(tmp, `out-${n}.json`);
+        n++;
+        fs.writeFileSync(jobFile, JSON.stringify(job));
+        // Inherited stdio: the worker's noise IS the build's noise, and a Python traceback
+        // from a broken exercise is worth seeing as it happens rather than after.
+        execFileSync(process.execPath, [worker, jobFile, outFile], { stdio: 'inherit' });
+        for (const { key, outcome } of JSON.parse(fs.readFileSync(outFile, 'utf8'))) {
+          const { u, ex } = outcomes.get(key);
+          cache.put(key, outcome);
+          record(u, ex, outcome, true);
         }
       }
-      cache.put(key, outcome);
-      record(u, ex, outcome, true);
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
+
     log(`  validated ${validated} Python solution${validated === 1 ? '' : 's'} against their own SCTs`);
   }
 
