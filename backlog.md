@@ -33,7 +33,14 @@ the session endpoint can set cookies that content requests will actually send.
       and five dropped `VisualExercise` entries were each invisible until something
       specifically looked for them. A per-chapter count check in `convert.mjs` is close to
       free and would have caught the most recent one on day one. *(Practicals ripping agent.)*
-- [ ] 2.8.3 shiny dashboard
+- [x] **The four `ExplorableExercise` questions have their dashboards back.** The premise of
+      this item was wrong: the options were never only inside the Shiny dashboard, they were
+      in a field of the capture nobody read - `possible_answers` at the top level in the v0
+      shape, nested under `question` in the v2 shape. Two of the four converted and two were
+      dropped, and the two that converted shipped a quieter version of the same fault, asking
+      the student to read plots and move sliders that were not on the page. The dashboards
+      themselves are served from inside DataCamp's exercise container and cannot be mirrored,
+      so all four were rebuilt as `::app` bundles. *(Practicals ripping agent.)*
 
 
 ## UX
