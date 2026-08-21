@@ -296,7 +296,10 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
 
         <button class="contents" @click="showContents = true">
           <span>Contents</span>
-          <span class="hint">{{ exercises.length }} exercises</span>
+          <!-- The whole walk, not just the gradable part: Contents lists slides too, and a
+               button promising 376 exercises that opens a list of 526 rows is counting a
+               different thing from the list it opens. -->
+          <span class="hint">{{ flat.length }} items</span>
         </button>
 
         <!-- The topic's run, slides included, in the order Next moves through it. A slide

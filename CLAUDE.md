@@ -146,6 +146,14 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   in progress. If publishing breaks with "Not authorized to perform
   sts:AssumeRoleWithWebIdentity", check `GET /repos/{owner}/{repo}/actions/oidc/customization/sub`
   before suspecting the variables.
+- **Both secrets are referenced, never created.** `fromSecretNameV2` for
+  `icecore/cloudfront-signing-key` and `icecore/openai-api-key` — they must exist *before*
+  the first `cdk deploy`, and they come from `just keys` / `just openai-key`. Two traps:
+  `just keys` refuses to run when `infra/cloudfront-public-key.pem` exists (a deliberate
+  anti-rotation guard), so a fresh region cannot be bootstrapped without deleting the
+  committed pem; and Secrets Manager is regional, so a second region deploys clean and 403s
+  every content request. The committed public pem and its private half are a pair, and only
+  one of them is in git.
 - **Only the `admins` Cognito group can invite anyone**, and a pool with nobody in it is a
   lockout that arrives via a deploy that goes green. `just admin=you@icemalta.com
   infra-deploy` creates that user and adds them to the group; `just admins` lists who is in
