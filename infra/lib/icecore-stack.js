@@ -33,6 +33,7 @@ import {
 import { HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_KEY_PEM = path.join(HERE, '..', 'cloudfront-public-key.pem');
@@ -97,6 +98,63 @@ export class IcecoreStack extends Stack {
       groupName: 'admins',
       description: 'May invite users and assign them to courses',
     });
+
+    /* SOMETHING HAS TO PUT A HUMAN IN THAT GROUP.
+     *
+     * The group above is the only thing that can invite users and assign them to courses,
+     * and until now nothing in this repo ever added anyone to it. The one admin that exists
+     * does so because someone ran a console command by hand, outside version control. If
+     * this pool is ever replaced - a new region, a new account, a RETAIN that did not
+     * retain - the stack deploys green and there is no admin, no way to invite one, and no
+     * code path to make one. Locked out of your own enrolment tool by a successful deploy.
+     *
+     * So: `cdk deploy -c adminEmail=someone@icemalta.com` creates that user and puts them
+     * in `admins`. Two calls rather than one because AwsCustomResource is one SDK call per
+     * event, and the second waits on the first.
+     *
+     * Idempotent on purpose. Creating a user who exists is ignored rather than fatal, so
+     * naming an existing admin promotes them instead of failing the deploy; adding someone
+     * to a group twice is a no-op in Cognito. Neither has a delete handler - tearing the
+     * stack down must not delete a person - which matches the pool's own RETAIN.
+     */
+    const adminEmail = this.node.tryGetContext('adminEmail');
+    if (adminEmail) {
+      const sdkPolicy = AwsCustomResourcePolicy.fromSdkCalls({ resources: [users.userPoolArn] });
+
+      const created = new AwsCustomResource(this, 'BootstrapAdminUser', {
+        onCreate: {
+          service: 'CognitoIdentityServiceProvider',
+          action: 'adminCreateUser',
+          parameters: {
+            UserPoolId: users.userPoolId,
+            Username: adminEmail,
+            // Verified up front: an admin who cannot receive a password reset is barely
+            // less locked out than no admin at all.
+            UserAttributes: [
+              { Name: 'email', Value: adminEmail },
+              { Name: 'email_verified', Value: 'true' },
+            ],
+            DesiredDeliveryMediums: ['EMAIL'],
+          },
+          physicalResourceId: PhysicalResourceId.of(`admin-user-${adminEmail}`),
+          ignoreErrorCodesMatching: 'UsernameExistsException',
+        },
+        policy: sdkPolicy,
+        installLatestAwsSdk: false,
+      });
+
+      const promoted = new AwsCustomResource(this, 'BootstrapAdminGroup', {
+        onCreate: {
+          service: 'CognitoIdentityServiceProvider',
+          action: 'adminAddUserToGroup',
+          parameters: { UserPoolId: users.userPoolId, Username: adminEmail, GroupName: 'admins' },
+          physicalResourceId: PhysicalResourceId.of(`admin-group-${adminEmail}`),
+        },
+        policy: sdkPolicy,
+        installLatestAwsSdk: false,
+      });
+      promoted.node.addDependency(created);
+    }
 
     const client = users.addClient('Web', {
       authFlows: { userSrp: true },
@@ -294,6 +352,13 @@ export class IcecoreStack extends Stack {
     new CfnOutput(this, 'DistributionId', { value: distribution.distributionId });
     new CfnOutput(this, 'SiteUrl', { value: `https://${distribution.distributionDomainName}` });
     new CfnOutput(this, 'UserPoolId', { value: users.userPoolId });
+    /* Said out loud at every deploy, because the failure it guards against is a stack that
+     * comes up green with nobody able to sign anyone in. */
+    new CfnOutput(this, 'AdminBootstrap', {
+      value: adminEmail
+        ? `${adminEmail} created and added to admins`
+        : 'NOT CONFIGURED - if this pool has no admin, redeploy with -c adminEmail=you@icemalta.com',
+    });
     new CfnOutput(this, 'UserPoolClientId', { value: client.userPoolClientId });
     new CfnOutput(this, 'TableName', { value: table.tableName });
     new CfnOutput(this, 'PublisherRoleArn', { value: publisher.roleArn });

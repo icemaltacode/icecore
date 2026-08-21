@@ -146,6 +146,12 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   in progress. If publishing breaks with "Not authorized to perform
   sts:AssumeRoleWithWebIdentity", check `GET /repos/{owner}/{repo}/actions/oidc/customization/sub`
   before suspecting the variables.
+- **Only the `admins` Cognito group can invite anyone**, and a pool with nobody in it is a
+  lockout that arrives via a deploy that goes green. `just admin=you@icemalta.com
+  infra-deploy` creates that user and adds them to the group; `just admins` lists who is in
+  it and `just grant-admin <email>` promotes someone on a pool that is already up. The
+  bootstrap is idempotent — an existing user is promoted rather than failing the deploy —
+  and has no delete handler, because tearing the stack down must not delete a person.
 - AWS work needs `AWS_PROFILE=ice` (account 845106282768). The default profile is a different
   account that also has a GitHub OIDC provider installed, so a wrong-account `cdk diff`
   reports the whole stack as new rather than failing.

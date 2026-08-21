@@ -86,8 +86,41 @@ infra-diff:
     cd infra && npx cdk diff
 
 # Create or update the stack.
-infra-deploy:
-    cd infra && npx cdk deploy --require-approval any-change
+#
+# Pass admin= to create that person and put them in the `admins` group. Only the `admins`
+# group can invite users or assign courses, and nothing else in this repo ever adds anyone
+# to it - so a pool with no admin is a pool nobody can ever sign anyone in to, from a deploy
+# that went green. Idempotent: naming someone who already exists promotes them.
+#
+#   just admin=you@icemalta.com infra-deploy
+#
+# Create or update the stack; admin= also bootstraps someone who can invite people.
+infra-deploy admin="":
+    cd infra && npx cdk deploy --require-approval any-change \
+      {{ if admin == "" { "" } else { "-c adminEmail=" + admin } }}
+
+# Who can currently invite people. Empty output is the lockout, and it is silent otherwise.
+admins:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pool=$(aws cloudformation describe-stacks --stack-name Icecore \
+             --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
+    aws cognito-idp list-users-in-group --user-pool-id "$pool" --group-name admins \
+      --query 'Users[].Username' --output text | tr '\t' '\n' | sed '/^$/d' \
+      || echo "(none - nobody can invite anyone)"
+
+# The deploy-time path is preferred - see infra-deploy - but this is the one to reach for
+# when the pool is already up.
+#
+# Put an existing user in the `admins` group, so they can invite people.
+grant-admin email:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    pool=$(aws cloudformation describe-stacks --stack-name Icecore \
+             --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)
+    aws cognito-idp admin-add-user-to-group --user-pool-id "$pool" \
+      --username '{{email}}' --group-name admins
+    echo "{{email}} is now an admin"
 
 infra-synth:
     cd infra && npx cdk synth
