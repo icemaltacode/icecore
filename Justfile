@@ -92,7 +92,7 @@ infra-diff:
 # to it - so a pool with no admin is a pool nobody can ever sign anyone in to, from a deploy
 # that went green. Idempotent: naming someone who already exists promotes them.
 #
-#   just admin=you@icemalta.com infra-deploy
+#   just infra-deploy you@icemalta.com
 #
 # Create or update the stack; admin= also bootstraps someone who can invite people.
 infra-deploy admin="":
@@ -188,7 +188,13 @@ deploy: bundle _auth-json
     echo "live: https://$domain"
 
 # Push content and slides only — no app rebuild. The usual path for fixing an exercise.
-deploy-content: decks build
+#
+# Publishes whatever decks are already built in content/slides/, and does NOT rebuild them:
+# `icecore slides` with no --since rebuilds all 79, which with their PDF exports is ten
+# minutes to republish material that did not change. Run `just decks` first when a slide
+# actually moved - the same contract `bundle` already has. The count printed below is there
+# so publishing a stale deck is at least a visible choice.
+deploy-content: build
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just _targets)"
@@ -214,6 +220,7 @@ deploy-content: decks build
     echo "catalogue: $(jq -r 'map(.id) | join(", ")' "$cards/courses.json")"
     aws s3 cp "$cards/courses.json" "s3://$bucket/content/courses.json"
     if [ -d dist/slides ]; then
+      echo "decks in dist: $(ls dist/slides | wc -l) (run \`just decks\` first if a slide changed)"
       for d in dist/slides/*/; do
         topic=$(basename "$d")
         echo "publishing slides/$topic"

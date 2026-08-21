@@ -137,9 +137,15 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   after the build, so `slidev dev` still sees all of `public/` and the markdown is untouched.
   The brief's `/slides/_shared/` idea fights Vite, which rewrites absolute asset URLs against
   each deck's `--base`.
-- Remaining per-deck weight is ~6.4MB of assets, **3.6MB of which is the theme's
-  `bg_main.png`** — one identical file, ~212MB across the site. That lives in
-  `slidev-theme-ice`.
+- The theme's background used to dominate per-deck weight: `bg_main.png` was 3.6MB of a
+  deck's ~6.4MB, one identical file repeated ~212MB across the site. It was refactored to
+  `bg_main.webp` on 2026-08-20 and is now **522KB**, so that line is ~41MB across the site
+  and no longer the thing to look at first. It lives in `slidev-theme-ice`.
+- **A deck's PDF is not sized by its assets.** Each `slides.pdf` is ~5.6MB (median; 520MB
+  for all 79), and 4.7MB of that is one full-page image of the background — but that is the
+  *exporter's* doing, not the file's. Chromium decodes the 522KB webp and re-encodes it as
+  2559x1440 `FlateDecode` RGB plus an alpha `SMask`, losslessly. Shrinking the source again
+  buys nothing here; the lever is the export.
 - CI only works as of 2026-08-20. GitHub now issues OIDC subject claims carrying numeric ids
   (`repo:icemaltacode@132367313/icecore-x@1338407739:...`) and STS reports a condition
   mismatch identically to a missing role. Both claim shapes are trusted while the rollout is
@@ -162,8 +168,8 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   every content request. The committed public pem and its private half are a pair, and only
   one of them is in git.
 - **Only the `admins` Cognito group can invite anyone**, and a pool with nobody in it is a
-  lockout that arrives via a deploy that goes green. `just admin=you@icemalta.com
-  infra-deploy` creates that user and adds them to the group; `just admins` lists who is in
+  lockout that arrives via a deploy that goes green. `just infra-deploy you@icemalta.com`
+  creates that user and adds them to the group; `just admins` lists who is in
   it and `just grant-admin <email>` promotes someone on a pool that is already up. The
   bootstrap is idempotent — an existing user is promoted rather than failing the deploy —
   and has no delete handler, because tearing the stack down must not delete a person.
