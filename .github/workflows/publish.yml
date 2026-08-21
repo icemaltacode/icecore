@@ -115,6 +115,55 @@ jobs:
             echo "since=$before" >> "$GITHUB_OUTPUT"
           fi
 
+      # ---- the platform pin ----------------------------------------------------------
+      #
+      # npm pins a git dependency to a COMMIT, so CI keeps installing whatever
+      # package-lock.json names however many times icecore has been pushed since. That is
+      # deliberate - the grader is pinned so a bad platform commit cannot silently regrade a
+      # whole course - but a pin nobody refreshed is invisible, and what it produces is a
+      # green build running old code. The failures then look like broken content.
+      #
+      # It has bitten twice. Most recently the pin sat on a platform with no Python grading
+      # in it while the course had 294 Python exercises, which would have failed as 294
+      # content errors.
+      #
+      # No credentials needed: icecore is the public repo - that is the whole point of
+      # keeping course material out of it - so an anonymous compare is enough. The token is
+      # only for the rate limit.
+      - name: Check the icecore pin is current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pinned=$(jq -r '.packages["node_modules/icecore"].resolved // ""' package-lock.json | sed 's/.*#//')
+          if [ -z "$pinned" ]; then
+            echo "::warning::no icecore pin in package-lock.json - skipping the staleness check"
+            exit 0
+          fi
+          # base...head, so "ahead by N" means main is N commits in front of the pin.
+          api="https://api.github.com/repos/icemaltacode/icecore/compare/$pinned...main"
+          body=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+                        -H "Accept: application/vnd.github+json" "$api")
+          status=$(jq -r '.status // "unknown"' <<<"$body")
+          behind=$(jq -r '.ahead_by // 0' <<<"$body")
+          case "$status" in
+            identical)
+              echo "icecore pin ${pinned:0:8} is current" ;;
+            ahead)
+              echo "::error::The icecore pin is $behind commit(s) behind main."
+              echo "::error::This publish would grade the course with an old platform, and"
+              echo "::error::anything it got wrong would look like a content problem."
+              echo "::error::Fix: npm update icecore --package-lock-only, then commit package-lock.json."
+              exit 1 ;;
+            behind|diverged)
+              # The pin is not an ancestor of main - a branch, or a commit never pushed.
+              # Not automatically wrong, but nobody should discover it by accident.
+              echo "::warning::The icecore pin ${pinned:0:8} is not on main ($status)."
+              echo "::warning::Publishing against it anyway." ;;
+            *)
+              echo "::warning::Could not compare the icecore pin (GitHub said: $status). Continuing." ;;
+          esac
+
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version }}

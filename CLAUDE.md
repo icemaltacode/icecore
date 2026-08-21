@@ -119,6 +119,16 @@ never shown to a student.
 One definition, in `.github/workflows/publish.yml`, called by each course repo with its four
 variables. Pass them explicitly: `vars` does not resolve inside a called workflow.
 
+- **A platform change needs the course's lockfile re-pinned, and the pipeline now insists.**
+  npm pins a git dependency to a commit, so CI installs whatever `package-lock.json` names
+  however many times icecore has been pushed. That pinning is deliberate — a bad platform
+  commit must not silently regrade a whole course — but a pin nobody refreshed is invisible
+  and produces a green build running old code, whose failures read as broken content. The
+  publish compares the pin against icecore's `main` and fails with the count. Fix:
+  `npm update icecore --package-lock-only`, then commit the lockfile. It needs no
+  credentials — icecore is the public repo, which is what keeping course material out of it
+  buys.
+
 - **Never `aws s3 sync --delete` against `slides/` as a whole.** With a partial `dist/slides`
   — which is now the normal case — it deletes every deck that wasn't rebuilt. Sync one deck
   prefix at a time and reconcile removed decks explicitly.
