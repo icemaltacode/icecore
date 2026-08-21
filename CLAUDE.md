@@ -213,6 +213,41 @@ Result-set comparison, not pattern matching on SQL:
   `WHERE` clause may still give a fixed result set, and one step of an exercise being
   unreproducible says nothing about its siblings.
 
+**Python is graded by DataCamp's own SCT, not by us.** A module 2 exercise carries a
+`### Check` holding a `pythonwhat` program, and the platform *executes* it rather than
+interpreting it — see [`app/src/python.js`](app/src/python.js). Reimplementing
+`has_equal_ast`, `check_args` and thirty-five siblings would mean owning DataCamp's edge
+cases forever; measured across module 2, all 37 SCT functions used are real pythonwhat API
+and none is custom.
+
+- **The runtime is current and the content adapts, never the reverse.** When an exercise
+  fails because a library moved on — pingouin renaming `p-val` to `p_val`, pandas rejecting
+  a weighted `sample(replace=False)` — fix the exercise. Pyodide bundles exactly one pandas,
+  so DataCamp-era parity is not available at all, and chasing it per-library buys a
+  mixed-era stack plus a dead API taught as current.
+- **Both runs are seeded, and must be.** pythonwhat runs the solution and the submission in
+  separate interpreters and compares what each produced, so unseeded `np.random` makes a
+  reference solution fail against *itself*. Seeding is not the SQL `### Nondeterministic`
+  problem in disguise: nothing here is precomputed, but the two runs still have to agree
+  with each other. `seed:` names another value, `seed: none` disables it.
+- **`mode="stub"` is the only mode that works** — the default builds a
+  `multiprocessing.Process` and WASM has no `_multiprocessing`. pythonwhat's own source
+  calls stub "no isolation" and means it: the submission runs in the same interpreter as the
+  grader. Same trust model as the SQL editor, and not good enough for a summative mark.
+- `run_exercise` returns four values with the **solution** process first, the reverse of the
+  order `test_exercise` names its parameters. Backwards, it grades the submission against
+  itself and passes everything.
+- **Nothing is precomputed.** The interpreter is already up and a check is ~20ms, so grading
+  is live. What the builder does instead is *validate*: every reference solution is graded
+  against its own SCT, and one that does not mark itself correct fails the build.
+- **A step with a Solution and no `### Check` accepts every submission.** That is the failure
+  that gets worse the later it is found, so the build refuses to produce it — as it does a
+  `type: coding` exercise with neither a `dataset:` nor an SCT.
+- Only pythonwhat and its two non-bundled companions are vendored, under `app/py/`;
+  everything else comes from the jsDelivr CDN, which is what DataCamp's own player does.
+  They are **build assets, not `public/`** — `icecore dev` points Vite's publicDir at the
+  course's staging directory, so the app's own `public/` is never served.
+
 **Not everything is graded by result set.** `dragdrop` exercises have no SQL and no
 dataset: they're graded structurally by `app/src/dragdrop.js`, which is pure and shared with
 the CLI the same way `compare.js` is. Don't route them through PGlite or give them
