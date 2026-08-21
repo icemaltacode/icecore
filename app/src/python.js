@@ -41,6 +41,28 @@
 /* The seed both runs start from. Any fixed number would do; an exercise can name its own
  * with `seed:` in its frontmatter, and `seed: null` turns it off for one that is genuinely
  * meant to vary - though such an exercise cannot then be graded on values. */
+/* AN INTERPRETER MUST HOLD EXACTLY WHAT THE EXERCISE DECLARED - no more.
+ *
+ * Merely IMPORTABLE packages change behaviour. pandas takes a different factorize path when
+ * pyarrow is present, and on a pickle-loaded frame that path writes into a read-only buffer:
+ *
+ *   licenses.merge(zip_demo, on='zip')
+ *   ValueError: putmask: output array is read-only        (pandas/core/reshape/merge.py)
+ *
+ * Unit 2.4 has no .feather files and never asks for pyarrow. It broke anyway, because the
+ * builder loaded the union of every package the COURSE needs into one interpreter and 2.8
+ * needs pyarrow. Eleven merges failed pointing at pandas internals, with nothing naming the
+ * cause.
+ *
+ * So a grader is keyed by its exact package set and a different set means a different
+ * interpreter. Not "a superset is fine" - a superset is precisely the failure. Not "load
+ * the union once", which is the obvious implementation and is what produced this.
+ *
+ * There is no unloading. Pyodide cannot remove a module from a running interpreter, so the
+ * only way back from an extra package is a new one. */
+export const packageKey = ({ packages = [], wheels = [] }) =>
+  JSON.stringify([[...packages].sort(), [...wheels].sort()]);
+
 export const DEFAULT_SEED = 20260821;
 
 /**
@@ -194,6 +216,11 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
   const call = pyodide.globals.get('_ice_grade');
 
   return {
+    /* Exposed so a caller can mount data into THIS interpreter's filesystem. It matters
+     * which one: a grader is rebuilt when the package set changes, and the new interpreter
+     * starts with an empty FS. */
+    pyodide,
+
     /**
      * Grade one submission. Returns { correct, message, output, error }.
      *

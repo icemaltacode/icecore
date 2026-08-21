@@ -18,7 +18,7 @@
  * is vendored under `public/py/` and served from our own origin.
  */
 import { loadPyodide, version } from 'pyodide';
-import { createGrader, WHEELS_BY_NAME, seedFor } from './python.js';
+import { createGrader, seedFor, packageKey } from './python.js';
 import { dataBase } from './content.js';
 
 const INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
@@ -40,53 +40,47 @@ const WHEEL_URLS = Object.fromEntries(
 const wheelUrl = name => WHEEL_URLS[name]
   || (() => { throw new Error(`the Python grader is missing ${name}`); })();
 
-let booting = null;
-function interpreter() {
-  if (!booting) booting = loadPyodide({ indexURL: INDEX_URL });
-  return booting;
-}
-
-/* One grader, grown as the course needs it.
+/* One grader, rebuilt when the exercise needs a different set of packages.
  *
- * A student walking through a unit meets exercises wanting different packages, and
- * `loadPackage` is incremental and free on a second call - so rather than a grader per
- * package-set, there is one grader and each exercise tops up what it needs. Rebuilding it
- * per exercise would pay the ~2s import cost again every time.
+ * NOT grown, and not the union of the unit. A package that is merely importable changes
+ * behaviour - pandas takes a different factorize path when pyarrow is present, and on a
+ * pickle-loaded frame that path raises "putmask: output array is read-only" from inside
+ * pandas, naming nothing you could search for. Unit 2.4 never asks for pyarrow and broke
+ * anyway, because a sibling unit did. See `packageKey` in python.js.
  *
- * The wheels only ever install once: `createGrader` is what installs them, so it runs on
- * the first Python exercise of the session and never again. */
+ * Pyodide cannot unload a module, so the only way back from an extra package is a fresh
+ * interpreter. Topping up is safe in one direction only - adding what THIS exercise
+ * declared - and that is not enough, because the next exercise may declare fewer.
+ *
+ * Exactly one is alive at a time. Keeping a cache of them per package set would avoid the
+ * rebuilds and hold tens of megabytes of wasm per entry in a browser tab, which is the
+ * wrong trade for something a student crosses at a unit boundary.
+ */
 let grader = null;
-const loaded = new Set();
+let graderKey = null;
+let building = null;
 
-async function graderFor(packages = [], wheels = []) {
-  const pyodide = await interpreter();
-  if (!grader) {
-    grader = await createGrader({
-      pyodide, packages, wheels,
+async function graderFor(exercise) {
+  const key = packageKey(exercise);
+  if (grader && graderKey === key) return grader;
+  // Serialised: two exercises starting at once must not build two interpreters.
+  if (building) { await building; return graderFor(exercise); }
+  building = (async () => {
+    const pyodide = await loadPyodide({ indexURL: INDEX_URL });
+    const g = await createGrader({
+      pyodide,
+      packages: exercise.packages || [],
+      wheels: exercise.wheels || [],
       readWheel: async name => {
         const r = await fetch(wheelUrl(name));
         if (!r.ok) throw new Error(`cannot load the Python grader (${name}: ${r.status})`);
         return new Uint8Array(await r.arrayBuffer());
       },
     });
-    for (const p of [...packages, ...wheels]) loaded.add(p);
-    return grader;
-  }
-  // Anything this exercise wants that an earlier one did not.
-  const missing = packages.filter(p => !loaded.has(p));
-  if (missing.length) { await pyodide.loadPackage(missing); missing.forEach(p => loaded.add(p)); }
-  const extraWheels = wheels.filter(w => !loaded.has(w) && WHEELS_BY_NAME[w]);
-  if (extraWheels.length) {
-    const micropip = pyodide.pyimport('micropip');
-    for (const w of extraWheels) {
-      const name = WHEELS_BY_NAME[w];
-      pyodide.FS.writeFile(`/ice-wheels/${name}`,
-        new Uint8Array(await (await fetch(wheelUrl(name))).arrayBuffer()));
-      await micropip.install([`emfs:/ice-wheels/${name}`]);
-      loaded.add(w);
-    }
-  }
-  return grader;
+    grader = g; graderKey = key; mounts.clear();   // a new interpreter has an empty filesystem
+    return g;
+  })();
+  try { return await building; } finally { building = null; }
 }
 
 /* A unit's data files, fetched once and written into the interpreter's filesystem.
@@ -97,12 +91,11 @@ async function graderFor(packages = [], wheels = []) {
  * once share one download rather than racing to write the same path. */
 const mounts = new Map();
 
-function mountData(course, unit, files = []) {
+function mountData(pyodide, course, unit, files = []) {
   const at = `/ice-data/${unit}`;
   if (!files.length) return Promise.resolve('');
   if (!mounts.has(at)) {
     mounts.set(at, (async () => {
-      const pyodide = await interpreter();
       pyodide.FS.mkdirTree(at);
       await Promise.all(files.map(async name => {
         const url = `${dataBase(course)}${encodeURIComponent(unit)}/${encodeURIComponent(name)}`;
@@ -128,10 +121,10 @@ export const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
  */
 export async function gradePython(course, exercise, step, submission) {
   const unit = unitOf(exercise.topicId || exercise.topic);
-  const [g, cwd] = await Promise.all([
-    graderFor(exercise.packages || [], exercise.wheels || []),
-    mountData(course, unit, exercise.data || []),
-  ]);
+  // The grader first, then the mount: the data goes into THAT interpreter's filesystem, and
+  // building a new one wipes what the last had mounted.
+  const g = await graderFor(exercise);
+  const cwd = await mountData(g.pyodide, course, unit, exercise.data || []);
   return g.grade({ pec: exercise.setup, solution: step.solution, submission,
                    sct: step.sct, cwd, seed: seedFor(exercise) });
 }

@@ -19,7 +19,7 @@ import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
-import { seedFor } from '../app/src/python.js';
+import { seedFor, packageKey } from '../app/src/python.js';
 import { fileURLToPath } from 'node:url';
 
 /* The grader's vendored wheels, beside the app that serves them. Absolute and derived
@@ -640,21 +640,29 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
      *
      * One interpreter for the whole build, loaded with the union of what the course needs:
      * loading a package twice is free, so per-exercise instances buy only wall-clock. */
-    let grader = null;
-    const graderFor = async () => {
-      if (grader) return grader;
+    /* One interpreter per package SET, not one for the course. Loading the union is the
+     * obvious implementation and is exactly what broke unit 2.4 - see `packageKey`.
+     *
+     * Built on the first cache miss for that set and not before, so a warm build starts
+     * nothing. Only one is alive at a time: the exercises are walked grouped by set, so a
+     * given interpreter serves all of its own and is then dropped. */
+    let grader = null, graderKey = null, pyodide = null;
+    const graderFor = async ex => {
+      const key = packageKey(ex);
+      if (grader && graderKey === key) return grader;
       const { loadPyodide } = await import('pyodide');
       const { createGrader } = await import('../app/src/python.js');
       pyodide = await loadPyodide();
+      mounted.clear();                    // a new interpreter has an empty filesystem
       grader = await createGrader({
         pyodide,
-        packages: [...new Set(python.flatMap(({ ex }) => ex.packages || []))],
-        wheels: [...new Set(python.flatMap(({ ex }) => ex.wheels || []))],
+        packages: ex.packages || [],
+        wheels: ex.wheels || [],
         readWheel: name => fs.promises.readFile(path.join(WHEEL_DIR, name)),
       });
+      graderKey = key;
       return grader;
     };
-    let pyodide = null;
 
     /* A unit's data files, mounted where the exercise expects to find them. `data:` on an
      * exercise names files under `content/data/<unit>/`, and the exercise refers to them by
@@ -682,6 +690,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       return at;
     };
 
+    // Grouped, so each set's interpreter is built once rather than once per switch.
+    python.sort((a, b) => packageKey(a.ex).localeCompare(packageKey(b.ex)));
     for (const { u, ex } of python) {
       // A declared file that isn't there is the failure this exists to catch: the exercise
       // reads fine, the SCT is intact, and the student gets a FileNotFoundError.
@@ -698,7 +708,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       const hit = cache.get(key);
       if (hit) { record(u, ex, hit, true); continue; }
 
-      const g = await graderFor();
+      const g = await graderFor(ex);
       const cwd = mount(unit);
       const outcome = { setupError: null, steps: [] };
       for (const step of ex.steps || []) {
