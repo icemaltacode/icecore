@@ -30,7 +30,19 @@ const SLIDES = `
   <path d="M8 10.75V13.5M5.5 13.5h5"/>`;
 
 const ICONS = { mcq: MCQ, slides: SLIDES };
-const TEXT = { dragdrop: '⇅' };
+
+/* The language a coding exercise is written in, because that is the thing a student is
+ * deciding when they look at the row - SQL and Python are different work.
+ *
+ * Every type is named. `coding` used to be the DEFAULT rather than an entry, so `python`
+ * fell through it and 313 Python exercises wore an SQL badge in both lists. A default that
+ * names a specific language is a default that lies about every type added after it. */
+const TEXT = { coding: 'SQL', python: 'PY', dragdrop: '⇅' };
+
+/* An unnamed type is drawn as itself rather than as something else. Three characters is
+ * what the badge holds, and seeing `SUR` on a hypothetical `survey` row is a prompt to come
+ * and add it here - which is what `SQL` on a Python row failed to be. */
+const label = type => (type ? String(type).slice(0, 3).toUpperCase() : '?');
 
 /**
  * What to put in the badge for a row: `{ icon }` to draw, `{ text }` to typeset.
@@ -43,5 +55,5 @@ export const badgeFor = (row, done) => {
   if (row.kind === 'slides') return { icon: ICONS.slides };
   if (done) return { text: '✓' };
   return ICONS[row.type] ? { icon: ICONS[row.type] }
-                         : { text: TEXT[row.type] || 'SQL' };
+                         : { text: TEXT[row.type] || label(row.type) };
 };
