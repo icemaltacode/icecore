@@ -11,6 +11,7 @@
  * shortcuts once they have clicked into it.
  */
 import { computed, ref } from 'vue';
+import DeckActions from './DeckActions.vue';
 
 const props = defineProps({
   /* `slides` off the topic - `slides/1.1.1/index.html`, or an absolute URL when a deck
@@ -142,7 +143,7 @@ const onLoad = () => {
       <span class="eyebrow">Slides</span>
       <h2>{{ row.title }}</h2>
       <span class="count">{{ range }}</span>
-      <a class="link" :href="src" target="_blank" rel="noopener">Open in a tab</a>
+      <DeckActions class="actions" :deck="base" :open="src" :name="row.title" />
     </header>
     <!-- The frame is held at 16:9 rather than filled to the pane. A deck letterboxes itself
          to that ratio against a BLACK #slide-container, so any other shape puts black bands
@@ -180,8 +181,7 @@ const onLoad = () => {
            font-family: var(--ice-font-mono); color: var(--ice-primary-strong); }
 .slidestep h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
-.slidestep .link { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted); }
-.slidestep .link:hover { color: var(--ice-fg); }
+.slidestep .actions { margin-left: auto; align-self: center; }
 /* Centres the deck in whatever space the pane has, and owns the surround. */
 /* The extra bottom padding is the strip the control bar drops into - the stage below stays
    exactly 16:9, and the iframe overhangs it by that much. */

@@ -34,7 +34,7 @@ const cmd = argv[0];
 // `--name value` and `--name=value` are accepted. Flags take a value unless they are named
 // here, and a missing value is an error rather than a silent boolean: `--since` with
 // nothing after it must not quietly mean "rebuild everything".
-const BOOLEAN = new Set(['list', 'dry-run']);
+const BOOLEAN = new Set(['list', 'dry-run', 'no-pdf']);
 const flags = {};
 const positional = [];
 for (let i = 1; i < argv.length; i++) {
@@ -81,6 +81,7 @@ switch (cmd) {
                  [--as student|admin|signin]  ...as a signed-in user, with no AWS
   icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
   icecore slides [contentDir]               build the course's per-topic decks
+                                            (and export each one to slides.pdf; --no-pdf skips)
                  [--since <sha>]              ...only those a change since <sha> affects
                  [--only 1.1.1,1.2.3]         ...only these
                  [--list]                     say what would be built, build nothing
@@ -367,6 +368,36 @@ async function cmdSlides() {
       '--out', path.relative(srcDir, out),
     ], { cwd: srcDir, stdio: 'inherit' });
     if (r.status !== 0) die(`slidev build failed for ${topic}`);
+
+    /* THE PDF IS PART OF BUILDING A DECK, not a separate errand.
+     *
+     * The player's download button is derived from the topic having a deck at all - the
+     * same decoupling the Slides button needs - so "has a deck" must imply "has a PDF" or
+     * the button 404s for a student and nothing anywhere says why. Making it a step of this
+     * loop is what keeps that true; a `--pdf` opt-in would drift the moment someone forgot
+     * it, exactly as skipping the deck build once published a course with no slides links.
+     *
+     * So a failed export fails the build. `--no-pdf` opts out for a local run without a
+     * browser installed, and says loudly what the build is missing rather than leaving it
+     * to be discovered in production.
+     *
+     * Export is a SECOND render - it drives the deck through Playwright rather than reusing
+     * what `build` just emitted - which is why it costs about as much again as the build.
+     * Both are per-deck, so a selective run pays it only for the decks it touched. */
+    if (!flags['no-pdf']) {
+      const e = spawnSync(bin, [
+        'export', sources.get(topic),
+        '--output', path.relative(srcDir, path.join(out, 'slides.pdf')),
+        '--with-toc',
+      ], { cwd: srcDir, stdio: 'inherit' });
+      if (e.status !== 0)
+        die(`slidev export failed for ${topic}`
+          + ' - if Playwright has no browser, run `npx playwright install chromium-headless-shell`'
+          + ' in the course\'s slides/, or pass --no-pdf to build decks without them');
+      const pdf = path.join(out, 'slides.pdf');
+      if (fs.existsSync(pdf)) console.log(`  slides.pdf  ${mb(fs.statSync(pdf).size)}`);
+    }
+
     const p = pruneAssets(out, decks.get(topic).images);
     if (p.removed)
       console.log(`  pruned ${p.removed} unused file(s), ${mb(p.freed)} - ${p.kept} kept`);

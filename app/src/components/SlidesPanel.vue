@@ -6,6 +6,8 @@
  * content unlock it too. Keyboard focus belongs to whichever of the two panes was last
  * clicked, which is the behaviour a mouse gives you for free.
  */
+import DeckActions from './DeckActions.vue';
+
 const props = defineProps({ src: String, label: String });
 const emit = defineEmits(['close']);
 </script>
@@ -14,7 +16,7 @@ const emit = defineEmits(['close']);
   <aside class="slides">
     <div class="bar">
       <span class="label">{{ label }}</span>
-      <a class="link" :href="src" target="_blank" rel="noopener">Open in a tab</a>
+      <DeckActions :deck="props.src" :name="props.label" />
       <button class="link" @click="emit('close')">Close</button>
     </div>
     <iframe :src="src" :title="`Slides for ${label}`"></iframe>

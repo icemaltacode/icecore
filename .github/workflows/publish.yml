@@ -62,8 +62,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # playwright-chromium is in the slides devDependencies for PDF export only, and its
-  # install pulls a browser build nothing in this workflow uses.
+  # Kept even though the export DOES now need a browser. npm's postinstall pulls the full
+  # chromium build (~450MB); the export only drives the headless shell, which is installed
+  # explicitly below and cached, and only on a run that is actually building decks. A
+  # content-only push still pays nothing for it.
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
 
 jobs:
@@ -245,6 +247,26 @@ jobs:
       # transitive src: includes, so editing pages/_unit-1.5.md rebuilds four decks and
       # editing pages/_frame-close.md rebuilds all of them - and anything non-markdown under
       # slides/ (public/, the theme, the lockfile) is treated as global.
+      # ---- the deck PDFs -------------------------------------------------------------
+      # `icecore slides` exports every deck it builds, because the player's download button
+      # is derived from the topic having a deck rather than from the file being there - so a
+      # deck without its PDF is a 404 a student finds before we do. That makes a browser a
+      # build dependency of any run that touches slides, and only of those runs.
+      #
+      # The headless shell rather than full chromium: it is what Slidev's exporter launches,
+      # and it is a fraction of the download. Cached on the slides lockfile, which is what
+      # pins the Playwright version the binary has to match.
+      - name: Cache the export browser
+        if: steps.scope.outputs.decks == 'true' && steps.scope.outputs.slides == 'true'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('slides/package-lock.json') }}
+
+      - name: Install the export browser
+        if: steps.scope.outputs.decks == 'true' && steps.scope.outputs.slides == 'true'
+        run: ./slides/node_modules/.bin/playwright install chromium-headless-shell
+
       - name: Build the affected decks
         if: steps.scope.outputs.decks == 'true' && steps.scope.outputs.slides == 'true'
         env:

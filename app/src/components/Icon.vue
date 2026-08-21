@@ -18,6 +18,11 @@ const PATHS = {
   contents: 'M4 6h16M4 12h16M4 18h16',
   expand: 'M6 6l6 6-6 6M13 6l6 6-6 6',
   collapse: 'M18 6l-6 6 6 6M11 6l-6 6 6 6',
+  // an arrow leaving a pane: the standard "opens elsewhere", not a plus or a window
+  tab: 'M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+  // an arrow INTO a tray. The arrow alone is indistinguishable from a collapse or a
+  // sort-descending at 15px; the tray under it is the half that says "to a file".
+  download: 'M12 3v11M8 10l4 4 4-4M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2',
 };
 </script>
 
