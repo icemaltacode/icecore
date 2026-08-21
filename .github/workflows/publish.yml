@@ -115,6 +115,23 @@ jobs:
             echo "since=$before" >> "$GITHUB_OUTPUT"
           fi
 
+          # A COURSE NEED NOT HAVE DECKS AT ALL. A course.json and a cover is a whole valid
+          # course repo - the grid draws it as "Coming soon" - and the same has to hold here
+          # or the pipeline refuses to publish the very card that announces it. Without this
+          # the deck toolchain install fails on the missing slides/package-lock.json, and a
+          # first push (no baseline, so everything is in scope) then tries to build decks
+          # that do not exist.
+          #
+          # Derived from the lockfile being there, never from a flag, exactly as a course
+          # stops being "Coming soon" by gaining exercises rather than by someone editing
+          # a field.
+          if [ -f slides/package-lock.json ]; then
+            echo 'decks=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'decks=false' >> "$GITHUB_OUTPUT"
+            echo 'no slides/ in this course - skipping the deck toolchain and the deck build'
+          fi
+
       # ---- the platform pin ----------------------------------------------------------
       #
       # npm pins a git dependency to a COMMIT, so CI keeps installing whatever
@@ -174,7 +191,8 @@ jobs:
 
       - run: npm ci
 
-      # Unconditional, even on a content-only push that will not build a single deck.
+      # Runs on a content-only push that will not build a single deck, and is skipped only
+      # when the course has no slides/ at all.
       # The content build reads the deck sources through @slidev/parser to work out each
       # topic's section ranges, and the parser is resolved from the course's slides/ so it
       # matches the Slidev that builds the decks. Skip this and the parser is missing, every
@@ -182,6 +200,7 @@ jobs:
       # content push would quietly undo what the previous slides push published.
       # The install is cached by setup-node and costs seconds.
       - name: Install the deck toolchain
+        if: steps.scope.outputs.decks == 'true'
         run: npm ci --prefix slides
 
       # ---- the precomputed results ---------------------------------------------------
@@ -227,7 +246,7 @@ jobs:
       # editing pages/_frame-close.md rebuilds all of them - and anything non-markdown under
       # slides/ (public/, the theme, the lockfile) is treated as global.
       - name: Build the affected decks
-        if: steps.scope.outputs.slides == 'true'
+        if: steps.scope.outputs.decks == 'true' && steps.scope.outputs.slides == 'true'
         env:
           SINCE: ${{ steps.scope.outputs.since }}
         run: |
