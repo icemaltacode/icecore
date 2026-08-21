@@ -319,10 +319,21 @@ export class IcecoreStack extends Stack {
       resources: [`arn:aws:cloudfront::${this.account}:distribution/${distribution.distributionId}`],
     }));
 
-    // ---- the few alarms worth having ----------------------------------------
-    // Deliberately sparse. An alarm nobody reads is worse than none, because it teaches
-    // people to ignore the ones that matter. Pass -c alertEmail=someone@icemalta.com to
-    // have them go anywhere; without it they still show in the console, silently.
+    /* ---- the few alarms worth having ----------------------------------------
+     *
+     * Deliberately sparse. An alarm nobody reads is worse than none, because it teaches
+     * people to ignore the ones that matter.
+     *
+     * The address lives in `cdk.json` rather than in a `-c alertEmail=` flag, and that is
+     * the point rather than convenience. The subscription is a CDK resource: pass the flag
+     * once and the topic gets a subscriber, forget it on the NEXT deploy and CloudFormation
+     * removes that subscriber again - silently, from a deploy that goes green, leaving five
+     * alarms firing into nothing. Committed context cannot be forgotten.
+     *
+     * A flag still overrides it, for a second environment or a temporary redirect.
+     *
+     * AWS sends a confirmation email and the subscription does nothing until someone
+     * clicks it. `just alerts` says whether that has happened. */
     const alertEmail = this.node.tryGetContext('alertEmail');
     const alarms = new sns.Topic(this, 'Alerts', { displayName: 'icecore alerts' });
     if (alertEmail) alarms.addSubscription(new subs.EmailSubscription(alertEmail));
@@ -354,6 +365,11 @@ export class IcecoreStack extends Stack {
     new CfnOutput(this, 'UserPoolId', { value: users.userPoolId });
     /* Said out loud at every deploy, because the failure it guards against is a stack that
      * comes up green with nobody able to sign anyone in. */
+    new CfnOutput(this, 'AlertEmail', {
+      value: alertEmail
+        ? `${alertEmail} (unconfirmed subscriptions receive nothing - check just alerts)`
+        : 'NOT CONFIGURED - the alarms fire into an SNS topic with no subscriber',
+    });
     new CfnOutput(this, 'AdminBootstrap', {
       value: adminEmail
         ? `${adminEmail} created and added to admins`

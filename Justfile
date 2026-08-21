@@ -99,6 +99,20 @@ infra-deploy admin="":
     cd infra && npx cdk deploy --require-approval any-change \
       {{ if admin == "" { "" } else { "-c adminEmail=" + admin } }}
 
+# An email subscription does nothing until the recipient clicks the confirmation link AWS
+# sends, and an unconfirmed one looks identical to a working one from the console. Anything
+# other than a real ARN in the second column means the alarms reach nobody.
+#
+# Who actually receives the CloudWatch alarms.
+alerts:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    topic=$(aws sns list-topics --query "Topics[?contains(TopicArn, ':Icecore-Alerts')].TopicArn" --output text)
+    [[ -n "$topic" ]] || { echo "no alerts topic - is the stack deployed?" >&2; exit 1; }
+    aws sns list-subscriptions-by-topic --topic-arn "$topic" \
+      --query 'Subscriptions[].[Endpoint,SubscriptionArn]' --output text \
+      || echo "(nobody - the alarms fire into nothing)"
+
 # Who can currently invite people. Empty output is the lockout, and it is silent otherwise.
 admins:
     #!/usr/bin/env bash

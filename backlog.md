@@ -16,10 +16,6 @@ the session endpoint can set cookies that content requests will actually send.
 
 ## Platform
 
-- [ ] **`-c alertEmail=` has never been set**, so the five CloudWatch alarms publish to an
-      SNS topic with no subscriber. Cosmetic until something breaks, at which point it is
-      the opposite.
-
 - [ ] **Resume has never run against DynamoDB.** Not once. Every test went through
       `preview.js`, which stubs progress with localStorage. The `LAST#<course>` read and
       write paths have only ever executed against a fake. Test on a real second device

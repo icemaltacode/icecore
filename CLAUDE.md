@@ -146,6 +146,13 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   in progress. If publishing breaks with "Not authorized to perform
   sts:AssumeRoleWithWebIdentity", check `GET /repos/{owner}/{repo}/actions/oidc/customization/sub`
   before suspecting the variables.
+- **The alarm email lives in `infra/cdk.json`, not in a `-c alertEmail=` flag.** The
+  subscription is a CDK resource: pass it as a flag once and the topic gets a subscriber,
+  forget the flag on the next deploy and CloudFormation removes that subscriber again —
+  silently, from a deploy that goes green, leaving five alarms firing into nothing.
+  Committed context cannot be forgotten. AWS also requires the recipient to click a
+  confirmation link, and an unconfirmed subscription looks identical to a working one:
+  `just alerts` shows a real ARN only once it has been confirmed.
 - **Both secrets are referenced, never created.** `fromSecretNameV2` for
   `icecore/cloudfront-signing-key` and `icecore/openai-api-key` — they must exist *before*
   the first `cdk deploy`, and they come from `just keys` / `just openai-key`. Two traps:
