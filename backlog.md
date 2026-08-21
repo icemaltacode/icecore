@@ -28,19 +28,16 @@ the session endpoint can set cookies that content requests will actually send.
 
 ## Content
 
-- [ ] **The importer has no `exercises out == exercises in` assertion.** Dropped figures,
-      dropped tables, dropped MCQ hints, dropped per-step questions, unmarked volatile steps
-      and five dropped `VisualExercise` entries were each invisible until something
-      specifically looked for them. A per-chapter count check in `convert.mjs` is close to
-      free and would have caught the most recent one on day one. *(Practicals ripping agent.)*
-- [x] **The four `ExplorableExercise` questions have their dashboards back.** The premise of
-      this item was wrong: the options were never only inside the Shiny dashboard, they were
-      in a field of the capture nobody read - `possible_answers` at the top level in the v0
-      shape, nested under `question` in the v2 shape. Two of the four converted and two were
-      dropped, and the two that converted shipped a quieter version of the same fault, asking
-      the student to read plots and move sliders that were not on the page. The dashboards
-      themselves are served from inside DataCamp's exercise container and cannot be mirrored,
-      so all four were rebuilt as `::app` bundles. *(Practicals ripping agent.)*
+- [x] **Every exercise now leaves `convert.mjs` by a counted door.** Each chapter reconciles
+      exercises read against the sum of written, kept, byHand, video, widget, noOptions,
+      noFigure and unmapped; a mismatch names the topic and exits 1. Not an equality against
+      the file count - dropping is often right - the invariant is that every drop was
+      deliberate enough that someone wrote a bucket for it, so a new `continue` without one
+      fails the run. All twenty courses reconcile; reintroducing the v2 `ExplorableExercise`
+      drop reports `2.8.3: read 13, accounted for 11` and exits 1. The per-topic log line
+      also printed what the chapter *contained* rather than what the run produced - 2.8.3
+      said 9 while writing 7, on every run, for as long as those two were missing.
+      *(Practicals ripping agent.)*
 
 
 ## UX
