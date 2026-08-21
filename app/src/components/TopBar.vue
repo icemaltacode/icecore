@@ -1,4 +1,5 @@
 <script setup>
+import Wordmark from './Wordmark.vue';
 /* The bar across the top of every signed-in screen.
  *
  * It exists so the identity of the product and of the person using it sit in one fixed
@@ -42,10 +43,9 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 
 <template>
   <header class="topbar">
-    <!-- Placeholder for the logo. Keep it a button: it is the way home from anywhere. -->
+    <!-- Keep it a button: it is the way home from anywhere. -->
     <button class="mark" @click="$emit('home')">
-      <span class="dot"></span>
-      <strong>ICE Practice</strong>
+      <Wordmark :size="26" />
     </button>
 
     <div class="right">
@@ -82,7 +82,6 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
         padding: 6px 8px; margin-left: -8px; border-radius: 8px; cursor: pointer;
         color: var(--ice-fg); font: inherit; }
 .mark:hover { background: var(--ice-bg); }
-.dot { width: 14px; height: 14px; border-radius: 4px; background: var(--ice-primary); flex: none; }
 
 .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 .who { display: flex; align-items: center; gap: 8px; padding-left: 4px; }

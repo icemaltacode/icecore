@@ -1,3 +1,15 @@
+/* Outfit, self-hosted rather than fetched from Google. The wordmark is the first thing on
+ * screen, and a third-party request that is slow or blocked renders the product's own name
+ * in a fallback. 14KB of latin-only woff2, emitted with a content hash by Vite.
+ * SIL Open Font License 1.1. */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/outfit-600-latin.woff2') format('woff2');
+}
+
 /* Tokens mirror slidev-theme-ice so the platform and the decks read as one product.
    Rebrand by changing values here, same as the theme's tokens.css.
 

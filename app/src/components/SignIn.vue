@@ -1,4 +1,5 @@
 <script setup>
+import Wordmark from './Wordmark.vue';
 import { ref, nextTick } from 'vue';
 import { signIn, completeNewPassword } from '../auth.js';
 
@@ -49,8 +50,7 @@ async function setPassword() {
   <div class="gate">
     <form class="card" @submit.prevent="stage === 'signin' ? submit() : setPassword()">
       <div class="brand">
-        <span class="dot"></span>
-        <strong>ICE Practice</strong>
+        <Wordmark :size="30" />
       </div>
 
       <template v-if="stage === 'signin'">
@@ -90,8 +90,7 @@ async function setPassword() {
 .card { width: min(380px, 100%); display: flex; flex-direction: column;
         background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
         border-radius: var(--ice-radius); padding: 28px; }
-.brand { display: flex; gap: 10px; align-items: center; margin-bottom: 22px; }
-.dot { width: 12px; height: 12px; border-radius: 3px; background: var(--ice-primary); flex: none; }
+.brand { display: flex; align-items: center; margin-bottom: 22px; }
 h1 { margin: 0 0 4px; font-size: 20px; }
 .muted { color: var(--ice-fg-muted); font-size: 13px; margin: 0 0 18px; }
 label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
