@@ -39,6 +39,59 @@ import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from '
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_KEY_PEM = path.join(HERE, '..', 'cloudfront-public-key.pem');
 
+/* THE INVITATION.
+ *
+ * `{username}` IS PRESENT BUT NEVER SHOWN, and that combination is deliberate.
+ *
+ * Cognito offers exactly two placeholders, `{username}` and `{####}`, and it REJECTS an
+ * admin-create-user template that omits the first: "Email message body should have
+ * {username}". Removing it fails the deploy outright - which is how this was found.
+ *
+ * But the pool signs in by email alias (`UsernameAttributes: ['email']`), so Cognito
+ * generates an internal UUID as the real username and `{username}` renders as
+ * `362e22b0-a041-705a-0ab4-feb0bd46157b`. The old copy opened with "Hello {username}", so
+ * every student was greeted by a 36-character identifier - and worse, told implicitly that
+ * it was their username, when the thing that actually signs them in is their email address.
+ *
+ * There is no `{email}` placeholder to substitute. So the token sits in an HTML comment to
+ * satisfy the validator, and the copy says plainly what to type instead. Do not "tidy" it
+ * out: the deploy will fail. Do not surface it either: it would be a confidently wrong
+ * instruction.
+ *
+ * HTML, but deliberately plain: inline styles only, no images and no external stylesheet.
+ * Mail clients strip <style> blocks, remote images make a first-contact email look like
+ * marketing, and both cost deliverability on the one message that must not land in junk.
+ * A text/plain alternative is not on offer - Cognito sends a single body - so the markup
+ * has to degrade readably on its own.
+ *
+ * It says what the account is FOR. The old version said "your account is ready" and left a
+ * student to guess what they had been given. It cannot name their course: enrolment is a
+ * DynamoDB row written after the invitation goes out, and Cognito knows nothing about it.
+ *
+ * The seven days is not decoration - it is the pool's TemporaryPasswordValidityDays, and an
+ * expired invitation has to be reissued by an admin. Someone who does not know that reads a
+ * dead password as a broken site.
+ */
+const inviteBody = siteUrl => {
+  const link = siteUrl
+    ? `<p style="margin:0 0 20px"><a href="${siteUrl}" style="display:inline-block;background:#0284c7;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">Sign in to ICE Campus</a></p>`
+    : '';
+  const plainLink = siteUrl
+    ? `<p style="margin:0 0 8px;color:#64748b;font-size:13px">Or paste this into your browser: <a href="${siteUrl}" style="color:#0369a1">${siteUrl}</a></p>`
+    : '';
+  return `<!-- {username} - required by Cognito, renders as an internal UUID, never shown -->
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:1.6;color:#0f172a;max-width:520px;margin:0 auto;padding:8px">
+  <h1 style="font-size:20px;margin:0 0 16px">You have been invited to ICE Campus</h1>
+  <p style="margin:0 0 16px">ICE Campus is where you will do the practical side of your course. It holds the slides from your sessions and a few hundred hands-on exercises to work through alongside them - you write real SQL and Python in the browser, run it against real data, and get told straight away whether it is right.</p>
+  <p style="margin:0 0 16px">Nothing to install, and your progress is saved as you go, so you can stop mid-topic and pick it up on another machine.</p>
+  <h2 style="font-size:15px;margin:24px 0 8px">Signing in for the first time</h2>
+  <p style="margin:0 0 6px">Use <strong>the email address this was sent to</strong> as your username, with this temporary password:</p>
+  <p style="margin:0 0 18px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:19px;font-weight:700;letter-spacing:.06em;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px 16px;display:inline-block">{####}</p>
+  ${link}${plainLink}
+  <p style="margin:16px 0 0;color:#64748b;font-size:13px">You will be asked to choose your own password as soon as you sign in. This temporary one stops working after seven days - if that happens, ask whoever invited you to send a new one.</p>
+</div>`;
+};
+
 export class IcecoreStack extends Stack {
   constructor(scope, id, props) {
     super(scope, id, props);
@@ -76,6 +129,13 @@ export class IcecoreStack extends Stack {
 
     // ---- who can sign in -------------------------------------------------
     // Invite-only: students are created by an admin, never by self sign-up.
+    const inviteFrom = this.node.tryGetContext('inviteFromEmail');
+    /* The invitation has to tell someone where to go, and the domain is already committed
+     * context for the distribution. Falls back to the platform's name alone rather than to
+     * a CloudFront URL nobody could type. */
+    const siteUrl = this.node.tryGetContext('siteDomain')
+      ? `https://${[this.node.tryGetContext('siteDomain')].flat()[0]}`
+      : null;
     const users = new cognito.UserPool(this, 'Users', {
       selfSignUpEnabled: false,
       signInAliases: { email: true },
@@ -87,10 +147,32 @@ export class IcecoreStack extends Stack {
       passwordPolicy: { minLength: 12, requireLowercase: true, requireDigits: true, requireSymbols: false },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       userInvitation: {
-        emailSubject: 'Your ICE course account',
-        emailBody: 'Hello {username}, your ICE practice platform account is ready. ' +
-          'Your temporary password is {####}. You will be asked to change it when you first sign in.',
+        emailSubject: 'Your ICE Campus account is ready',
+        emailBody: inviteBody(siteUrl),
       },
+      /* SEND THROUGH SES WHEN THERE IS AN ADDRESS TO SEND AS.
+       *
+       * Cognito's own sender is rate-limited to 50 messages a day per account and arrives
+       * from an amazonaws.com address nobody recognises, which is most of why an invitation
+       * reads as junk. SES sends as the course's own domain with DKIM, and the identity is
+       * already verified.
+       *
+       * Optional, and absent it falls back to exactly what it did before: a fresh region or
+       * a second environment must not require a verified domain to come up at all. The
+       * address is committed context for the same reason the alert email and the site
+       * domain are - passed as a flag, forgetting it on the next deploy silently reverts
+       * every invitation to the Cognito sender.
+       *
+       * `sesVerifiedDomain` is what lets CDK grant Cognito ses:SendRawEmail scoped to that
+       * identity rather than to everything the account can send as. */
+      ...(inviteFrom ? {
+        email: cognito.UserPoolEmail.withSES({
+          fromEmail: inviteFrom,
+          fromName: 'ICE Campus',
+          sesRegion: this.region,
+          sesVerifiedDomain: String(inviteFrom).split('@')[1],
+        }),
+      } : {}),
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
@@ -408,7 +490,10 @@ export class IcecoreStack extends Stack {
 
     new CfnOutput(this, 'SiteBucket', { value: site.bucketName });
     new CfnOutput(this, 'DistributionId', { value: distribution.distributionId });
-    new CfnOutput(this, 'SiteUrl', { value: `https://${distribution.distributionDomainName}` });
+    /* The alias when there is one. The CloudFront domain still works, but printing it after
+     * a deploy sends whoever ran it to the address students do not use - and, once the
+     * distribution has an alias, to the one that is not on the certificate's common name. */
+    new CfnOutput(this, 'SiteUrl', { value: siteUrl || `https://${distribution.distributionDomainName}` });
     new CfnOutput(this, 'UserPoolId', { value: users.userPoolId });
     /* Said out loud at every deploy, because the failure it guards against is a stack that
      * comes up green with nobody able to sign anyone in. */

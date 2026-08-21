@@ -159,6 +159,19 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   Committed context cannot be forgotten. AWS also requires the recipient to click a
   confirmation link, and an unconfirmed subscription looks identical to a working one:
   `just alerts` shows a real ARN only once it has been confirmed.
+- **The invitation must contain `{username}`, and must never show it.** Cognito rejects an
+  admin-create-user template without that token — the deploy fails with "Email message body
+  should have {username}" — but the pool signs in by email alias, so Cognito generates an
+  internal UUID as the real username and the token renders as
+  `362e22b0-a041-705a-0ab4-feb0bd46157b`. The old copy opened with "Hello {username}", which
+  greeted every student with a 36-character identifier and implied it was what they sign in
+  with. There is no `{email}` placeholder. So it lives in an HTML comment and the copy tells
+  them to use their email address. Deleting it breaks the deploy; surfacing it misinforms.
+- **Invitations send through SES, from `noreply@icecampus.com`.** Cognito's own sender is
+  capped at 50 messages a day per account and arrives from an unrecognised amazonaws.com
+  address. `inviteFromEmail` in `cdk.json` turns it on, and its absence falls back to the
+  Cognito sender so a fresh region needs no verified domain to come up. eu-south-1 Cognito
+  does accept an eu-south-1 SES identity, which is not true of every Cognito region.
 - **Both secrets are referenced, never created.** `fromSecretNameV2` for
   `icecore/cloudfront-signing-key` and `icecore/openai-api-key` — they must exist *before*
   the first `cdk deploy`, and they come from `just keys` / `just openai-key`. Two traps:
