@@ -604,6 +604,16 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   for (const course of courses.values())
     for (const u of topicsOf(course))
       for (const ex of u.exercises) {
+        /* A `coding` exercise with no dataset and no SCT cannot be graded by anything.
+         * The SQL pass skips it for want of a dataset and the Python pass never sees it,
+         * so it builds, ships, and presents a student with a Check button that marks
+         * nothing. Module 2 landed as 317 of exactly this - `type: coding` where it meant
+         * `type: python` - and the only symptom was a missing line in the build log.
+         * Module 1 has none, so the shape is unambiguous. */
+        if (ex.type === 'coding' && !ex.dataset
+            && (ex.steps || []).some(st => st.solution && !st.sct))
+          missingChecks.push(`${u.topic} ${ex.file}: type: coding with no dataset: and no `
+            + '"### Check" - nothing can grade it. Python exercises need type: python');
         if (ex.type !== 'python') continue;
         /* A Python step graded by nothing accepts everything. `stepProblems` says so too,
          * but that only runs under `verify` - and this is the one failure that gets WORSE
