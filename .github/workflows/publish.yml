@@ -184,6 +184,33 @@ jobs:
       - name: Install the deck toolchain
         run: npm ci --prefix slides
 
+      # ---- the precomputed results ---------------------------------------------------
+      #
+      # `verify` and `build` each grade every reference solution the course has: ~400 result
+      # sets through PGlite and ~500 Python solutions through Pyodide. Cold, that IS this job
+      # - 13 of the 19 minutes on the run that first published module 2 - and a runner starts
+      # clean every time, so a one-line copy edit paid the entire bill.
+      #
+      # SAFE BY CONSTRUCTION, NOT BY THIS KEY. Every entry is named after a hash of
+      # everything it derives from: the dataset's content, the setup SQL, each step's
+      # solution, SCT and nondeterministic flag, the PGlite and Pyodide versions and the
+      # grader wheels. A restored entry that no longer describes its exercise is not
+      # misread - it is not found. So the key below is tuned for HIT RATE and cannot make a
+      # build wrong; the worst a bad one can do is recompute something.
+      #
+      # ROLLING, because a cache entry is immutable and an exact hit never saves. A fixed
+      # key would freeze the first cache forever, and every exercise written after it would
+      # miss for good - the cache would look present and do nothing, which is worse than
+      # having none. github.sha makes the key unique per run, restore-keys pulls the most
+      # recent one in, and the post step saves the union. The build sweeps entries the
+      # course no longer wants, so it stays bounded rather than growing per edit (~10MB).
+      - name: Cache the precomputed results
+        uses: actions/cache@v4
+        with:
+          path: .icecore/cache
+          key: expected-${{ runner.os }}-${{ github.sha }}
+          restore-keys: expected-${{ runner.os }}-
+
       # ---- gates --------------------------------------------------------------------
       # Every reference solution must grade itself correct and a wrong query must fail.
       # This is the gate: there is no staging environment, so a green verify is the only

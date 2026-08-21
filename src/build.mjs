@@ -19,13 +19,44 @@ import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
-import { seedFor, packageKey } from '../app/src/python.js';
+import { seedFor, packageKey, GRADER_WHEELS, WHEELS_BY_NAME } from '../app/src/python.js';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 /* The grader's vendored wheels, beside the app that serves them. Absolute and derived
  * from this module: the builder runs from a course repo, never from here. */
 const WHEEL_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'app', 'py');
+
+/* A cached Python entry is a VERDICT - "this reference solution grades itself correct" -
+ * and the thing that reached it is Pyodide plus the grader wheels, neither of which the
+ * exercise mentions. Bump Pyodide and pandas, numpy, scipy and matplotlib all move
+ * underneath a key that never noticed; the cache then replays yesterday's verdict about
+ * today's runtime, and the build goes green asserting something nothing checked. That is
+ * the precise failure this cache exists to be trusted against.
+ *
+ * It stayed harmless while CI threw the cache away on every run and only a local dev loop
+ * could hold a stale entry across an upgrade. Keeping .icecore/cache between CI runs is
+ * exactly what makes it the pipeline's normal state, so it is closed here.
+ *
+ * Scoped to the wheels the exercise actually loads, so bumping pingouin does not recompute
+ * every seaborn exercise. The bundled `packages` need no versions of their own: which
+ * pandas they get is decided by the Pyodide build, and that is in the key.
+ *
+ * Read from package.json rather than importing pyodide - the import is tens of megabytes
+ * of wasm, and this runs whether or not the course has a single Python exercise. */
+let pyRuntime = null;
+const pyRuntimeKey = ex => {
+  if (!pyRuntime) {
+    let v = 'unknown';
+    try { v = createRequire(import.meta.url)('pyodide/package.json').version; } catch {
+      /* 'unknown' matches nothing that a real install wrote: a miss, never a wrong hit. */
+    }
+    pyRuntime = `pyodide@${v} ${GRADER_WHEELS.join(',')}`;
+  }
+  const wheels = (ex.wheels || []).map(w => WHEELS_BY_NAME[w]).filter(Boolean).sort();
+  return `${pyRuntime} ${wheels.join(',')}`;
+};
 
 // ---- markdown parsing ------------------------------------------------------
 function frontmatter(text) {
@@ -738,7 +769,8 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         if (!fs.existsSync(path.join(dir, f)))
           missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
 
-      const key = cache.keyFor(`${packageKey(ex)}\n${seedFor(ex)}`, ex.setup, ex.steps || []);
+      const key = cache.keyFor(
+        `${packageKey(ex)}\n${seedFor(ex)}\n${pyRuntimeKey(ex)}`, ex.setup, ex.steps || []);
       const hit = cache.get(key);
       if (hit) { record(u, ex, hit, true); continue; }
 

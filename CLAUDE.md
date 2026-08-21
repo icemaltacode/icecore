@@ -310,6 +310,19 @@ Don't re-strip it.
   `INSERT` changed the rows underneath it. Failures are cached too, and replay goes through
   the same `record()` as a fresh computation so a warm run and a cold run cannot report
   different numbers. `ICECORE_NO_CACHE=1` bypasses it.
+- **A cached entry must name the runtime that produced it.** The SQL entries carry the
+  installed PGlite version; the Python ones carry the Pyodide version and the grader wheel
+  filenames, because a Python entry is a *verdict* — "this solution grades itself correct" —
+  and bumping Pyodide moves pandas, numpy, scipy and matplotlib underneath a key that would
+  otherwise never notice. That is a green build asserting something nothing checked. Scoped
+  to the wheels an exercise actually loads, so bumping pingouin doesn't recompute seaborn.
+- **CI caches `.icecore/cache` between runs**, so a runner no longer regrades the whole
+  course for a one-line copy edit — that was 13 of 19 minutes. The key is rolling
+  (`…-${{ github.sha }}` plus a `restore-keys` prefix) because a GitHub cache entry is
+  immutable and an exact hit never saves: a fixed key freezes the first cache forever and
+  every exercise written after it misses for good. Safety doesn't rest on that key at all —
+  entries are content-addressed, so a restored entry that no longer describes its exercise
+  isn't misread, it isn't found.
 - **Signed cookies covering more than one file need a *custom* policy.** Passing
   `dateLessThan` to `getSignedCookies` yields a canned policy, which CloudFront rebuilds
   from `CloudFront-Expires` and the URL being requested — so a signed `…/*` matches nothing
