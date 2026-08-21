@@ -15,13 +15,17 @@ const badge = computed(() => badgeFor(props.row, props.done));
 </script>
 
 <template>
-  <!-- `stroke-width` is set on the svg rather than per path so a shape can opt out by
-       setting its own; the filled radio does exactly that. -->
+  <!-- An icon brings its own grid and says whether it is drawn or filled. The two we drew
+       are strokes on a 16-unit box; Python's logo is a filled path on a 32-unit one, and a
+       stroke width chosen for the first is a quarter of the weight on the second. Setting
+       `stroke-width` on the svg rather than per path also lets one shape opt out - the
+       filled radio in the multiple-choice icon does exactly that. -->
   <span class="badge">
-    <svg v-if="badge.icon" viewBox="0 0 16 16" width="13" height="13"
-         fill="none" stroke="currentColor" stroke-width="1.5"
+    <svg v-if="badge.icon" :viewBox="badge.icon.viewBox" width="13" height="13"
+         :fill="badge.icon.filled ? 'currentColor' : 'none'"
+         :stroke="badge.icon.filled ? 'none' : 'currentColor'" stroke-width="1.5"
          stroke-linecap="round" stroke-linejoin="round"
-         aria-hidden="true" v-html="badge.icon"></svg>
+         aria-hidden="true" v-html="badge.icon.body"></svg>
     <template v-else>{{ badge.text }}</template>
   </span>
 </template>
