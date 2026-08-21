@@ -5,7 +5,7 @@
  *   icecore verify [contentDir]               check every solution grades itself correct
  *   icecore dev    [contentDir] [--port n] [--as role]
  *                                             run the player against a content directory
- *   icecore bundle [contentDir] [--out dir]   build a deployable site (app + content)
+ *   icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
  *
  * `dev --as student|admin|signin` fakes the whole authenticated session locally, so the
  * signed-in screens can be worked on without AWS. See app/src/preview.js.
@@ -53,8 +53,16 @@ for (let i = 1; i < argv.length; i++) {
 const flag = (name, fallback) => (name in flags ? flags[name] : fallback);
 const has = name => name in flags;
 
-const contentDir = path.resolve(positional[0] || 'content');
-if (!fs.existsSync(contentDir)) die(`No content directory at ${contentDir}`);
+/* One site can carry more than one course, so `build`, `dev` and `bundle` take a content
+ * directory PER COURSE. A content repo is still one course - that has not changed - but the
+ * site they publish into is shared, and being able to run the grid the way a student sees
+ * it means being able to point at several checkouts at once.
+ *
+ * `verify` and `slides` stay single: both are about one course's own material, and running
+ * them across repos would only make it unclear which one failed. They use the first. */
+const contentDirs = (positional.length ? positional : ['content']).map(d => path.resolve(d));
+for (const d of contentDirs) if (!fs.existsSync(d)) die(`No content directory at ${d}`);
+const contentDir = contentDirs[0];
 
 function die(msg) { console.error(`icecore: ${msg}`); process.exit(1); }
 
@@ -67,27 +75,45 @@ switch (cmd) {
   default:
     console.log(`icecore - ICE practice platform
 
-  icecore build  [contentDir] [--out dir]   publish content as static files (default out: dist)
+  icecore build  [contentDir...] [--out dir]  publish content as static files (default out: dist)
   icecore verify [contentDir]               check every solution grades itself correct
-  icecore dev    [contentDir] [--port n]    run the player against a content directory
+  icecore dev    [contentDir...] [--port n]   run the player against a content directory
                  [--as student|admin|signin]  ...as a signed-in user, with no AWS
-  icecore bundle [contentDir] [--out dir]   build a deployable site (app + content)
+  icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
   icecore slides [contentDir]               build the course's per-topic decks
                  [--since <sha>]              ...only those a change since <sha> affects
                  [--only 1.1.1,1.2.3]         ...only these
                  [--list]                     say what would be built, build nothing
 
-contentDir defaults to ./content.`);
+contentDir defaults to ./content. build, dev and bundle take one per course - a site
+may carry several - while verify and slides work on the first.`);
     process.exit(cmd ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
 async function cmdBuild(outDir = path.resolve(flag('out', 'dist'))) {
-  console.log(`building ${path.relative(process.cwd(), contentDir) || '.'} -> ${path.relative(process.cwd(), outDir)}/content`);
-  const r = await buildContent({ contentDir, outDir });
-  if (r.failed) die(`${r.failed} solution(s) failed to run - fix them before publishing`);
-  console.log(`\nwrote ${outDir}/content (${r.manifest.length} course${r.manifest.length === 1 ? '' : 's'})`);
+  const manifest = await buildAll(outDir);
+  console.log(`\nwrote ${outDir}/content (${manifest.length} course${manifest.length === 1 ? '' : 's'})`);
   return outDir;
+}
+
+/* Build every content directory into one site, and write the catalogue once.
+ *
+ * The per-course builds cannot each write `courses.json` - the second would replace the
+ * first with a list of one - so they are told not to, and the merged list is written here.
+ * That is the same shape the publish pipeline has to take for two course repos publishing
+ * into one bucket, which is why it is worth having locally: the grid a student sees is the
+ * thing being run, not an approximation of it. */
+async function buildAll(outDir) {
+  const manifest = [];
+  for (const dir of contentDirs) {
+    console.log(`building ${path.relative(process.cwd(), dir) || '.'} -> ${path.relative(process.cwd(), outDir)}/content`);
+    const r = await buildContent({ contentDir: dir, outDir, writeManifest: false });
+    if (r.failed) die(`${r.failed} solution(s) failed to run - fix them before publishing`);
+    manifest.push(...r.manifest);
+  }
+  fs.writeFileSync(path.join(outDir, 'content', 'courses.json'), JSON.stringify(manifest, null, 2));
+  return manifest;
 }
 
 async function cmdVerify() {
@@ -215,8 +241,10 @@ async function cmdDev() {
    * invocation rebuilt exactly that directory sixteen minutes later. Claim the port first,
    * key the staging on what was actually claimed, and tell Vite it may not drift. */
   const port = await freePort(Number(flag('port', 5173)));
+  // Staged beside the FIRST content directory: with several courses there is no shared
+  // parent to put it under, and the first is the one you were standing in.
   const staging = path.join(contentDir, '..', '.icecore', String(port));
-  await buildContent({ contentDir, outDir: staging });
+  await buildAll(staging);
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
   // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
   // `bundle` sets false - preview cannot leak into anything that ships.
@@ -426,8 +454,7 @@ async function cmdBundle() {
   // and a `dev` server serving the same path keeps the old handle and starts answering
   // every content request with the index page instead.
   const staging = path.join(contentDir, '..', '.icecore-bundle');
-  const r = await buildContent({ contentDir, outDir: staging });
-  if (r.failed) die(`${r.failed} solution(s) failed to run - fix them before publishing`);
+  await buildAll(staging);
   const { build } = await import('vite');
   await build({
     configFile: path.join(APP, 'vite.config.js'),

@@ -20,6 +20,16 @@ defineEmits(['open']);
 const done = c => props.progress?.[c.id] ?? 0;
 const pct = c => (c.exercises ? done(c) / c.exercises * 100 : 0);
 
+/* A course with nothing gradable in it is announced, not broken. That is what a course
+ * repo looks like before its material is written: a course.json and a cover image, which
+ * is enough to publish a card and nothing else. Derived from the count rather than from a
+ * flag in course.json, so a course stops being announced by having exercises rather than
+ * by someone remembering to unset something.
+ *
+ * It is not clickable. There is no first exercise to open, and a card that opens an empty
+ * course reads as a fault rather than as a promise. */
+const announced = c => !c.exercises;
+
 /* No image is a normal state, not a broken one, so the fallback has to look chosen. A hue
  * off the course id keeps each course's tile the same colour every time it is drawn. */
 const hue = id => {
@@ -39,7 +49,9 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
       <p v-else-if="error" class="err">{{ error }}</p>
 
       <div v-else class="grid">
-        <button v-for="c in courses" :key="c.id" class="card" @click="$emit('open', c.id)">
+        <button v-for="c in courses" :key="c.id" class="card"
+                :class="{ announced: announced(c) }" :disabled="announced(c)"
+                @click="$emit('open', c.id)">
           <span class="cover">
             <img v-if="c.image" :src="courseImage(c.image)" alt="" loading="lazy">
             <span v-else class="fallback"
@@ -48,8 +60,13 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
           <span class="body">
             <strong>{{ c.title }}</strong>
             <small v-if="c.blurb">{{ c.blurb }}</small>
-            <span class="bar"><i :style="{ width: pct(c) + '%' }"></i></span>
-            <small class="tally">{{ done(c) }} of {{ c.exercises }} complete</small>
+            <template v-if="announced(c)">
+              <small class="tally soon">Coming soon</small>
+            </template>
+            <template v-else>
+              <span class="bar"><i :style="{ width: pct(c) + '%' }"></i></span>
+              <small class="tally">{{ done(c) }} of {{ c.exercises }} complete</small>
+            </template>
           </span>
         </button>
       </div>
@@ -88,4 +105,12 @@ h1 { margin: 0 0 24px; font-size: 22px; }
        background: var(--ice-bg); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--ice-primary); transition: width .3s; }
 .tally { font-family: var(--ice-font-mono); font-size: 10px; }
+
+/* Announced, not disabled-looking: the card is still the most interesting thing on the
+   page and the art is the point of it. Only the affordances go - no lift, no pointer -
+   and the cover is dimmed just enough to read as not-yet rather than as unavailable. */
+.card.announced { cursor: default; }
+.card.announced:hover { border-color: var(--ice-border); transform: none; }
+.card.announced .cover { opacity: .62; }
+.tally.soon { color: var(--ice-primary-strong); letter-spacing: .06em; text-transform: uppercase; }
 </style>

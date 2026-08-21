@@ -184,10 +184,37 @@ jobs:
           set -euo pipefail
           paths=()
 
-          # Content is a single coherent tree and --delete is right for it: an exercise that
-          # has been removed should stop being served.
-          aws s3 sync dist/content/ "s3://$BUCKET/content/" --delete
-          paths+=('/content/*')
+          # ONE PREFIX PER COURSE, the same way decks are synced one deck at a time, and
+          # for the same reason. `aws s3 sync dist/content/ --delete` was right while a site
+          # was one course and silently wrong the moment it wasn't: this repo's dist holds
+          # only this repo's course, so --delete against the whole content prefix removes
+          # every other course on the site. --delete is still right *within* a course - an
+          # exercise that has been removed should stop being served.
+          for dir in dist/content/*/; do
+            course=$(basename "$dir")
+            echo "publishing content/$course"
+            aws s3 sync "$dir" "s3://$BUCKET/content/$course/" --delete
+            paths+=("/content/$course/*")
+          done
+
+          # THE CATALOGUE IS ASSEMBLED, NOT PUBLISHED. `courses.json` is the whole site's
+          # list and no single course owns it - each build writes a one-entry version, so
+          # uploading it here would leave the grid showing only whichever repo published
+          # last. Each course publishes its own entry as content/<id>/card.json (just
+          # synced, above); the list is then rebuilt from every card.json in the bucket.
+          #
+          # Self-healing by construction: a course whose prefix is gone drops out without
+          # anyone editing anything, and two repos publishing at once converge because both
+          # rebuild from the same source of truth rather than from their own dist.
+          cards=$(mktemp -d)
+          for prefix in $(aws s3 ls "s3://$BUCKET/content/" | awk '/PRE/ {print $2}' | tr -d '/'); do
+            aws s3 cp "s3://$BUCKET/content/$prefix/card.json" "$cards/$prefix.json" --quiet \
+              || { echo "no card.json under content/$prefix - not a course, skipped"; continue; }
+          done
+          jq -s '.' "$cards"/*.json > courses.json
+          echo "catalogue: $(jq -r 'map(.id) | join(", ")' courses.json)"
+          aws s3 cp courses.json "s3://$BUCKET/content/courses.json"
+          paths+=('/content/courses.json')
 
           manifest=content/slides/.built.json
           if [ -f "$manifest" ]; then

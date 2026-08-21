@@ -201,9 +201,12 @@ export function stepProblems(ex) {
  * Build a content directory. Returns the full model, which is also what gets written.
  */
 export async function buildContent({ contentDir, outDir, write = true, log = console.log,
-                                     slidesSrc = null }) {
+                                     slidesSrc = null, writeManifest = true }) {
+  /* A course with no exercises is legitimate, not an empty checkout. An announced course -
+   * one with a card on the grid and nothing behind it yet - is exactly a course.json and a
+   * cover, and it has to build so it can publish. The player renders a course with nothing
+   * gradable in it as announced rather than as broken. */
   const exDir = path.join(contentDir, 'exercises');
-  if (!fs.existsSync(exDir)) throw new Error(`No exercises/ in ${contentDir}`);
 
   // ---- collect topics, and hang them off the course's modules and units ----
   //
@@ -237,7 +240,9 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   };
   const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
 
-  for (const topicId of fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort(byNumber)) {
+  const topicDirs = fs.existsSync(exDir)
+    ? fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort(byNumber) : [];
+  for (const topicId of topicDirs) {
     const dir = path.join(exDir, topicId);
     const metaFile = path.join(dir, '_topic.json');
     if (!fs.existsSync(metaFile)) { warnings.push(`${topicId}: no _topic.json - skipped`); continue; }
@@ -528,11 +533,16 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const manifest = [];
   if (write) {
     const contentOut = path.join(outDir, 'content');
-    fs.rmSync(contentOut, { recursive: true, force: true });
     fs.mkdirSync(contentOut, { recursive: true });
 
     for (const course of courses.values()) {
+      /* Scoped to this course's own directory. It used to clear the whole of content/,
+       * which is fine while a site is one course and silently deletes the others the
+       * moment it isn't - the same shape of bug as an `s3 sync --delete` against the
+       * content prefix, and fixed the same way: a build owns `content/<id>/` and the
+       * catalogue, and nothing else. */
       const dir = path.join(contentOut, course.id);
+      fs.rmSync(dir, { recursive: true, force: true });
       fs.mkdirSync(path.join(dir, 'data'), { recursive: true });
 
       const used = new Set(topicsOf(course).flatMap(t => t.exercises.map(e => e.dataset)).filter(Boolean));
@@ -605,7 +615,20 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
           `datasets [${shipped.join(', ') || 'none'}]`);
     }
-    fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
+    /* Each course also publishes its own catalogue entry beside its content.
+     *
+     * `courses.json` is the whole site's list and no single course owns it - two courses
+     * publishing from two repos would otherwise each overwrite it with a one-entry list,
+     * and whichever ran last would be the only course the grid could see. So the entry is
+     * published per course, at a path that course does own, and the catalogue is assembled
+     * from all of them. That makes it self-healing: a course whose prefix is gone drops out
+     * of the list without anyone remembering to edit it. */
+    for (const entry of manifest)
+      fs.writeFileSync(path.join(contentOut, entry.id, 'card.json'), JSON.stringify(entry, null, 2));
+    // Written here only when this build is the whole site - a multi-course build merges the
+    // manifests itself, and the publish pipeline rebuilds it from every card.json.
+    if (writeManifest)
+      fs.writeFileSync(path.join(contentOut, 'courses.json'), JSON.stringify(manifest, null, 2));
 
     // Decks sit at the site root, not under content/: a built Slidev deck is a small site
     // of its own with absolute asset paths, and its --base has to match where it lands.

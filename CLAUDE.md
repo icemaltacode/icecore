@@ -35,6 +35,31 @@ that could be shown externally or open-sourced.
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 
+## More than one course on a site
+
+**A content repo is still one course** — `build.mjs` reads a single `course.json`. What
+changed is that the *site* they publish into is shared, so nothing may assume it owns the
+whole of `content/`.
+
+- `build`, `dev` and `bundle` take **one content directory per course**; `verify` and
+  `slides` are about one course's own material and use the first. `icecore dev ../a/content
+  ../b/content` runs the grid the way a student sees it.
+- A build owns `content/<id>/` **and nothing else**. It used to `rmSync` the whole of
+  `content/`, which is fine while a site is one course and silently deletes the others the
+  moment it isn't.
+- Same shape in the pipeline: **never `aws s3 sync dist/content/ --delete`.** A repo's dist
+  holds only its own course, so that removes every other course on the site. Sync one course
+  prefix at a time, exactly as decks are synced one deck at a time.
+- **`courses.json` is assembled, not published.** Each build writes a one-entry version, so
+  uploading it would leave the grid showing only whichever repo published last. Each course
+  publishes `content/<id>/card.json`; the pipeline rebuilds the catalogue from every
+  `card.json` in the bucket. Self-healing — a course whose prefix is gone drops out without
+  anyone editing anything.
+- **A course with no exercises is announced, not broken.** A `course.json` and a cover is a
+  whole valid course repo; the grid draws it as "Coming soon" and won't open it. Derived
+  from the exercise count, never a flag, so a course stops being announced by gaining
+  material.
+
 ## The shape of a course
 
 **Course > Module > Unit > Topic > exercises**, numbered `1` / `1.1` / `1.1.1`. One content
