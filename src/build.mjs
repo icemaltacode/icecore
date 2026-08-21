@@ -453,6 +453,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   for (const d of fs.existsSync(slidesDir) ? fs.readdirSync(slidesDir) : [])
     if (!built.has(d) && fs.statSync(path.join(slidesDir, d)).isDirectory())
       warnings.push(`${d}: slides/${d}/ has no index.html - half-built deck`);
+  /* The player's download button is derived from the topic having a deck, not from this
+   * file existing, so a deck built without its PDF offers a download that 404s. Said here
+   * because this is the last place that can say it before a student is the one who finds
+   * out - the same reason the missing index.html above is worth a line. A deck built with
+   * `--no-pdf` is exactly this case, which is why that flag is explicit rather than the
+   * default. */
+  for (const d of built)
+    if (!fs.existsSync(path.join(slidesDir, d, 'slides.pdf')))
+      warnings.push(`${d}: slides/${d}/ has no slides.pdf - the download button will 404`);
 
   // Sections come from the source decks too, and for the same reason: a selective build
   // leaves most of content/slides/ untouched, so anything read from there is stale by

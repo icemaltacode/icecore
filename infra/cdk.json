@@ -17,6 +17,8 @@
     "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
     "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
     "@aws-cdk/aws-cloudfront:useOriginAccessControl": true,
-    "alertEmail": "keith@icecampus.com"
+    "alertEmail": "keith@icecampus.com",
+    "siteDomain": "icecore.icecampus.com",
+    "siteCertificateArn": "arn:aws:acm:us-east-1:845106282768:certificate/4f2343ee-902c-42aa-a848-76e7c5218bdd"
   }
 }

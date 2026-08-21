@@ -263,6 +263,36 @@ async function cmdDev() {
     root: APP,
     publicDir: staging,
     server: { port, strictPort: true, open: true },
+    /* A MISSING ASSET MUST 404, NOT COME BACK AS THE APP'S OWN INDEX PAGE.
+     *
+     * Vite's SPA fallback answers anything it cannot find with index.html and a 200, and
+     * every one of these has cost real time: a wheel that micropip reported as "File is not
+     * a zip file", a dataset that failed as "unexpected token <" somewhere else entirely,
+     * a deck PDF that downloaded as 891 bytes of HTML named after the topic. In each case
+     * the response looked like a success and the error surfaced far from the cause.
+     *
+     * Production does not do this - the distribution deliberately has no error-page rewrite,
+     * for the same reason - so the fallback is not just unhelpful, it is dev disagreeing
+     * with the only environment that matters. Scoped to the two prefixes CloudFront serves
+     * from S3; everything else keeps the fallback the app needs.
+     *
+     * A directory falls through on purpose: `/slides/1.1.1/` has to reach Vite's own static
+     * handler to be resolved to its index.html. */
+    plugins: [{
+      name: 'icecore-dev-404',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const url = (req.url || '').split('?')[0];
+          if (!/^\/(content|slides)\//.test(url)) return next();
+          let target;
+          try { target = path.join(staging, decodeURIComponent(url)); } catch { return next(); }
+          if (fs.existsSync(target)) return next();
+          res.statusCode = 404;
+          res.setHeader('content-type', 'text/plain');
+          res.end(`icecore dev: no such file - ${url}\n`);
+        });
+      },
+    }],
   });
   await server.listen();
   server.printUrls();

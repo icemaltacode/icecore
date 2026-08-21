@@ -18,6 +18,7 @@ import {
   aws_s3 as s3,
   aws_cloudfront as cf,
   aws_cloudfront_origins as origins,
+  aws_certificatemanager as acm,
   aws_cognito as cognito,
   aws_dynamodb as ddb,
   aws_secretsmanager as sm,
@@ -276,7 +277,36 @@ export class IcecoreStack extends Stack {
       viewerProtocolPolicy: cf.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
     };
 
+    /* THE CUSTOM DOMAIN LIVES IN COMMITTED CONTEXT, for the reason the alert email does.
+     *
+     * The alias and its certificate were first added by hand in the console, which means the
+     * template did not describe them - and CloudFormation reconciles a resource back to its
+     * template, so the very next `cdk deploy` would have silently removed both and dropped
+     * the distribution back onto the default certificate. A green deploy that takes the site
+     * off its own domain.
+     *
+     * Passing them as `-c` flags would only move the problem: supply them once and the alias
+     * exists, forget them on the next deploy and CloudFormation removes it again. Committed
+     * context cannot be forgotten. Absent both, the stack still deploys on the CloudFront
+     * domain exactly as it did before - a fresh region or a second environment needs no
+     * domain to come up.
+     *
+     * The certificate must be in us-east-1 whatever region the stack is in; CloudFront
+     * accepts no other. It is referenced by ARN rather than created here because it is a
+     * wildcard shared with the other icecampus.com sites - creating one per stack would mean
+     * a validation record per stack for a name that is already covered. */
+    const siteDomain = this.node.tryGetContext('siteDomain');
+    const siteCertArn = this.node.tryGetContext('siteCertificateArn');
+    if (Boolean(siteDomain) !== Boolean(siteCertArn))
+      throw new Error('siteDomain and siteCertificateArn must be set together in cdk.json'
+        + ' - an alias without a certificate is a distribution CloudFront will not accept,'
+        + ' and a certificate without an alias does nothing.');
+
     const distribution = new cf.Distribution(this, 'Cdn', {
+      ...(siteDomain ? {
+        domainNames: [siteDomain].flat(),
+        certificate: acm.Certificate.fromCertificateArn(this, 'SiteCert', siteCertArn),
+      } : {}),
       defaultRootObject: 'index.html',
       defaultBehavior: {
         origin: s3Origin,

@@ -162,23 +162,64 @@ openai-key:
 # CloudFront answering Access Denied with nothing to explain why. So run this once before
 # CI is any use, and again whenever the player itself changes.
 # Build everything and push it live. This IS production, and the only way the app ships.
-deploy: verify decks bundle _auth-json
+deploy: bundle _auth-json
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just _targets)"
-    aws s3 sync dist/ "s3://$bucket/" --delete
+    # THE PLAYER ONLY, AND NEVER --delete ACROSS THE WHOLE BUCKET.
+    #
+    # This used to be `aws s3 sync dist/ --delete` against the bucket root, which is right
+    # while the site is one course and destructive the moment it isn't: dist/ holds the one
+    # course this machine just built, so a root --delete removes every OTHER course's
+    # content and every deck that wasn't rebuilt here. Exactly the trap publish.yml carries
+    # two warnings about - this copy simply never got the fix, which is what a second copy
+    # of a deployment path always eventually does.
+    #
+    # Content and decks now come from each course repo's own pipeline, one prefix at a
+    # time. `verify` and `decks` are no longer prerequisites either: CI gates the grading,
+    # and rebuilding 79 decks with their PDFs to publish an unchanged app is ten minutes
+    # spent to upload nothing.
+    aws s3 sync dist/ "s3://$bucket/" --delete --exclude 'content/*' --exclude 'slides/*'
     aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
-    echo "live: https://$(aws cloudfront get-distribution --id "$dist" --query 'Distribution.DomainName' --output text)"
+    domain=$(aws cloudfront get-distribution --id "$dist" \
+      --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text 2>/dev/null)
+    [ "$domain" = "None" ] && domain=$(aws cloudfront get-distribution --id "$dist" \
+      --query 'Distribution.DomainName' --output text)
+    echo "live: https://$domain"
 
 # Push content and slides only — no app rebuild. The usual path for fixing an exercise.
 deploy-content: decks build
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just _targets)"
-    aws s3 sync dist/content/ "s3://$bucket/content/" --delete
-    # Decks are built by the course repo and published alongside the content, so a content
-    # push has to carry them too, or a corrected slide never reaches anyone.
-    [ -d dist/slides ] && aws s3 sync dist/slides/ "s3://$bucket/slides/" --delete || true
+    # ONE PREFIX PER COURSE, and one per deck. See the note on `deploy`: dist/ holds only
+    # the course this ran against, so --delete against content/ or slides/ as a whole
+    # removes everything else the site is serving. --delete is still right *within* one
+    # course and one deck - a removed exercise should stop being served.
+    for dir in dist/content/*/; do
+      course=$(basename "$dir")
+      echo "publishing content/$course"
+      aws s3 sync "$dir" "s3://$bucket/content/$course/" --delete
+    done
+    # THE CATALOGUE IS ASSEMBLED, NOT UPLOADED. Each build writes a one-entry courses.json,
+    # so publishing this machine's copy would leave the grid showing only the course it was
+    # built against. Rebuilt from every card.json in the bucket instead, exactly as the
+    # pipeline does it, so the two cannot disagree about what the site contains.
+    cards=$(mktemp -d)
+    for prefix in $(aws s3 ls "s3://$bucket/content/" | awk '/PRE/ {print $2}' | tr -d '/'); do
+      aws s3 cp "s3://$bucket/content/$prefix/card.json" "$cards/$prefix.json" --quiet \
+        || { echo "no card.json under content/$prefix - not a course, skipped"; continue; }
+    done
+    jq -s '.' "$cards"/*.json > "$cards/courses.json"
+    echo "catalogue: $(jq -r 'map(.id) | join(", ")' "$cards/courses.json")"
+    aws s3 cp "$cards/courses.json" "s3://$bucket/content/courses.json"
+    if [ -d dist/slides ]; then
+      for d in dist/slides/*/; do
+        topic=$(basename "$d")
+        echo "publishing slides/$topic"
+        aws s3 sync "$d" "s3://$bucket/slides/$topic/" --delete
+      done
+    fi
     aws cloudfront create-invalidation --distribution-id "$dist" --paths '/content/*' '/slides/*' >/dev/null
     echo "content live."
 
