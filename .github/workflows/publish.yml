@@ -409,7 +409,11 @@ jobs:
             # slides/ as a whole would walk every other course's decks and, finding none of
             # them in this repo's manifest, delete the lot. Guarded to things shaped like a
             # unit number as well, so an unrelated prefix is never touched.
-            live=$(aws s3 ls "s3://$BUCKET/slides/$deckCourse/" | awk '/PRE/ {print $2}' | tr -d '/')
+            # `|| true` because a prefix that does not exist yet exits non-zero and lists
+            # nothing - which is the normal state of a course's FIRST publish, and under
+            # `bash -e` killed the step after the content had already gone up. Same guard,
+            # and the same reason, as the lender listing above.
+            live=$(aws s3 ls "s3://$BUCKET/slides/$deckCourse/" 2>/dev/null | awk '/PRE/ {print $2}' | tr -d '/' || true)
             for unit in $live; do
               [[ "$unit" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
               printf '%s\n' ${all[@]+"${all[@]}"} | grep -qx "$unit" && continue
