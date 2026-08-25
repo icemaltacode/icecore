@@ -20,25 +20,11 @@
 import { loadPyodide, version } from 'pyodide';
 import { createGrader, seedFor, packageKey } from './python.js';
 import { dataBase } from './content.js';
+// Shared with the Playground's interpreter - see wheels.js.
+import { readWheel } from './wheels.js';
 
 const INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
 
-/* The wheels, as build assets rather than as files under `public/`.
- *
- * `icecore dev` points Vite's publicDir at the COURSE's staging directory, so the app's own
- * public/ is not served at all - a fetch for /py/pythonwhat.whl returned the app's index
- * page, and micropip reported "File is not a zip file" with nothing pointing at the cause.
- * Imported as assets instead: Vite resolves them in dev and emits them with a content hash
- * in a build, and neither depends on publicDir.
- *
- * Globbed rather than listed one by one so adding a wheel is a file, not an edit here and
- * an edit in python.js. */
-const WHEEL_URLS = Object.fromEntries(
-  Object.entries(import.meta.glob('../py/*.whl', { eager: true, query: '?url', import: 'default' }))
-    .map(([path, url]) => [path.split('/').pop(), url]));
-
-const wheelUrl = name => WHEEL_URLS[name]
-  || (() => { throw new Error(`the Python grader is missing ${name}`); })();
 
 /* One grader, rebuilt when the exercise needs a different set of packages.
  *
@@ -71,11 +57,7 @@ async function graderFor(exercise) {
       pyodide,
       packages: exercise.packages || [],
       wheels: exercise.wheels || [],
-      readWheel: async name => {
-        const r = await fetch(wheelUrl(name));
-        if (!r.ok) throw new Error(`cannot load the Python grader (${name}: ${r.status})`);
-        return new Uint8Array(await r.arrayBuffer());
-      },
+      readWheel,
     });
     grader = g; graderKey = key; mounts.clear();   // a new interpreter has an empty filesystem
     return g;

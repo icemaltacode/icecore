@@ -31,6 +31,12 @@ const PATHS = {
   // which way the divider runs - the pane arrangement, not an action
   rows: 'M4 4h16v7H4zM4 13h16v7H4z',
   columns: 'M4 4h7v16H4zM13 4h7v16h-7z',
+  // a lens with a handle. The handle points down-right, which is the direction every other
+  // magnifier in every other toolbar points - the mirrored one reads as a different glyph.
+  search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14ZM16 16l4.5 4.5',
+  // a grid with a heavier first row: a table, distinguishable from `rows` at 13px because
+  // this one has a header and that one is two panes
+  table: 'M4 5h16v14H4zM4 9.5h16M10 9.5V19M16 9.5V19',
 };
 </script>
 

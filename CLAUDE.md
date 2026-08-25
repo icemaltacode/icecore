@@ -289,6 +289,36 @@ part that constrains other work.
 - **Prefix container classes inside `Playground.vue`.** `CodeEditor`'s own root is
   `class="editor"`, and Vue's scoped CSS reaches a child component's root - a bare `.editor`
   here hands a CodeMirror instance `display: grid`.
+- **The browser has three sources and one answer.** `playground-browse.js` asks Postgres for
+  a table, pandas for a frame, and plain JavaScript for a CSV - because Pyodide takes seconds
+  to boot and the browser is most useful in exactly those seconds. So a CSV never goes
+  through the interpreter, and only a `.feather` file and the student's own frames do. It
+  follows that browsing `mpg.csv` and browsing `mpg` are different questions - the bytes on
+  disk against what pandas made of them - which is a real difference and not the `DataGrid`
+  inconsistency that file warns about.
+- **Matching is a literal, case-insensitive substring in all three**, and that had to be
+  chosen rather than inherited: Postgres defaults to LIKE patterns, JavaScript to a regex
+  and pandas to a regex, so `100%` or `a.b` would find different rows depending on what the
+  student happened to be browsing. `strpos`, `includes` and `regex=False` are the three
+  spellings of one rule.
+- **A pager needs a stable order and a bare SELECT has none.** Postgres may return the same
+  row on page 2 and page 3 and omit another, which reads as the data being wrong rather than
+  as the query being underspecified. `ORDER BY ctid` for a table - which is also the order it
+  was loaded in - and `ORDER BY` every column for a view, which has no ctid and whose
+  remaining ties are between identical rows.
+- **Both counts, always**: how many rows are in the thing and how many match. A filtered
+  count alone reads as a small table rather than as a narrow search.
+- **JavaScript's `null` does not arrive in Python as `None`.** Pyodide hands it over as a
+  `JsNull`, which is not `None` and is perfectly truthy - so `col is None` is false and the
+  `int()` beside it raises. `undefined` *does* arrive as `None`, so the natural spelling
+  passes wherever the argument is omitted and fails wherever it is passed explicitly. Test
+  the other way round: `_ice_none` asks whether the value is a number.
+- **No backticks anywhere inside `RUNTIME`.** It is a JavaScript template literal holding
+  Python, and a backtick in a docstring - the natural way to quote an identifier in prose -
+  ends the string, so the file stops parsing somewhere else entirely and esbuild reports a
+  line number in the middle of the Python. The file says so at the top; it has now caught
+  two people.
+
 - **The language switch offers what the player can RUN**, not what the manifest declares.
   `RUNNABLE` in `Playground.vue`. A manifest is authored in another repo on another
   schedule and is allowed to be ahead of the platform; a tab that apologises is worse than
