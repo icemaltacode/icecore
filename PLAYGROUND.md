@@ -8,7 +8,9 @@ picker and the runtimes; the `icecore-playground` repo owns nothing but a manife
 to offer. That split is what keeps it inside the rule that course content never enters this
 repo — and the datasets it offers stay owned by the courses that authored them.
 
-Status: planning. Nothing below is built.
+Status: **the SQL playground is built and runs.** What that covers, and what it does not,
+is at the bottom under [What is built](#what-is-built). Two decisions below were revised by
+contact with the code; both are marked where they appear and listed there.
 
 ## Decisions taken
 
@@ -17,7 +19,7 @@ Status: planning. Nothing below is built.
 | **Datasets** | Borrowed from the owning course by manifest, never copied |
 | **Shape** | One card on the grid; a language switch inside |
 | **Access** | An `open` property on the course, not per-user enrolment rows |
-| **Persistence** | localStorage for snippets; `idb://` for the SQL database |
+| **Persistence** | localStorage for snippets; the SQL database is in memory (see below - `idb://` did not survive contact) |
 | **Layout** | Browse beside the editor; folds into a tab beside Results when narrow |
 
 ### Why borrowed rather than copied
@@ -482,13 +484,21 @@ seconds; restoring an empty data directory is not.
 work, but an in-memory cache only helps within one tab session, and within one session a
 student loads each combination once anyway. Skip it.
 
-**`idb://` persistence, decided.** PGlite backs its data directory with
-IndexedDB, which makes a student's playground database - and everything they loaded -
-survive a reload. Given re-running 13MB of `sql_eda` on every visit is the alternative, that
-looks like the right trade. It brings two obligations: reset must clear the store, not just
-the in-memory handle, and a dataset that changed upstream will be stale until it does. That
-argues for stamping the loaded set with the published dataset's size or etag and offering a
-refresh when it moves.
+**`idb://` persistence was decided, and then withdrawn.** The reasoning was sound and the
+mechanism is not available: PGlite refuses `loadDataDir` against a data directory that
+already holds a database - *"Database already exists, cannot load from tarball"* - so with an
+idb data directory the blank-dump reset three paragraphs up does not exist. Reset would mean
+deleting the IndexedDB store and paying a cold `initdb`: seconds, on a button a student
+might press ten times.
+
+There is a second problem the plan had not reached. PGlite does no locking between tabs, so
+two tabs sharing one idb store corrupt it. Persistence needs a worker and leader election,
+which is a real piece of work rather than a configuration string.
+
+So the session is in memory today. Bringing persistence back means answering the multi-tab
+question, and it still brings the obligation the original note identified: a dataset that
+changed upstream is stale until something notices, which argues for stamping the loaded set
+with the published size or etag.
 
 ### Python: what "reset" can honestly mean
 
@@ -634,3 +644,54 @@ None outstanding on design. Two things worth a look while building:
 - **How the picker states size.** It has to come from the published manifest (stamped by the
   pipeline from the bucket), because the player cannot know before fetching - and fetching to
   find out is the thing the label exists to prevent.
+
+## What is built
+
+The SQL side works end to end: pick a set, it loads, write a query, see the rows.
+
+| | |
+|---|---|
+| `src/playground.mjs` | The manifest - parsed once, consumed by `build` and `verify` |
+| `src/build.mjs` | Emits `content/<id>/playground.json`, carries `open` and `playground` onto the card |
+| `app/src/playground-db.js` | The additive PGlite session, reset from a blank dump, and the live schema |
+| `app/src/components/SplitPane.vue` | Every divider, sizes remembered per pane |
+| `app/src/components/DataGrid.vue` | The one table renderer - `ResultGrid` now draws through it too |
+| `app/src/components/Playground.vue` | The screen: picker, editor, results |
+| `bin/icecore.mjs` | `verify <course> <lender>...` resolves borrowings and finds collisions |
+
+Two things came out differently from the plan above, both because the code disagreed:
+
+- **The database is in memory, not `idb://`.** See the runtime section - `loadDataDir`
+  cannot be combined with an existing data directory, and two tabs on one idb store have no
+  locking between them.
+- **The language switch offers only what the player can run.** A manifest may declare
+  Python before the platform can execute it - it is authored in another repo, on another
+  schedule - and a tab that apologises is worse than a tab that is not there yet. The switch
+  is drawn only when there is a real choice.
+
+### Still to build
+
+Roughly in the order they are worth doing.
+
+1. **The Python run path** - execute-and-show rather than grade. stdout, tracebacks, the
+   last expression as a table, and `pyplot.get_fignums()` walked so a first `plot()` does
+   something. Adding `'python'` to `RUNNABLE` in `Playground.vue` is the last line of it,
+   not the first.
+2. **The data browser** - table list, paginated grid, search, two counts. `DataGrid` is
+   already the renderer it needs; what is missing is the chrome and, for Python, the plain
+   JavaScript CSV parse so the pane works before Pyodide is up.
+3. **The publish-time check.** The pipeline is the load-bearing resolver - the local one
+   sees a checkout, which may be ahead of or behind the bucket - and it is also where sizes
+   get stamped. Nothing checks a playground's borrowings against the bucket today.
+4. **Sizes in the picker.** Waiting on 3; the player cannot know before fetching, and
+   fetching to find out is the thing the label exists to prevent.
+5. **The AI assistant** - new route on the hint Lambda, read-only, shape plus three sample
+   rows.
+6. **`idb://` persistence**, with the multi-tab question answered.
+
+### A collision that already exists
+
+`soccer` and `pgdata` both define `country`, so a Postgres set and the Sport set cannot be
+loaded together - the second is refused, atomically, with Postgres's own message. That is
+why `pgdata` is not offered yet. It is also the check working: `icecore verify content
+../icecore-datacamp-data-analyst/content` names the pair before a student finds it.

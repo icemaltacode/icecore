@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { loadManifest, loadCourse } from './content.js';
+import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
 import { load as loadProgress, mark as markProgress, remember } from './progress.js';
 import CodingExercise from './components/CodingExercise.vue';
@@ -17,6 +17,7 @@ import SlidesPanel from './components/SlidesPanel.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
 import SignIn from './components/SignIn.vue';
+import Playground from './components/Playground.vue';
 
 const manifest = ref([]);
 const course = ref(null);
@@ -25,6 +26,10 @@ const loadError = ref('');
 const currentId = ref(null);
 // Coding is the default; anything else declares its own player.
 const componentFor = { mcq: McqExercise, dragdrop: DragDropExercise, python: PythonExercise };
+/* The Playground's manifest, fetched only for a course whose card says it is one. A
+ * playground has no walk at all, so it is not something index.json could carry - see
+ * Playground.vue. */
+const playground = ref(null);
 const needsSignIn = ref(false);
 const authed = ref(false);
 const showAdmin = ref(false);
@@ -133,9 +138,19 @@ const solved = ref(new Set());
 const doneCount = computed(() => exercises.value.filter(e => solved.value.has(e.id)).length);
 
 async function open(id) {
-  loading.value = true; loadError.value = '';
+  loading.value = true; loadError.value = ''; playground.value = null;
   try {
     course.value = await loadCourse(id);
+    /* A playground stops here: there is no walk to resume into, no progress to count and
+     * no first exercise to land on. Fetched rather than carried inside index.json because
+     * it is a different shape of thing entirely, and only a playground pays for it. */
+    if (course.value.playground) {
+      playground.value = await loadPlayground(id);
+      const url = new URL(location.href);
+      url.searchParams.set('course', id);
+      history.replaceState({}, '', url);
+      return;
+    }
     const { solved: done, last } = await loadProgress(id);
     solved.value = done;
     courseProgress.value = { ...courseProgress.value, [id]: done.size };
@@ -158,15 +173,24 @@ async function loadCourses() {
     const published = await loadManifest();
     allCourses.value = published;
     // With auth on, a student sees only what they're enrolled on.
+    /* Enrolment is a per-user DynamoDB row; `open` is a property of the course. A course
+     * that declares itself open is on everyone's grid without one - which is what makes the
+     * Playground reachable by a student nobody remembered to enrol, and by everyone who
+     * already existed before it did.
+     *
+     * Note what this does and does not do. The signed cookie's policy covers the whole
+     * origin, so any signed-in student can already fetch any course's content by URL;
+     * enrolment has only ever decided what is SHOWN. `open` changes exactly that, and
+     * nothing else. */
     manifest.value = session.courses
-      ? published.filter(c => session.courses.includes(c.id))
+      ? published.filter(c => c.open || session.courses.includes(c.id))
       : published;
     if (!manifest.value.length) throw new Error(session.courses
       ? 'You are not enrolled on any course yet - ask your tutor.'
       : 'No courses published - run npm run content');
     // Each card carries its own tally, so every enrolled course's progress is fetched -
     // not awaited, though: the grid is worth showing before the numbers land on it.
-    for (const c of manifest.value)
+    for (const c of manifest.value.filter(c => !c.playground))
       loadProgress(c.id)
         .then(({ solved: s }) => { courseProgress.value = { ...courseProgress.value, [c.id]: s.size }; })
         .catch(() => {});
@@ -188,6 +212,7 @@ function backToCourses() {
   // make it look like it had done nothing.
   showAdmin.value = false;
   course.value = null;
+  playground.value = null;
   currentId.value = null;
   showSlides.value = false;
   const url = new URL(location.href);
@@ -246,6 +271,14 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
       :courses="manifest" :progress="courseProgress"
       :loading="loading" :error="loadError"
       @open="open" />
+
+    <!-- A playground is a course on the grid and nothing like one behind it: no modules,
+         no walk, no marking. Its own screen rather than a pane of the player, for the same
+         reason AdminPanel is - the exercise nav has nothing to offer it. The top bar's
+         wordmark is the way back, as it is from everywhere. -->
+    <Playground
+      v-else-if="playground"
+      :manifest="playground" :published="manifest" />
 
     <div v-else class="shell" :class="{ railed: !pinned }">
       <!-- One hover target covering the rail and the panel that floats out of it, so

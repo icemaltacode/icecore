@@ -19,6 +19,7 @@ import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
+import { readPlayground, borrowed } from './playground.mjs';
 import { seedFor, packageKey, GRADER_WHEELS, WHEELS_BY_NAME } from '../app/src/python.js';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -350,10 +351,25 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   // have to know where the bundle is mounted either. Optional: without one the player
   // draws a tile instead, which is why a *missing* file is an error and an absent field
   // is not. Square: the grid crops to 1:1 and a wide image loses its edges.
+  /* `open` means "on everyone's grid", not "has no exercises". Enrolment is a DynamoDB row
+   * written when an admin invites someone, so auto-enrolling every student onto the
+   * Playground would need a backfill for everyone who already exists and would silently
+   * miss anyone created by another path. A property of the course cannot drift out of sync
+   * with itself. It is orthogonal to being a playground - a free taster course with real
+   * exercises would want it too - which is why it is declared here and the playground view
+   * is derived from the manifest below. */
   const course = {
     id: courseMeta.id, title: courseMeta.title, modules: [],
     blurb: courseMeta.blurb, image: courseMeta.image,
+    open: courseMeta.open === true || undefined,
   };
+
+  /* A COURSE IS A PLAYGROUND BECAUSE IT HAS A MANIFEST, never because of a flag beside one.
+   * Same rule as "a topic has a deck when slides/topic-<n>.md exists" and "a course is
+   * announced when it has no exercises": derive the affordance from the thing itself, so it
+   * cannot be switched on with nothing behind it or left off with everything. */
+  const pg = readPlayground(contentDir);
+  const badPlayground = pg?.problems || [];
   const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
 
   const topicDirs = fs.existsSync(exDir)
@@ -910,8 +926,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       // `image` deliberately does not go into index.json: on the course object it is the
       // source filename, and a field of the same name in the manifest is the published
       // path. One name, two meanings, is how a wrong <img src> gets shipped.
+      /* The Playground's own declaration, beside its course's content and behind the same
+       * key group. Emitted even when it has problems: the failure is already loud in
+       * `verify`, and a half-valid playground is still worth running locally. */
+      if (pg?.manifest)
+        fs.writeFileSync(path.join(dir, 'playground.json'), JSON.stringify(pg.manifest, null, 2));
+
       fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify({
         ...course, image: undefined,
+        playground: pg?.manifest ? true : undefined,
         datasets: shipped,
       }));
 
@@ -920,6 +943,12 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       const units = course.modules.flatMap(m => m.units);
       manifest.push({
         id: course.id, title: course.title, blurb: course.blurb,
+        /* Both on the card, because the grid needs both and for different reasons: `open`
+         * decides whether a student who is not enrolled sees it at all, `playground`
+         * decides whether a course with no exercises is announced or opens. A playground
+         * would otherwise be drawn as "Coming soon" forever - it has no exercises and
+         * never will. */
+        open: course.open, playground: pg?.manifest ? true : undefined,
         // Relative to the content root, which is the only path the player knows.
         image: cover && `${course.id}/${cover}`,
         modules: course.modules.map(m => ({
@@ -935,6 +964,14 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
           `${pyFiles ? `${pyFiles} data file${pyFiles === 1 ? '' : 's'}, ` : ''}` +
           `datasets [${shipped.join(', ') || 'none'}]`);
+      // Said out loud: a playground's whole output is one JSON file, so a build that
+      // silently emitted nothing looks exactly like a build that emitted it.
+      if (pg?.manifest) {
+        const sets = Object.entries(pg.manifest)
+          .map(([lang, l]) => `${l.sets.length} ${lang}`).join(', ');
+        log(`  ${course.id}: playground with ${sets} set(s), `
+            + `borrowing ${borrowed(pg.manifest).length} file(s) from other courses`);
+      }
     }
     /* Each course also publishes its own catalogue entry beside its content.
      *
@@ -991,7 +1028,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const problems = [
     ['figure', missingImages], ['embedded app', missingApps],
     ['section', missingSections], ['gradeable exercise', missingChecks],
-    ['hand correction', missingCorrections],
+    ['hand correction', missingCorrections], ['playground manifest', badPlayground],
   ].filter(([, list]) => list.length);
   if (problems.length) {
     const total = problems.reduce((n, [, list]) => n + list.length, 0);
@@ -1006,8 +1043,9 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       + `${failed ? `, ${failed} SOLUTIONS FAILED` : ''}`);
 
   warnings.push(...missingImages, ...missingApps, ...missingSections, ...missingChecks,
-                ...missingCorrections);
+                ...missingCorrections, ...badPlayground);
   return { courses: [...courses.values()], datasets, manifest, computed, failed, warnings,
            missingImages, missingApps, missingSections, missingChecks, missingCorrections,
+           badPlayground, playground: pg?.manifest || null,
            decks, deckSources: sources };
 }

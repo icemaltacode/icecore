@@ -29,6 +29,11 @@ that could be shown externally or open-sourced.
   both the section ranges the player interleaves with and the transitive `src:` include
   graph selective building needs. Parsing decks twice for the two features is how they
   drift apart.
+- `src/playground.mjs` — the **only** place a playground manifest is parsed, for the same
+  reason as `decks.mjs`: `build` emits it and `verify` fails on it, and two readers would
+  disagree about what a valid manifest is exactly when it mattered.
+- `app/src/playground-db.js` — the Playground's composed PGlite session. Deliberately not
+  `db.js`: that one clones cached data directories, which cannot be merged.
 - `app/src/walk.js` — pure, like `compare.js` and `dragdrop.js`. The order a student moves
   through a topic. `App.vue` and `ContentsModal.vue` both draw it, and the two disagreeing
   reads as exercises going missing.
@@ -218,6 +223,51 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
 - AWS work needs `AWS_PROFILE=ice` (account 845106282768). The default profile is a different
   account that also has a GitHub OIDC provider installed, so a wrong-account `cdk diff`
   reports the whole stack as new rather than failing.
+
+## The Playground
+
+A sandbox that appears as a course: an editor, no syllabus, no marking, and datasets a
+student chooses to load. [`PLAYGROUND.md`](PLAYGROUND.md) is the design; what follows is the
+part that constrains other work.
+
+- **The platform owns everything but the manifest.** `icecore-playground` authors
+  `content/playground.json` and its starter files, and nothing else. That keeps the rule
+  intact in the one place it looks like an exception.
+- **Datasets are borrowed by `{course, name}`, never copied** - the shape
+  `loadDatasetSql(courseId, dataset)` already takes. So the coupling is real and nothing
+  local can see it: the playground repo does not have the data. Three checks in three
+  places, none of which subsumes another - structure in `verify`, resolution and collisions
+  in `verify` *with the lender's content dir passed*, and the load-bearing one against the
+  bucket in the pipeline. **A lender that is not checked out is reported as skipped, never
+  assumed fine.** The pipeline half of that is not built yet.
+- **A course is a playground because it has a manifest**, and it is `open` because
+  `course.json` says so. Two different things: `playground` decides which screen renders,
+  `open` decides whose grid it appears on without an enrolment row. Both derived from their
+  own source, neither a flag beside the other. `open` is not a boundary - the signed cookie
+  covers the whole origin, so enrolment has only ever decided what is *shown*.
+- **Loading is additive, and that is why it is `exec`.** `db.js` caches a dumped data
+  directory per dataset, which is right for an exercise and useless here: loading a dump
+  *replaces* the database, so two cannot be merged. `playground-db.js` is the composed
+  session. A set applies as one multi-statement simple query, which Postgres runs as one
+  implicit transaction, so a collision rolls the whole set back and reports itself - **table
+  collisions need no declaration and no parsing at runtime**. `soccer` and `pgdata` both
+  define `country`, which is why there is no Postgres set yet.
+- **Not `idb://`, and it was tried.** PGlite throws *"Database already exists, cannot load
+  from tarball"* if `loadDataDir` meets an existing data directory, so persistence and the
+  blank-dump reset are mutually exclusive; and two tabs on one idb store have no locking
+  between them. Reset restores a dump taken while the database was empty - a cold `initdb`
+  is seconds.
+- **`DataGrid` is the only table renderer in the app**, and `ResultGrid` draws through it.
+  Not for code size: a student browses a table, queries it, and compares the two by eye, so
+  nulls and numeric alignment differing between panes reads as the query having changed
+  something.
+- **Prefix container classes inside `Playground.vue`.** `CodeEditor`'s own root is
+  `class="editor"`, and Vue's scoped CSS reaches a child component's root - a bare `.editor`
+  here hands a CodeMirror instance `display: grid`.
+- **The language switch offers what the player can RUN**, not what the manifest declares.
+  `RUNNABLE` in `Playground.vue`. A manifest is authored in another repo on another
+  schedule and is allowed to be ahead of the platform; a tab that apologises is worse than
+  one that is not there yet.
 
 ## Embedded apps
 

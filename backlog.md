@@ -10,5 +10,11 @@
 ## Content
 
 - [ ] **The Playground** — a sandbox course every student has, with an editor and datasets
-      they choose to load. Planned in [`PLAYGROUND.md`](PLAYGROUND.md): shape, UI, the
-      dataset sets and what has to be built. Nothing implemented yet.
+      they choose to load. Designed in [`PLAYGROUND.md`](PLAYGROUND.md). **The SQL side is
+      built and runs**; what is left is listed there under *Still to build* — the Python run
+      path, the data browser, the publish-time check that resolves borrowings against the
+      bucket (nothing checks them today), sizes in the picker, the AI assistant, and
+      persistence.
+
+## Admin
+- [ ] Removing and promoting accounts. 

@@ -1,6 +1,15 @@
 <script setup>
+/* What came back from a graded exercise's query: the grid, plus the three things that are
+ * not a grid - nothing run yet, a statement with no rows, an error.
+ *
+ * The table itself is `DataGrid`, shared with the Playground's result and browse panes. It
+ * used to draw its own, and the moment there was a second grid in the app that became two
+ * renderers that had to agree about nulls and alignment by coincidence. See DataGrid for
+ * why that matters more than it sounds like it does.
+ */
+import DataGrid from './DataGrid.vue';
+
 defineProps({ result: Object, error: String, limit: { type: Number, default: 100 } });
-const cell = v => v === null || v === undefined ? 'NULL' : String(v);
 </script>
 
 <template>
@@ -11,18 +20,7 @@ const cell = v => v === null || v === undefined ? 'NULL' : String(v);
       Statement ran successfully<span v-if="result.affected != null"> ({{ result.affected }} rows affected)</span>.
     </p>
     <template v-else>
-      <div class="scroll">
-        <table>
-          <thead>
-            <tr><th v-for="f in result.fields" :key="f">{{ f }}</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="(row, i) in result.rows.slice(0, limit)" :key="i">
-              <td v-for="f in result.fields" :key="f" :class="{ isnull: row[f] === null }">{{ cell(row[f]) }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DataGrid :fields="result.fields" :rows="result.rows" :limit="limit" />
       <p class="muted count">
         Showing {{ Math.min(result.rows.length, limit) }} of {{ result.rows.length }} rows
       </p>
@@ -32,11 +30,6 @@ const cell = v => v === null || v === undefined ? 'NULL' : String(v);
 
 <style scoped>
 .grid-wrap { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.scroll { overflow: auto; flex: 1; min-height: 0; }
-table { border-collapse: collapse; width: 100%; font-family: var(--ice-font-mono); font-size: 13px; }
-th, td { text-align: left; padding: 6px 12px; border-bottom: 1px solid var(--ice-border); white-space: nowrap; }
-th { position: sticky; top: 0; background: var(--ice-bg-soft); color: var(--ice-primary-strong); font-weight: 600; }
-td.isnull { color: var(--ice-fg-muted); font-style: italic; }
 .muted { color: var(--ice-fg-muted); padding: 10px 12px; margin: 0; font-size: 13px; }
 .count { border-top: 1px solid var(--ice-border); }
 .err { color: var(--ice-bad); font-family: var(--ice-font-mono); font-size: 13px; padding: 10px 12px; margin: 0; white-space: pre-wrap; }

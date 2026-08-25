@@ -27,8 +27,12 @@ const pct = c => (c.exercises ? done(c) / c.exercises * 100 : 0);
  * by someone remembering to unset something.
  *
  * It is not clickable. There is no first exercise to open, and a card that opens an empty
- * course reads as a fault rather than as a promise. */
-const announced = c => !c.exercises;
+ * course reads as a fault rather than as a promise.
+ *
+ * A PLAYGROUND HAS NO EXERCISES AND NEVER WILL, so the count alone would announce it
+ * forever. It opens instead, and says what it is where the progress bar would be - there is
+ * nothing to be part-way through in a sandbox, and a bar stuck at zero would say there is. */
+const announced = c => !c.exercises && !c.playground;
 
 /* No image is a normal state, not a broken one, so the fallback has to look chosen. A hue
  * off the course id keeps each course's tile the same colour every time it is drawn. */
@@ -62,6 +66,9 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
             <small v-if="c.blurb">{{ c.blurb }}</small>
             <template v-if="announced(c)">
               <small class="tally soon">Coming soon</small>
+            </template>
+            <template v-else-if="c.playground">
+              <small class="tally sandbox">Sandbox</small>
             </template>
             <template v-else>
               <span class="bar"><i :style="{ width: pct(c) + '%' }"></i></span>
@@ -113,4 +120,7 @@ h1 { margin: 0 0 24px; font-size: 22px; }
 .card.announced:hover { border-color: var(--ice-border); transform: none; }
 .card.announced .cover { opacity: .62; }
 .tally.soon { color: var(--ice-primary-strong); letter-spacing: .06em; text-transform: uppercase; }
+/* Muted rather than accented: "Sandbox" is a description of the card, where "Coming soon"
+   is news about it. */
+.tally.sandbox { color: var(--ice-fg-muted); letter-spacing: .06em; text-transform: uppercase; }
 </style>

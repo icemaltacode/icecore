@@ -23,6 +23,9 @@ const PATHS = {
   // an arrow INTO a tray. The arrow alone is indistinguishable from a collapse or a
   // sort-descending at 15px; the tray under it is the half that says "to a file".
   download: 'M12 3v11M8 10l4 4 4-4M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2',
+  // a play triangle. Stroked rather than filled like the rest of the set, so it sits at the
+  // same visual weight as its neighbours instead of reading as a heavier glyph.
+  run: 'M7 4.5v15l13-7.5-13-7.5Z',
 };
 </script>
 

@@ -2,7 +2,8 @@
 /* icecore - the ICE practice platform.
  *
  *   icecore build  [contentDir] [--out dir]   publish content as static files
- *   icecore verify [contentDir]               check every solution grades itself correct
+ *   icecore verify [contentDir] [lender...]   check every solution grades itself correct
+                                            (extra dirs resolve a playground's borrowings)
  *   icecore dev    [contentDir] [--port n] [--as role]
  *                                             run the player against a content directory
  *   icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
@@ -20,6 +21,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
 import { slidesSrcDir, deckFiles, readDecks, affectedDecks } from '../src/decks.mjs';
+import { checkAgainst } from '../src/playground.mjs';
 import { compareResults } from '../app/src/compare.js';
 import { validate as validateDragDrop, allItems } from '../app/src/dragdrop.js';
 
@@ -58,11 +60,16 @@ const has = name => name in flags;
  * site they publish into is shared, and being able to run the grid the way a student sees
  * it means being able to point at several checkouts at once.
  *
- * `verify` and `slides` stay single: both are about one course's own material, and running
- * them across repos would only make it unclear which one failed. They use the first. */
+ * `slides` stays single: it is about one course's own decks, and running it across repos
+ * would only make it unclear which one failed. It uses the first.
+ *
+ * `verify` also grades ONE course - the first - but it reads the rest for a different
+ * purpose: a playground's manifest names datasets belonging to other courses, and resolving
+ * those needs their checkouts. So the extra directories are lenders, not more things to
+ * grade. */
 const contentDirs = (positional.length ? positional : ['content']).map(d => path.resolve(d));
-for (const d of contentDirs) if (!fs.existsSync(d)) die(`No content directory at ${d}`);
 const contentDir = contentDirs[0];
+if (!fs.existsSync(contentDir)) die(`No content directory at ${contentDir}`);
 
 function die(msg) { console.error(`icecore: ${msg}`); process.exit(1); }
 
@@ -76,7 +83,8 @@ switch (cmd) {
     console.log(`icecore - ICE practice platform
 
   icecore build  [contentDir...] [--out dir]  publish content as static files (default out: dist)
-  icecore verify [contentDir]               check every solution grades itself correct
+  icecore verify [contentDir] [lender...]   check every solution grades itself correct
+                                            (extra dirs resolve a playground's borrowings)
   icecore dev    [contentDir...] [--port n]   run the player against a content directory
                  [--as student|admin|signin]  ...as a signed-in user, with no AWS
   icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
@@ -87,7 +95,8 @@ switch (cmd) {
                  [--list]                     say what would be built, build nothing
 
 contentDir defaults to ./content. build, dev and bundle take one per course - a site
-may carry several - while verify and slides work on the first.`);
+may carry several - while slides works on the first. verify grades the first and reads any
+others as lenders, for a playground whose sets borrow their datasets from them.`);
     process.exit(cmd ? 1 : 0);
 }
 
@@ -107,6 +116,10 @@ async function cmdBuild(outDir = path.resolve(flag('out', 'dist'))) {
  * thing being run, not an approximation of it. */
 async function buildAll(outDir) {
   const manifest = [];
+  // Every directory here is a course to build, so a missing one is a typo rather than an
+  // absent sibling - unlike `verify`, where the extras are lenders and may legitimately not
+  // be checked out.
+  for (const d of contentDirs) if (!fs.existsSync(d)) die(`No content directory at ${d}`);
   for (const dir of contentDirs) {
     console.log(`building ${path.relative(process.cwd(), dir) || '.'} -> ${path.relative(process.cwd(), outDir)}/content`);
     const r = await buildContent({ contentDir: dir, outDir, writeManifest: false });
@@ -121,8 +134,32 @@ async function cmdVerify() {
   console.log(`verifying ${path.relative(process.cwd(), contentDir) || '.'}`);
   // built in memory: reference solutions never touch the disk
   const { courses, datasets, missingImages, missingApps, missingSections, missingChecks,
-          missingCorrections } =
+          missingCorrections, badPlayground, playground } =
     await buildContent({ contentDir, write: false });
+
+  /* A playground borrows its datasets from other courses, and the repo it lives in does not
+   * have them. Any content directory passed after the first is treated as a checkout of one
+   * of those lenders - the only way this machine can resolve `{course, name}` at all, and
+   * the only place a table-name collision between two co-loadable sets can be seen before a
+   * student runs into it.
+   *
+   * Not the load-bearing check. A local checkout may be ahead of or behind what is
+   * published, so what decides whether the Playground actually works is the pipeline
+   * resolving the same pairs against the bucket. This one is earlier, not truer - and it
+   * says out loud which courses it could not look at, because a check that quietly ran
+   * against nothing is indistinguishable from one that passed. */
+  /* A lender that is not checked out is SKIPPED, not fatal. The same command has to work on
+   * a machine with every repo side by side and in CI with only one, and the difference is
+   * reported rather than papered over - `checkAgainst` names every course it could not
+   * resolve. Making it fatal would mean either two commands or a CI run that cannot use
+   * this at all. */
+  const lenders = contentDirs.slice(1).filter(d => {
+    if (fs.existsSync(d)) return true;
+    console.log(`  ~ playground: no checkout at ${path.relative(process.cwd(), d)} - skipped`);
+    return false;
+  });
+  const cross = checkAgainst(playground, lenders);
+  for (const n of cross.notes) console.log(`  ~ playground: ${n}`);
 
   const seeded = new Map();
   const template = async name => {
@@ -169,7 +206,8 @@ async function cmdVerify() {
   // exercise still grades, so nothing else would ever notice. A section pointing at a slide
   // the deck doesn't have is the same shape of bug, and gets the same treatment.
   for (const m of [...missingImages, ...missingApps, ...missingSections, ...missingChecks,
-                   ...missingCorrections]) { fail++; bad.push(m); }
+                   ...missingCorrections, ...badPlayground,
+                   ...cross.problems]) { fail++; bad.push(m); }
   for (const course of courses) {
     for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
       for (const ex of unit.exercises) {

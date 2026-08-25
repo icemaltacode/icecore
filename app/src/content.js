@@ -16,6 +16,12 @@ export const loadManifest = () => json(`${BASE}courses.json`);
 /** One course: units, exercises, expected results, and reference solutions. */
 export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.json`);
 
+/* The Playground's declaration of what it offers - sets of datasets, borrowed from the
+ * courses that own them. Its own file rather than a field of index.json: index.json is the
+ * walk, and the Playground has no walk at all. Only fetched for a course whose card says it
+ * is one. */
+export const loadPlayground = id => json(`${BASE}${encodeURIComponent(id)}/playground.json`);
+
 /** A course's card image, published beside its content and named in the manifest. */
 export const courseImage = rel => `${BASE}${rel}`;
 
