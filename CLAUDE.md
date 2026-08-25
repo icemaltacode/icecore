@@ -382,6 +382,24 @@ Don't re-strip it.
 
 ## Gotchas
 
+- **`'globalThis.process.env': 'undefined'` in `app/vite.config.js` is load-bearing**, and it
+  looks like a no-op. Vite defines `globalThis.process.env` as `{}` for a client build, `{}`
+  is truthy, and PGlite guards a save/restore of Node's exit code with exactly
+  `globalThis.process?.env && (saved = process.exitCode)`. Folded to a constant the guard
+  passes, the bare `process` beside it throws, and one of the four sites is inside PGlite's
+  own init — so **every SQL exercise dies with `process is not defined` the first time it
+  boots a database**. Vite's define pattern rewrites `.` as `\??\.`, so the optional
+  chaining does not save it. **Dev cannot catch this**: `vite:define` returns early for a
+  client transform when the command is not `build`. A bug that exists only in the artefact
+  nobody runs locally — which is the argument for grepping the built bundle, not reloading
+  the dev server, after touching `define`.
+- **Slidev hides its own nav bar on a wide screen**, and the theme puts it back —
+  `slidev-theme-ice/styles/nav.css`. `persistNav` is `height - width / (16/9) > 120`, a
+  presenter's rule that lands on a knife edge for real windows: the player's slides pane is
+  persistent, 1080p fullscreen is hover-only, and a maximised laptop falls either side of it
+  depending on the browser chrome. The bad case is Slidev's own fullscreen button — it takes
+  the viewport to exactly 1080p, hiding the control that would take you back out, with
+  nothing on screen to say Escape works.
 - `@electric-sql/pglite` must stay in `optimizeDeps.exclude` — it ships wasm and breaks if
   pre-bundled. Every contrib entry point needs its own entry too: `exclude` matches the
   import specifier, not the package.
