@@ -1,13 +1,13 @@
 <script setup>
-/* A section's slides, as a step in the run rather than a panel beside it.
+/* A topic's slides, as a step in the run rather than a panel beside it.
  *
- * The deck is one built Slidev site per topic, and every deck sets `routerMode: hash`, so
- * a section is addressed by appending `#/<n>` and resolved entirely client-side. No
- * CloudFront rewrite, no redirect rules, nothing to deploy - which was the expected blocker
- * for this whole feature and turned out not to be one.
+ * The deck is one built Slidev site per UNIT, and every deck sets `routerMode: hash`, so a
+ * topic is addressed by appending `#/<n>` and resolved entirely client-side. No CloudFront
+ * rewrite, no redirect rules, nothing to deploy - which was the expected blocker for this
+ * whole feature and turned out not to be one.
  *
  * The iframe is same-origin, so the signed cookies that unlock content unlock the deck too.
- * It is also why the student can page through the section with the deck's own keyboard
+ * It is also why the student can page through the topic with the deck's own keyboard
  * shortcuts once they have clicked into it.
  */
 import { computed, ref, watch, onMounted } from 'vue';
@@ -18,8 +18,8 @@ import { loadNotes } from '../content.js';
 import { md } from '../md.js';
 
 const props = defineProps({
-  /* `slides` off the topic - `slides/1.1.1/index.html`, or an absolute URL when a deck
-   * lives somewhere else entirely. */
+  /* `slides` off the topic - `slides/1.1/index.html`, its unit's deck, or an absolute URL
+   * when a deck lives somewhere else entirely. */
   deck: String,
   row: Object,     // the walk row: title, slide, end
   courseId: String,
@@ -35,7 +35,7 @@ const base = computed(() => /^https?:\/\//.test(props.deck || '')
 const src = computed(() => `${base.value}#/${props.row.slide}`);
 const count = computed(() => (props.row.end - props.row.slide) + 1);
 /* Numbered the way the deck's own paginator numbers it, because both are on screen at
- * once. The frame shows 13/31 - the COMPOSED deck, module frame and unit frame included -
+ * once. The frame shows 13/31 - the COMPOSED deck, module frame and unit title included -
  * so a header reading "8 slides" is a second, correct, unrelated count of something else,
  * and the two together read as a fault. Falls back to the plain count for a course whose
  * build predates `slideCount`. */
@@ -55,9 +55,10 @@ const range = computed(() => props.row.total
  * the step began. The hash is the only thing that knows, and it is already being watched
  * for the clamp below - so the note follows for free rather than needing its own mechanism.
  *
- * FETCHED ON FIRST OPEN, not on mount. 11KB for a topic is nothing, but a student who never
- * opens the panel should not pay for it on every slide step in the course. Cached per topic
- * because paging between two sections of one deck remounts this component. */
+ * FETCHED ON FIRST OPEN, not on mount. ~11KB for a unit is nothing, but a student who never
+ * opens the panel should not pay for it on every slide step in the course. Notes are the
+ * DECK's, so the file is a unit's and the cache is keyed by unit: walking the topics of one
+ * unit remounts this component each time and must not re-fetch the same file. */
 const NOTES_OPEN = 'ice-notes-open';
 const NOTES_SIDE = 'ice-notes-side';
 /* Right by default: on a wide window the stage is limited by HEIGHT, so the notes take
@@ -73,13 +74,16 @@ const notesError = ref('');
 const current = ref(props.row.slide);
 
 const cache = new Map();
+/* `1.1.3` -> `1.1`. The deck, and so the notes file, belongs to the topic's unit. */
+const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
 async function fetchNotes() {
   if (notes.value || !props.courseId || !props.row?.topicId) return;
-  const key = `${props.courseId}/${props.row.topicId}`;
-  if (!cache.has(key)) cache.set(key, loadNotes(props.courseId, props.row.topicId));
+  const unit = unitOf(props.row.topicId);
+  const key = `${props.courseId}/${unit}`;
+  if (!cache.has(key)) cache.set(key, loadNotes(props.courseId, unit));
   try { notes.value = await cache.get(key); }
   catch (e) {
-    // A topic whose deck has no notes publishes no file. Not an error worth a red banner -
+    // A unit whose deck has no notes publishes no file. Not an error worth a red banner -
     // the panel just says there are none.
     cache.delete(key);
     notesError.value = String(e.message || e);
@@ -128,12 +132,12 @@ const REVEAL = `
   transform-origin: 0 0 !important;
 }`;
 
-/* KEEP THE STUDENT INSIDE THE SECTION.
+/* KEEP THE STUDENT INSIDE THE TOPIC.
  *
- * The deck is the whole topic - every section of it - and Slidev's Next quite reasonably
- * walks the lot. That is wrong here: a slide step IS one section, and paging out of it
- * lands the student in the next section's slides having skipped the exercises interleaved
- * between the two, which is the one thing the interleaving exists to prevent.
+ * The deck is the whole UNIT - every topic of it - and Slidev's Next quite reasonably walks
+ * the lot. That is wrong here: a slide step is ONE topic's range, and paging out of it
+ * lands the student in the next topic's slides having skipped the exercises that practise
+ * this one, which is the one thing the interleaving exists to prevent.
  *
  * HOOKED ON pushState, NOT ON hashchange. `routerMode: hash` is a vue-router hash history,
  * and vue-router hash mode still drives the History API: it calls `history.pushState` with
@@ -144,13 +148,13 @@ const REVEAL = `
  * Patching pushState catches every way out at once - the bar's arrows, arrow keys, space,
  * PageDown, a swipe, and clicking any slide in the overview - because all of them are the
  * router navigating. Guarding the keys instead would be wrong as well as incomplete:
- * ArrowRight on a v-click slide advances the CLICK, and blocking it on the section's last
+ * ArrowRight on a v-click slide advances the CLICK, and blocking it on the topic's last
  * slide would strand the student mid-build.
  *
  * The push is allowed through and then undone with `back()`, rather than being blocked.
  * vue-router updates its own reactive location alongside the History call, so refusing to
  * delegate leaves the URL right and the rendered slide wrong; going back one entry moves
- * both. The cost is a frame of the next slide before it returns, which reads as the section
+ * both. The cost is a frame of the next slide before it returns, which reads as the topic
  * ending rather than as a fault.
  *
  * The hash is `#/<slide>` or `#/<slide>/<click>`, so only the leading number is read - a
@@ -190,7 +194,7 @@ const onLoad = () => {
 
   /* No teardown: these live on the frame's own window, which the browser destroys when the
    * iframe navigates or the step is left. The iframe is keyed on `src`, so moving between
-   * two sections of one deck builds a new element rather than reusing this one with a stale
+   * two topics of one deck builds a new element rather than reusing this one with a stale
    * range closed over. */
   const both = () => { clamp(); track(); };
   const push = win.history.pushState;
@@ -234,14 +238,14 @@ const onLoad = () => {
          were designed to. What is left over is the player's own themed ground. -->
     <!-- `single` rather than `v-if` on the pane: SplitPane keeps its remembered size and
          the frame is not torn down and rebuilt - which would reload the iframe and lose the
-         student's place in the section - every time the notes are toggled. -->
+         student's place in the topic - every time the notes are toggled. -->
     <SplitPane class="work" :direction="side" :single="!showNotes"
                :storage-key="`slides-notes-${side}`"
                :initial="side === 'row' ? 68 : 62" :min="30" :max="85" :min-px="200">
       <template #a>
         <div class="frame">
           <div class="stage">
-          <!-- Keyed on src so moving between two sections of the same deck reloads the frame
+          <!-- Keyed on src so moving between two topics of the same deck reloads the frame
                at the new hash. Without it the iframe keeps its old location: same document,
                and the router has already consumed the hash it booted with. -->
           <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"

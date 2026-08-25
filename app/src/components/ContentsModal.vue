@@ -56,8 +56,8 @@ const tree = computed(() => (props.course?.modules || []).map(m => ({
 /* When filtering, a unit is open if it has a hit: a search that leaves everything collapsed
  * has answered nothing. */
 const filtering = computed(() => !!query.value.trim());
-/* A slide row survives the filter when the section it names matches, or when anything
- * under it does - a section heading with its exercises filtered out from under it is a
+/* A slide row survives the filter when the topic it names matches, or when anything
+ * under it does - a topic heading with its exercises filtered out from under it is a
  * heading for nothing. */
 const shown = computed(() => tree.value
   .map(m => ({ ...m, units: m.units
@@ -74,7 +74,7 @@ function keep(rows) {
     if (r.kind === 'slides') { out.push(r); continue; }
     if (matches(r)) out.push(r);
   }
-  // Drop a section heading that ended up with nothing under it, unless it matched itself.
+  // Drop a topic heading that ended up with nothing under it, unless it matched itself.
   return out.filter((r, i) =>
     r.kind !== 'slides' || matches(r) || out[i + 1]?.kind === 'exercise');
 }
@@ -185,7 +185,7 @@ h5 { margin: 6px 4px 4px; font-size: 11px; letter-spacing: .04em; text-transform
 .entry.done { color: var(--ice-fg); }
 .entry.active { background: var(--ice-bg); color: var(--ice-fg);
                 box-shadow: inset 2px 0 0 var(--ice-primary); }
-/* Same treatment as the sidebar: a section is a heading you can also step onto. */
+/* Same treatment as the sidebar: a topic's slides are a heading you can also step onto. */
 .entry.section { color: var(--ice-fg); font-weight: 600; margin-top: 6px; }
 .entry.section:first-child { margin-top: 0; }
 .entry.section .badge { background: var(--ice-primary-soft); border-color: transparent;

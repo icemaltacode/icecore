@@ -22,12 +22,14 @@ export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.jso
  * is one. */
 export const loadPlayground = id => json(`${BASE}${encodeURIComponent(id)}/playground.json`);
 
-/* A topic's speaker notes, by composed-deck slide number. Fetched per topic and only when
- * a student opens the panel: 880KB across a course, 11KB for the one they are reading.
- * Absent for a topic whose deck has none, so a miss is a normal answer rather than an
- * error - the caller treats it as "no notes". */
-export const loadNotes = (courseId, topic) =>
-  json(`${BASE}${encodeURIComponent(courseId)}/notes/${encodeURIComponent(topic)}.json`);
+/* A UNIT's speaker notes, by composed-deck slide number - the deck is the unit's, and a
+ * topic reads the slice of these that falls in its own slide range. Fetched only when a
+ * student opens the panel: 880KB across a course, ~11KB for the unit they are reading, and
+ * paging from one topic of a unit to the next reuses the same file. Absent for a unit whose
+ * deck has none, so a miss is a normal answer rather than an error - the caller treats it
+ * as "no notes". */
+export const loadNotes = (courseId, unit) =>
+  json(`${BASE}${encodeURIComponent(courseId)}/notes/${encodeURIComponent(unit)}.json`);
 
 /** A course's card image, published beside its content and named in the manifest. */
 export const courseImage = rel => `${BASE}${rel}`;
@@ -40,15 +42,17 @@ export const imageBase = (courseId, topic) =>
 export const appBase = (courseId, topic) =>
   `${BASE}${encodeURIComponent(courseId)}/apps/${encodeURIComponent(topic)}/`;
 
-/* Where a UNIT's Python data files live - the csv, feather and pickle files a student's
- * own code opens by name. Per unit rather than per topic because they are shared inside
- * one and some are megabytes; an exercise refers to them by bare filename and knows
- * neither the course id nor the unit, exactly as it does for a figure.
+/* Where a MODULE's Python data files live - the csv, feather and pickle files a student's
+ * own code opens by name. Per module rather than per topic because a DataCamp course's
+ * files are shared across all its chapters and some are megabytes; an exercise refers to
+ * them by bare filename and knows neither the course id nor the module, exactly as it does
+ * for a figure.
  *
  * Note `data/` under a course holds two unrelated things: a SQL dataset - either
- * `<name>.sql` or a `<name>/` directory of .sql concatenated - and a `<unit>/` directory of
- * files mounted into the Python interpreter. They are told apart by NAME, not by being a
- * file or a directory: both kinds can be directories. A unit number is the marker. */
+ * `<name>.sql` or a `<name>/` directory of .sql concatenated - and a `module-<n>/`
+ * directory of files mounted into the Python interpreter. They are told apart by NAME, not
+ * by being a file or a directory: both kinds can be directories. The `module-` prefix is
+ * the marker, and it is a prefix rather than a shape so that nothing has to guess. */
 export const dataBase = courseId => `${BASE}${encodeURIComponent(courseId)}/data/`;
 
 /** A dataset's seed SQL, fetched only when an exercise actually needs it. */

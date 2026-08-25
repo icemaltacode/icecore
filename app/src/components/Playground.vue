@@ -85,7 +85,7 @@ const busy = ref(false);
  * and the browser reads it, and two spellings of the same path would diverge the day a
  * manifest entry gained a field. */
 const urlFor = f =>
-  `${dataBase(f.course)}${encodeURIComponent(f.unit)}/${encodeURIComponent(f.name)}`;
+  `${dataBase(f.course)}module-${encodeURIComponent(f.module)}/${encodeURIComponent(f.name)}`;
 /* Working name -> URL, over every set rather than the loaded ones: the rail lists what is
  * mounted and a mounted file's set is loaded by definition, so this is only ever consulted
  * for something that is there. */
@@ -173,10 +173,10 @@ async function load(set) {
   try {
     if (py.value) {
       /* Files land at the working directory under their `as` name, so the student writes
-       * `pd.read_csv('gapminder.csv')` and never sees a unit number. Additive, like the SQL
+       * `pd.read_csv('gapminder.csv')` and never sees a module number. Additive, like the SQL
        * side: two sets can be mounted at once. */
       await addFiles(set.files || [],
-        f => `${dataBase(f.course)}${encodeURIComponent(f.unit)}/${encodeURIComponent(f.name)}`,
+        f => `${dataBase(f.course)}module-${encodeURIComponent(f.module)}/${encodeURIComponent(f.name)}`,
         { onStatus: s => { status.value = s; } });
     } else {
       // Sequentially, not in parallel: they go into one database and PGlite serialises

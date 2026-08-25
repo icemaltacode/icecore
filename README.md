@@ -60,13 +60,14 @@ content/
   exercises/<topic>/_topic.json    { topic, title, unit, unitTitle }
   exercises/<topic>/NN-slug.md     one exercise: frontmatter + markdown sections
   data/<table>.sql                 CREATE TABLE + INSERTs
-  raw/<source>/chapter-*.json      importer-only: where the section boundaries came from
-  slides/<topic>/                  generated: a built deck, written by `icecore slides`
-  courses.json                     importer-only: source slug -> ICE unit mapping
+  data/module-<n>/*.csv            loose files a Python exercise opens by bare filename
+  raw/<source>/chapter-*.json      importer-only: where the topic boundaries came from
+  slides/<unit>/                   generated: a built deck, written by `icecore slides`
+  courses.json                     importer-only: source slug -> ICE module mapping
 slides/
-  topic-<topic>.md                 the deck source — this is what gives a topic a Slides button
+  unit-<unit>.md                   the deck source — this is what gives a unit's topics slides
   pages/*.md                       the slides themselves, pulled in by `src:` includes
-  public/images/<topic>/*          figures, referenced as /images/<topic>/...
+  public/images/<unit>/*           figures, referenced as /images/<unit>/...
 ```
 
 ### The shape of a course
@@ -75,10 +76,10 @@ slides/
 
 | Level | Is | Numbered | Example |
 |---|---|---|---|
-| Course | the whole programme | -- | ICExDataCamp Data Analyst |
-| Module | a block of related units | `1` | Associate Data Analyst in SQL |
-| Unit | a subject within a module | `1.1` | Introduction to SQL |
-| Topic | a session's worth of it | `1.1.1` | Relational Databases |
+| Course | the whole programme | -- | ICExDataCamp Data Analyst Associate |
+| Module | a block of related units | `1` | Introduction to SQL |
+| Unit | a subject within a module | `1.1` | Relational Databases |
+| Topic | a session's worth of it | `1.1.1` | Databases |
 
 Only topics are directories, and only topics hold exercises. A topic names its unit and unit
 title in `_topic.json`; its module is the unit number's first component, so nothing is stated
@@ -319,14 +320,14 @@ and `icecore build` produces:
 dist/content/courses.json                 manifest of published courses
 dist/content/<course>/index.json          units + exercises + expected results
 dist/content/<course>/data/<table>.sql    datasets, fetched on demand
-dist/slides/<topic>/                      decks that have been built, images pruned
+dist/slides/<course>/<unit>/              decks that have been built, images pruned
 ```
 
 ### Slides
 
-A topic has a deck when the course repo has a **source** for one, at
-`slides/topic-<topic>.md`. Derived from the source rather than from built output on purpose:
-deriving it from `content/slides/<topic>/index.html` coupled the content pipeline to the deck
+A unit has a deck when the course repo has a **source** for one, at
+`slides/unit-<unit>.md`. Derived from the source rather than from built output on purpose:
+deriving it from `content/slides/<unit>/index.html` coupled the content pipeline to the deck
 pipeline, so publishing without rebuilding every deck first quietly shipped a course with no
 slides links at all. Set `slides:` in `_topic.json` to an absolute URL to point somewhere
 else instead.
@@ -336,40 +337,46 @@ Build them with `icecore slides`, which knows where each deck goes:
 ```
 icecore slides content                    # every deck
 icecore slides content --since <sha>      # only those a change since <sha> affects
-icecore slides content --only 1.2.3       # just this one
+icecore slides content --only 2.3         # just this one
 icecore slides content --list             # say what would be built, build nothing
 ```
 
-`--since` resolves each deck's transitive `src:` includes, so editing `pages/_unit-1.5.md`
-rebuilds four decks and editing `pages/_frame-close.md` rebuilds all of them. Anything under
-`slides/` that isn't markdown — `public/`, the theme, the lockfile — is shared by every deck
-and rebuilds the lot.
+`--since` resolves each deck's transitive `src:` includes, so editing
+`pages/_frame-module-5.md` rebuilds every deck of module 5 and editing `pages/_frame-close.md`
+rebuilds all of them. Anything under `slides/` that isn't markdown — `public/`, the theme,
+the lockfile — is shared by every deck and rebuilds the lot.
 
 Each deck ships only the images it references. Slidev copies the whole of `public/` into
-every build, which meant one deck carried every topic's figures: 84MB and 861 objects for a
+every build, which meant one deck carried every unit's figures: 84MB and 861 objects for a
 deck whose own content was 6.4MB and 18 images. They are pruned after the build, so
 `slidev dev` still sees all of `public/` and no `/images/...` reference in the markdown
 changes.
 
 Decks land at the site root, not under `content/`, because a built deck is a small site of
-its own with absolute asset paths, and `--base` has to match where it lands. Note the player
-links `slides/<topic>/index.html`, not the bare directory: S3 behind CloudFront applies its
-root object only to the root, so a directory URL 404s in production.
+its own with absolute asset paths, and `--base` has to match where it lands. They are
+**scoped to their course** — `slides/<courseId>/<unit>/` — because every course numbers its
+own modules from 1, so two courses on one site both own a unit `1.1`. `deckPrefix` in
+`decks.mjs` is the single definition of that path; `dist/slides/` mirrors the bucket, and
+`.built.json` carries the course id so the publish reads the prefix rather than rebuilding
+it. Note the player links `slides/<course>/<unit>/index.html`, not the bare directory: S3
+behind CloudFront applies its root object only to the root, so a directory URL 404s in
+production.
 
 #### Interleaving
 
-Where a topic's exercises carry `section: N`, the player deals the deck's slides into the
-run at the section boundaries, so **Next** walks slides → exercises → slides rather than
-offering the whole deck up front. A section is a `layout: statement` slide in the deck and
-the run of slides under it; `N` is that section's ordinal.
+A topic **is** one section of its unit's deck: a `layout: statement` slide and the run of
+slides under it, closed by the `layout: statement_alt` that follows. The topic's own third
+number is the ordinal that selects it, so the second section of `unit-2.3.md` is topic
+`2.3.2`. The player opens a topic on that slide range and follows it with the topic's
+exercises, so **Next** walks slides → exercises → slides rather than offering a whole
+chapter's deck up front.
 
-A section is **not** a fifth level of the hierarchy — it's an annotation on a run of
-exercises within a topic. Topics still hold the exercises and numbering stays at three
-components. Deep links need no infrastructure: the decks set `routerMode: hash`, so `#/<n>`
-resolves client-side.
+Deep links need no infrastructure: the decks set `routerMode: hash`, so `#/<n>` resolves
+client-side.
 
-`verify` fails if a `section:` points past the end of its deck, the same way it fails on a
-missing figure. A topic with no `section:` anywhere simply doesn't interleave.
+`verify` fails if a unit's deck has no section for one of its topics, the same way it fails
+on a missing figure — an empty topic is the failure that gets worse the later it is found. A
+unit with no deck simply has topics with no slides.
 
 Content is fetched at **runtime**, not compiled into the bundle. Publishing a course, or
 fixing a typo in an exercise, is a file upload — no app rebuild. A student downloads only
@@ -447,9 +454,9 @@ all four are stack outputs.
 
 It installs the course's `slides/` dependencies on **every** run, including content-only
 pushes that build no decks. That isn't waste: `build` reads the deck sources through
-`@slidev/parser` to work out each topic's section ranges, so without it every topic loses
-its interleaving and `index.json` ships that way — a content push would silently undo what
-the previous slides push published.
+`@slidev/parser` to work out each topic's slide range, so without it every topic loses its
+slides and `index.json` ships that way — a content push would silently undo what the
+previous slides push published.
 
 ## Deployment
 

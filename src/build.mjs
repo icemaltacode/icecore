@@ -17,7 +17,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { validate as validateDragDrop } from '../app/src/dragdrop.js';
 import { EXTENSIONS } from './extensions.mjs';
-import { slidesSrcDir, deckFiles, readDecks } from './decks.mjs';
+import { slidesSrcDir, deckFiles, readDecks, deckPrefix } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
 import { readPlayground, borrowed } from './playground.mjs';
 import { seedFor, packageKey, GRADER_WHEELS, WHEELS_BY_NAME } from '../app/src/python.js';
@@ -138,6 +138,14 @@ const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, 
 const byNumber = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
 /** Every topic in a course, in order, flattened out of its modules and units. */
 const topicsOf = course => (course.modules || []).flatMap(m => m.units.flatMap(u => u.topics));
+/* `2.3.1` -> `2.3`. A topic's unit is always its own number minus the last component, so
+ * nothing has to declare it twice - the same reason a module is derived from the unit. */
+const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
+/* Where a topic's Python data files live: `2.3.1` -> `module-2`. A DataCamp course's loose
+ * .csv/.feather/.p files are shared across all its chapters, and a DataCamp course is a
+ * module - so the level is the module, and the prefix is what tells `data/` this is not a
+ * SQL dataset. */
+const moduleDataDir = topic => `module-${String(topic).split('.')[0]}`;
 
 export function parseExercise(file, text) {
   const [fm, md] = frontmatter(text);
@@ -365,12 +373,12 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   };
 
   /* A COURSE IS A PLAYGROUND BECAUSE IT HAS A MANIFEST, never because of a flag beside one.
-   * Same rule as "a topic has a deck when slides/topic-<n>.md exists" and "a course is
+   * Same rule as "a unit has a deck when slides/unit-<n>.md exists" and "a course is
    * announced when it has no exercises": derive the affordance from the thing itself, so it
    * cannot be switched on with nothing behind it or left off with everything. */
   const pg = readPlayground(contentDir);
   const badPlayground = pg?.problems || [];
-  const unitOf = new Map();     // "1.1" -> the unit object, so topics find their home
+  const unitsById = new Map();  // "1.1" -> the unit object, so topics find their home
 
   const topicDirs = fs.existsSync(exDir)
     ? fs.readdirSync(exDir).filter(d => /^\d/.test(d)).sort(byNumber) : [];
@@ -416,6 +424,15 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     for (const e of exercises.filter(e => e.type === 'dragdrop'))
       for (const problem of validateDragDrop(e)) warnings.push(`${topicId} ${e.file}: ${problem}`);
 
+    /* `section:` was how an exercise joined itself to a run of slides inside its topic.
+     * That run IS the topic now, so the directory the file sits in carries the fact and a
+     * surviving `section:` is a leftover from a repo that was only half renumbered. Said
+     * out loud because it is inert rather than wrong: it would ride the frontmatter spread
+     * into index.json and change nothing, which is exactly how it would go unnoticed. */
+    for (const e of exercises.filter(e => e.section != null))
+      warnings.push(`${topicId} ${e.file}: still carries section: ${e.section} - a topic is `
+        + 'the section now, so this is a leftover of the old numbering');
+
     const moduleId = String(meta.unit).split('.')[0];
     let mod = course.modules.find(m => m.module === moduleId);
     if (!mod) {
@@ -424,10 +441,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       course.modules.push(mod);
     }
 
-    let unit = unitOf.get(meta.unit);
+    let unit = unitsById.get(meta.unit);
     if (!unit) {
       unit = { unit: meta.unit, title: meta.unitTitle || meta.unit, label: `${meta.unit} - ${meta.unitTitle || meta.unit}`, topics: [] };
-      unitOf.set(meta.unit, unit);
+      unitsById.set(meta.unit, unit);
       mod.units.push(unit);
     } else if (meta.unitTitle && meta.unitTitle !== unit.title) {
       warnings.push(`${topicId}: unitTitle "${meta.unitTitle}" disagrees with "${unit.title}" used by earlier topics of ${meta.unit}`);
@@ -450,9 +467,13 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
 
   // ---- discover slide decks ----
   //
-  // A topic has a deck when the course repo has a *source* deck for it, at
-  // slides/topic-<topic>.md. Deliberately not "when a deck has been built to
-  // content/slides/<topic>/": that coupled the content pipeline to the deck pipeline, so
+  // A UNIT has a deck when the course repo has a *source* deck for it, at
+  // slides/unit-<unit>.md, and each of that deck's sections is one of its topics. The deck
+  // is the unit's because a DataCamp chapter is a unit; the topics inside it are slide
+  // ranges, which is what a section always was.
+  //
+  // Deliberately not "when a deck has been built to
+  // content/slides/<unit>/": that coupled the content pipeline to the deck pipeline, so
   // publishing without rebuilding every deck first quietly shipped a course with no slides
   // links at all. Source is the thing that is true regardless of what any given CI run
   // chose to rebuild - which is what makes selective deck building safe.
@@ -497,56 +518,60 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const missingSections = [];   // verify fails on these - see below
   for (const course of courses.values())
     for (const u of topicsOf(course)) {
-      // index.html is named explicitly rather than relying on a directory index: S3 behind
-      // CloudFront only applies defaultRootObject to the root, so `slides/1.2.3/` would
-      // 404 in production, and a dev server answers it with the app's own index page -
-      // which then loads the whole player inside the iframe.
-      if (!u.slides && sources.has(u.topic)) u.slides = `slides/${u.topic}/index.html`;
-
-      /* How many of this topic's slides carry a note. A COUNT, not the notes themselves:
-       * 880KB of prose across the course would be a quarter of index.json for something a
-       * student only reads one topic of, so the text ships per topic and is fetched with
-       * the deck. The count is here so the player can offer the panel - or not - without
-       * a request that might come back empty.
+      /* A TOPIC IS ONE SECTION OF ITS UNIT'S DECK. The deck belongs to the unit - a
+       * DataCamp chapter - and each of its `layout: statement` sections is one topic, in
+       * order, so the topic's own third number is the ordinal that selects its range.
+       * Nothing joins the two but that ordinal, which is why `verify` fails when a deck is
+       * a section short rather than letting a topic ship with no slides.
        *
-       * Set for every topic with a deck, not only interleaved ones: the loop below returns
-       * early for a topic whose exercises carry no `section:`, and those topics still have
-       * slides worth reading. */
-      const noted = Object.keys(decks.get(u.topic)?.notes || {}).length;
-      if (noted) u.notes = noted;
+       * This is the same machinery that used to interleave a topic's exercises with its
+       * sections; what changed is that a section is a level of the hierarchy now instead of
+       * an annotation on a run of exercises within one. */
+      const unitId = unitOf(u.topic);
+      const deck = decks.get(unitId);
+      const ordinal = Number(String(u.topic).split('.')[2]);
 
-      /* Interleaving. A section is an annotation on a run of exercises within a topic - a
-       * label and a slide range - not a level of the hierarchy that owns them. Topics still
-       * hold the exercises; `section:` just groups them. That keeps "only topics are
-       * directories, only topics hold exercises" true, and keeps the vocabulary at four
-       * words. The ordinal is internal and never shown to a student.
+      /* index.html is named explicitly rather than relying on a directory index: S3 behind
+       * CloudFront only applies defaultRootObject to the root, so `slides/<course>/2.3/`
+       * would 404 in production, and a dev server answers it with the app's own index page
+       * - which then loads the whole player inside the iframe.
        *
-       * A topic with no `section:` on anything simply doesn't interleave, which is how a
-       * course with no raw data behaves and how every course behaved before this. */
-      const sections = decks.get(u.topic)?.sections;
-      const numbered = u.exercises.filter(e => e.section != null);
-      if (!numbered.length) continue;
-      if (!sections?.length) {
-        missingSections.push(`${u.topic}: exercises carry section: but the deck has no `
-          + '"layout: statement" sections (or there is no deck)');
+       * Course-scoped, because two courses on one site both number a unit 1.1 now. See
+       * deckPrefix. */
+      if (!u.slides && sources.has(unitId)) u.slides = `${deckPrefix(course.id, unitId)}/index.html`;
+      if (!u.slides) continue;
+
+      const section = deck?.sections?.[ordinal - 1];
+      if (!section) {
+        /* Only a problem when the course has a deck SOURCE for this unit. `slides:` in
+         * _topic.json may point at a deck that lives somewhere else entirely, and there is
+         * nothing to parse for one of those - so it gets no slide range and is reachable
+         * from the Slides panel rather than as a step, exactly as before. Failing on it
+         * would make an escape hatch unusable. */
+        if (sources.has(unitId))
+          missingSections.push(`${u.topic}: unit ${unitId} has a deck but no section `
+            + `${ordinal} - it has ${deck?.sections?.length ?? 0}. A topic is one `
+            + '"layout: statement" section of its unit\'s deck.');
         continue;
       }
-      // A section pointing past the end of the deck is the failure this exists to catch:
-      // the prompt still reads fine, the exercise still grades, and the slide link lands on
-      // nothing. Same treatment as a missing figure.
-      for (const e of numbered)
-        if (!(e.section >= 1 && e.section <= sections.length))
-          missingSections.push(`${u.topic} ${e.file}: section ${e.section} does not exist `
-            + `- the deck has ${sections.length}`);
-      if (numbered.length !== u.exercises.length)
-        warnings.push(`${u.topic}: ${u.exercises.length - numbered.length} of `
-          + `${u.exercises.length} exercises have no section: - the topic won't interleave`);
-      // Carried only when every exercise is placed: a partial mapping interleaves some of
-      // the topic and silently drops the rest, which reads as lost exercises.
-      // `slideCount` is the COMPOSED deck's length - what Slidev's own paginator counts
-      // against - so the player can label a section in the same numbers the student is
-      // looking at inside the frame.
-      else { u.sections = sections; u.slideCount = decks.get(u.topic).slides; }
+      /* `slide` and `end` are COMPOSED-deck numbers - what Slidev's own paginator counts
+       * against and what a `#/n` deep link resolves to - so the player can label the range
+       * in the same numbers the student is looking at inside the frame. `slideCount` is
+       * carried for the same reason. */
+      u.slide = section.slide;
+      u.end = section.end;
+      u.slideCount = deck.slides;
+
+      /* How many of THIS TOPIC'S slides carry a note, not the deck's. A COUNT, not the
+       * notes themselves: 880KB of prose across the course would be a quarter of
+       * index.json for something a student reads one topic of, so the text ships per unit
+       * with the deck and is fetched when the panel is opened. The count is here so the
+       * player can offer the panel - or not - without a request that might come back
+       * empty, and counting the deck's would offer it on a topic whose own range has
+       * none. */
+      const noted = Object.keys(deck.notes || {})
+        .filter(n => Number(n) >= section.slide && Number(n) <= section.end).length;
+      if (noted) u.notes = noted;
     }
 
   // ---- load datasets ----
@@ -557,18 +582,22 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   /* `content/data/` holds two unrelated kinds of thing and the difference is NOT file
    * versus directory - both kinds can be directories:
    *
-   *   books.sql     a SQL dataset, one file
-   *   films/        a SQL dataset, a directory of .sql concatenated in filename order
-   *   2.4/          Python data files, mounted verbatim into the interpreter
+   *   books.sql       a SQL dataset, one file
+   *   films/          a SQL dataset, a directory of .sql concatenated in filename order
+   *   module-4/       Python data files, mounted verbatim into the interpreter
    *
-   * What separates them is the NAME. A Python data directory is named for its unit, and a
-   * unit number is not something anyone would call a dataset. Sniffing the contents instead
-   * would work today and quietly reclassify a unit the day someone drops a .sql in it.
+   * What separates them is the NAME, and the name SAYS SO. This used to be `2.4/` matched
+   * by /^\d+\.\d+$/ - "shaped like a unit number, which is not something anyone would call
+   * a dataset". The files belong to a whole DataCamp course, which is a MODULE now, so that
+   * pattern would have to become a bare `4/` - and a lone digit is a far weaker claim to
+   * not-a-dataset than a dotted pair was. Declaring the kind in the name costs one prefix
+   * and ends the guessing. Sniffing the contents instead would work today and quietly
+   * reclassify a directory the day someone drops a .sql in it.
    *
    * Said out loud in the log rather than decided silently, because getting this wrong makes
    * a dataset vanish - and a missing dataset surfaces much later, as an exercise reporting
    * that a table does not exist. */
-  const UNIT_DIR = /^\d+\.\d+$/;
+  const PY_DIR = /^module-\d+$/;
   const dataDir = path.join(contentDir, 'data');
   const datasets = {};
   const pyUnits = [];
@@ -576,24 +605,24 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     if (e.isDirectory()) {
       const dir = path.join(dataDir, e.name);
       const sqlFiles = fs.readdirSync(dir).filter(f => f.endsWith('.sql')).sort();
-      if (UNIT_DIR.test(e.name)) {
+      if (PY_DIR.test(e.name)) {
         pyUnits.push(e.name);
         if (sqlFiles.length)
-          warnings.push(`data/${e.name}/ is named for a unit, so it is Python data - but it `
-            + `holds ${sqlFiles.length} .sql file(s), which will not be loaded as a dataset`);
+          warnings.push(`data/${e.name}/ is named for a module, so it is Python data - but `
+            + `it holds ${sqlFiles.length} .sql file(s), which will not be loaded as a dataset`);
         continue;
       }
       if (sqlFiles.length)
         datasets[e.name] = sqlFiles.map(f => fs.readFileSync(path.join(dir, f), 'utf8')).join('\n');
       else
-        warnings.push(`data/${e.name}/ has no .sql in it and is not named for a unit - ignored`);
+        warnings.push(`data/${e.name}/ has no .sql in it and is not named module-<n> - ignored`);
     } else if (e.name.endsWith('.sql')) {
       datasets[e.name.replace(/\.sql$/, '')] = fs.readFileSync(path.join(dataDir, e.name), 'utf8');
     }
   }
   if (pyUnits.length)
     log(`  data: ${Object.keys(datasets).length} SQL dataset(s), `
-        + `Python files for unit(s) [${pyUnits.sort(byNumber).join(', ')}]`);
+        + `Python files for [${pyUnits.sort(byNumber).join(', ')}]`);
 
   // ---- precompute expected results ----
   //
@@ -793,18 +822,17 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
      * runner after four sets. See src/python-worker.mjs.
      *
      * Only cache MISSES are handed out, so a warm build spawns nothing at all. */
-    const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
     const jobs = new Map();
     const outcomes = new Map();
 
     for (const { u, ex } of python) {
-      const unit = unitOf(u.topic);
+      const mod = moduleDataDir(u.topic);
       // A declared file that isn't there is the failure this exists to catch: the exercise
       // reads fine, the SCT is intact, and the student gets a FileNotFoundError.
-      const dir = path.join(contentDir, 'data', unit);
+      const dir = path.join(contentDir, 'data', mod);
       for (const f of ex.data || [])
         if (!fs.existsSync(path.join(dir, f)))
-          missingImages.push(`${u.topic} ${ex.file}: no data file at data/${unit}/${f}`);
+          missingImages.push(`${u.topic} ${ex.file}: no data file at data/${mod}/${f}`);
 
       const key = cache.keyFor(
         `${packageKey(ex)}\n${seedFor(ex)}\n${pyRuntimeKey(ex)}`, ex.setup, ex.steps || []);
@@ -878,23 +906,23 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         shipped.push(d);
       }
 
-      /* A unit's Python data files, shipped beside the SQL datasets under the same `data/`
-       * prefix - one is `<name>.sql`, the other a `<unit>/` directory, and a file cannot
-       * collide with a directory.
+      /* A module's Python data files, shipped beside the SQL datasets under the same
+       * `data/` prefix - one is `<name>.sql`, the other a `module-<n>/` directory, and a
+       * file cannot collide with a directory.
        *
-       * Only what an exercise actually DECLARES is copied. A unit directory can hold more
+       * Only what an exercise actually DECLARES is copied. A module directory can hold more
        * than the course uses, and shipping the rest is the same waste as a deck carrying
-       * every topic's figures - except here a stray file is megabytes of pickle. */
+       * every unit's figures - except here a stray file is megabytes of pickle. */
       let pyFiles = 0;
       for (const t of topicsOf(course))
         for (const ex of t.exercises) {
           if (ex.type !== 'python' || !(ex.data || []).length) continue;
-          const unit = String(t.topic).split('.').slice(0, 2).join('.');
+          const mod = moduleDataDir(t.topic);
           for (const name of ex.data) {
-            const from = path.join(contentDir, 'data', unit, name);
+            const from = path.join(contentDir, 'data', mod, name);
             if (!fs.existsSync(from)) continue;      // already reported by the check above
-            const to = path.join(dir, 'data', unit, name);
-            if (fs.existsSync(to)) continue;         // shared across topics within the unit
+            const to = path.join(dir, 'data', mod, name);
+            if (fs.existsSync(to)) continue;         // shared across the module's topics
             fs.mkdirSync(path.dirname(to), { recursive: true });
             fs.copyFileSync(from, to);
             pyFiles++;
@@ -914,21 +942,23 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         images++;
       }
 
-      /* Speaker notes, one file per topic. Under content/ like everything else the player
-       * fetches, so they inherit the content sync and the CloudFront key group - a note is
-       * course material and should be no more public than the exercise beside it.
+      /* Speaker notes, one file per UNIT - because a deck is a unit's, and these are keyed
+       * by composed-deck slide number. Per topic they would be the same file cut three ways
+       * and re-fetched as the student pages from one topic of a unit to the next. Under
+       * content/ like everything else the player fetches, so they inherit the content sync
+       * and the CloudFront key group - a note is course material and should be no more
+       * public than the exercise beside it.
        *
-       * Derived from the deck SOURCE, so a topic has notes on exactly the same terms it has
-       * a Slides button: `slides/topic-<n>.md` exists. Deriving it from built output would
-       * couple the two pipelines again, and skipping the deck build would silently publish
-       * a course whose notes had all vanished. */
+       * Derived from the deck SOURCE, so a unit has notes on exactly the same terms its
+       * topics have a Slides button: `slides/unit-<n>.md` exists. Deriving it from built
+       * output would couple the two pipelines again, and skipping the deck build would
+       * silently publish a course whose notes had all vanished. */
       let noteFiles = 0;
-      for (const t of topicsOf(course)) {
-        const notes = decks.get(t.topic)?.notes;
-        if (!notes || !Object.keys(notes).length) continue;
-        const to = path.join(dir, 'notes', `${t.topic}.json`);
+      for (const [unitId, deck] of decks) {
+        if (!Object.keys(deck.notes || {}).length) continue;
+        const to = path.join(dir, 'notes', `${unitId}.json`);
         fs.mkdirSync(path.dirname(to), { recursive: true });
-        fs.writeFileSync(to, JSON.stringify(notes));
+        fs.writeFileSync(to, JSON.stringify(deck.notes));
         noteFiles++;
       }
 
@@ -993,7 +1023,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
           `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
           `${pyFiles ? `${pyFiles} data file${pyFiles === 1 ? '' : 's'}, ` : ''}` +
-          `${noteFiles ? `notes for ${noteFiles} topic${noteFiles === 1 ? '' : 's'}, ` : ''}` +
+          `${noteFiles ? `notes for ${noteFiles} unit${noteFiles === 1 ? '' : 's'}, ` : ''}` +
           `datasets [${shipped.join(', ') || 'none'}]`);
       // Said out loud: a playground's whole output is one JSON file, so a build that
       // silently emitted nothing looks exactly like a build that emitted it.
@@ -1027,22 +1057,32 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     // the publish step syncs them one prefix at a time for exactly that reason: an
     // `s3 sync --delete` of the whole slides/ prefix against a partial dist would delete
     // every deck that wasn't rebuilt.
-    /* Cleared PER DECK, not wholesale. `rmSync` on the whole of slides/ is right while a
-     * site is one course and deletes every other course's decks the moment it isn't - the
-     * same bug as wiping the whole of content/, in the one place I did not fix it. A site
-     * with an announced course in it has no decks at all, so building that course removed
-     * all 79 of the Data Analyst's; every slide step then requested a deck that was not
-     * there, got the dev server's SPA fallback, and rendered THE APP inside the iframe.
+    /* SCOPED TO THE COURSE, and cleared per deck within it.
      *
-     * A course owns the deck directories of its own topics - `sources` - and nothing else.
-     * Removing them first is what keeps the invariant the publish step relies on: what
-     * lands here is what this run BUILT, not every deck the course has a source for. */
-    const slidesOut = path.join(outDir, 'slides');
-    for (const topic of sources.keys())
-      fs.rmSync(path.join(slidesOut, topic), { recursive: true, force: true });
+     * `dist/slides/` mirrors the bucket exactly - `slides/<course>/<unit>/` - so the sync
+     * is a straight copy and `--base` cannot disagree with where the files land. It used to
+     * be a flat `slides/<topic>/`, which was unique only while one course spanned every
+     * module on the site. Each course numbers its modules from 1 now, so two of them both
+     * own a unit 1.1: flat, `icecore dev ../a/content ../b/content` would have the second
+     * course's decks overwrite the first's in staging, and the publish would do the same to
+     * the bucket.
+     *
+     * `rmSync` on the whole of slides/ is right while a site is one course and deletes
+     * every other course's decks the moment it isn't - the same bug as wiping the whole of
+     * content/, in the one place I did not fix it. A site with an announced course in it
+     * has no decks at all, so building that course removed all 79 of the Data Analyst's;
+     * every slide step then requested a deck that was not there, got the dev server's SPA
+     * fallback, and rendered THE APP inside the iframe. The course prefix makes that
+     * impossible rather than merely avoided, but the per-deck clearing stays: within its
+     * own prefix a course still owns only the decks it has sources for, and removing them
+     * first is what keeps the invariant the publish step relies on - what lands here is
+     * what this run BUILT, not every deck the course has a source for. */
+    for (const unit of sources.keys())
+      fs.rmSync(path.join(outDir, deckPrefix(course.id, unit)), { recursive: true, force: true });
     if (built.size) {
-      for (const topic of built)
-        fs.cpSync(path.join(slidesDir, topic), path.join(slidesOut, topic), { recursive: true });
+      for (const unit of built)
+        fs.cpSync(path.join(slidesDir, unit), path.join(outDir, deckPrefix(course.id, unit)),
+                  { recursive: true });
       log(`  slides: ${built.size} built deck${built.size === 1 ? '' : 's'} of ${sources.size} `
           + `[${[...built].sort(byNumber).join(', ')}]`);
     }
@@ -1058,14 +1098,17 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
    * A count by kind and one example each is enough to say "go and run verify". */
   const problems = [
     ['figure', missingImages], ['embedded app', missingApps],
-    ['section', missingSections], ['gradeable exercise', missingChecks],
+    ['topic with no slides', missingSections], ['gradeable exercise', missingChecks],
     ['hand correction', missingCorrections], ['playground manifest', badPlayground],
   ].filter(([, list]) => list.length);
   if (problems.length) {
     const total = problems.reduce((n, [, list]) => n + list.length, 0);
     log(`  ${total} problem${total === 1 ? '' : 's'} verify will fail on:`);
+    /* Pluralised on the head noun, not by appending to the phrase: "topic with no slides"
+     * would otherwise print as "topic with no slidess". */
     for (const [kind, list] of problems)
-      log(`    ${String(list.length).padStart(4)} ${kind}${list.length === 1 ? '' : 's'}`
+      log(`    ${String(list.length).padStart(4)} `
+        + `${list.length === 1 ? kind : kind.replace(/^(\w+)/, '$1s')}`
           + `  e.g. ${list[0].slice(0, 96)}`);
   }
   const { hits } = cache.stats();

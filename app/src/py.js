@@ -65,22 +65,23 @@ async function graderFor(exercise) {
   try { return await building; } finally { building = null; }
 }
 
-/* A unit's data files, fetched once and written into the interpreter's filesystem.
+/* A module's data files, fetched once and written into the interpreter's filesystem.
  *
- * Keyed by unit rather than by topic because that is how they are published: the files are
- * shared inside a unit, and 2.4's casts.p is 8.6MB. Fetched lazily - a student doing 2.1
- * never pays for 2.4's pickles - and cached by the promise, so two exercises starting at
- * once share one download rather than racing to write the same path. */
+ * Keyed by MODULE rather than by topic because that is how they are published: a DataCamp
+ * course's loose files are shared across all its chapters, and module 4's casts.p is 8.6MB.
+ * Fetched lazily - a student doing module 1 never pays for module 4's pickles - and cached
+ * by the promise, so two exercises starting at once share one download rather than racing
+ * to write the same path. */
 const mounts = new Map();
 
-function mountData(pyodide, course, unit, files = []) {
-  const at = `/ice-data/${unit}`;
+function mountData(pyodide, course, mod, files = []) {
+  const at = `/ice-data/${mod}`;
   if (!files.length) return Promise.resolve('');
   if (!mounts.has(at)) {
     mounts.set(at, (async () => {
       pyodide.FS.mkdirTree(at);
       await Promise.all(files.map(async name => {
-        const url = `${dataBase(course)}${encodeURIComponent(unit)}/${encodeURIComponent(name)}`;
+        const url = `${dataBase(course)}${encodeURIComponent(mod)}/${encodeURIComponent(name)}`;
         const r = await fetch(url, { credentials: 'include' });
         if (!r.ok) throw new Error(`cannot load ${name} (${r.status})`);
         pyodide.FS.writeFile(`${at}/${name}`, new Uint8Array(await r.arrayBuffer()));
@@ -91,8 +92,11 @@ function mountData(pyodide, course, unit, files = []) {
   return mounts.get(at);
 }
 
-/** `2.6.1` -> `2.6`. The numbering is the hierarchy, so the unit never needs storing. */
-export const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
+/* `6.1.2` -> `module-6`. The numbering is the hierarchy, so the module never needs storing.
+ * The `module-` prefix is part of the published path, not decoration: `data/` holds SQL
+ * datasets and Python data directories side by side and the name is what tells them apart -
+ * see the note on PY_DIR in build.mjs. */
+export const moduleDataDir = topic => `module-${String(topic).split('.')[0]}`;
 
 /**
  * Grade one submission against its step's SCT.
@@ -102,11 +106,11 @@ export const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
  * student wants to see whether or not they got it right.
  */
 export async function gradePython(course, exercise, step, submission) {
-  const unit = unitOf(exercise.topicId || exercise.topic);
+  const mod = moduleDataDir(exercise.topicId || exercise.topic);
   // The grader first, then the mount: the data goes into THAT interpreter's filesystem, and
   // building a new one wipes what the last had mounted.
   const g = await graderFor(exercise);
-  const cwd = await mountData(g.pyodide, course, unit, exercise.data || []);
+  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
   return g.grade({ pec: exercise.setup, solution: step.solution, submission,
                    sct: step.sct, cwd, seed: seedFor(exercise) });
 }

@@ -1,18 +1,22 @@
 /* The order a student moves through a topic.
  *
- * Without interleaving that is just the topic's exercises. With it, the topic's slides are
- * dealt into the run at the section boundaries DataCamp taught them at, so Next walks
- * slides -> exercises -> slides:
+ * Without slides that is just the topic's exercises. With them, the topic opens on its own
+ * run of slides and the exercises practise what they taught, so Next walks a unit as:
  *
- *     [slides] Databases     ?  ?
- *     [slides] Tables        ?  ?  SQL
- *     [slides] Data types    ?  ?  ?
+ *     1.1.1  [slides] Databases    ?  ?
+ *     1.1.2  [slides] Tables       ?  ?  SQL
+ *     1.1.3  [slides] Data types   ?  ?  ?
  *
- * A SECTION IS NOT A LEVEL OF THE HIERARCHY. Course > Module > Unit > Topic > exercises is
- * still the whole vocabulary. A section is an annotation on a run of exercises within a
- * topic - a label and a slide range - and its number is internal and never shown. Topics
- * still hold the exercises; the numbering stays at three components. A fifth level is
- * exactly how the old model ended up calling a unit a course.
+ * A TOPIC IS ONE SECTION OF ITS UNIT'S DECK. This used to say the opposite - that a section
+ * is an annotation on a run of exercises inside a topic and emphatically not a level of the
+ * hierarchy - and the hierarchy was re-cut underneath it: a DataCamp chapter is a unit now,
+ * and the video-sized run of slides inside it is a topic. The vocabulary is still exactly
+ * Course > Module > Unit > Topic > exercises and the numbering is still three components;
+ * what changed is which DataCamp thing each word points at. Nothing here is a fifth level.
+ *
+ * So the deck belongs to the unit, and the topic carries a slide RANGE into it - `slide`
+ * and `end`, in composed-deck numbering. Paging inside that range happens in the frame, not
+ * in this walk, which is why `SlidesStep.vue` clamps the hash to it.
  *
  * Pure and dependency-free, like compare.js and dragdrop.js: App.vue walks it to move
  * through the course and ContentsModal.vue walks it to draw the same course, and the two
@@ -20,55 +24,35 @@
  */
 
 /** A slide row's id. Namespaced so it can never collide with an exercise id. */
-export const slideId = (topic, n) => `slides:${topic}:${n}`;
+export const slideId = topic => `slides:${topic}`;
 
 /**
- * One topic's rows, in order.
+ * One topic's rows, in order: its slides, then the exercises that practise them.
  *
- * Driven by the *deck's* sections rather than by which sections happen to have exercises.
- * A section whose exercises were all dropped on import - 1.10.4 lost both of section 1's
- * to DataCamp-hosted plots - still has slides worth teaching, and a topic's closing
- * "Congratulations!" section is material the student should reach rather than material to
- * hide. So every section contributes its slides; only exercises are conditional.
+ * The slides row is emitted whenever the topic HAS a range, not when it has exercises to
+ * introduce. The 15 wrap-up topics of the Data Analyst course - "Congratulations!", "The
+ * finish line" - are slides and nothing else, and a topic that lost its exercises on import
+ * still has material worth reaching. Only exercises are conditional; slides are the topic.
  */
 export function walkTopic(topic) {
   const asExercise = e => ({ ...e, kind: 'exercise', topicId: topic.topic });
-  // No deck, or nothing placed in it: the topic behaves exactly as it did before any of
-  // this existed. That is also what a course with no raw data gets.
-  if (!topic.sections?.length || !topic.slides) return (topic.exercises || []).map(asExercise);
+  const exercises = (topic.exercises || []).map(asExercise);
+  // No deck, or a deck with no section for this topic: it behaves exactly as a topic did
+  // before any of this existed, which is also what a course with no slides/ gets.
+  if (!topic.slides || !topic.slide) return exercises;
 
-  const rows = [];
-  /* Tracked as we go rather than derived at the end, so a row can only ever be emitted
-   * once. sectionsOf() numbers sections 1..n and cannot produce a duplicate, but this does
-   * not trust its input: a repeated `n` would otherwise deal every exercise in that section
-   * into the walk twice, and neither the backstop below nor verify's `1 <= N <= count`
-   * check would notice - both are looking for exercises that are MISSING. */
-  const seen = new Set();
-  const emit = row => { if (!seen.has(row.id)) { seen.add(row.id); rows.push(row); } };
-
-  for (const s of topic.sections) {
-    emit({
-      kind: 'slides',
-      id: slideId(topic.topic, s.n),
-      topicId: topic.topic,
-      section: s.n,
-      title: s.title,
-      slide: s.slide,
-      end: s.end,
-      /* The composed deck's length, carried so a slide step can number itself the way the
-       * deck's own paginator does. A section labelled "8 slides" beside a frame reading
-       * 13/31 is two counts of two different things and reads as a bug. */
-      total: topic.slideCount,
-    });
-    for (const e of topic.exercises || [])
-      if (e.section === s.n) emit(asExercise(e));
-  }
-  // An exercise pointing at a section the deck doesn't have would vanish from the course
-  // otherwise. `icecore verify` fails on that, so it should never ship - but a browser
-  // holding a stale index.json is not covered by verify, and losing an exercise silently is
-  // worse than showing it out of place.
-  for (const e of topic.exercises || []) emit(asExercise(e));
-  return rows;
+  return [{
+    kind: 'slides',
+    id: slideId(topic.topic),
+    topicId: topic.topic,
+    title: topic.title,
+    slide: topic.slide,
+    end: topic.end,
+    /* The composed deck's length, carried so a slide step can number itself the way the
+     * deck's own paginator does. A topic labelled "8 slides" beside a frame reading 13/31
+     * is two counts of two different things and reads as a bug. */
+    total: topic.slideCount,
+  }, ...exercises];
 }
 
 /** Every row of a course, in order, flattened out of its modules and units. */

@@ -25,7 +25,11 @@ const STARTERS = ['playground', 'starters'];
 
 const LANGUAGES = ['sql', 'python'];
 const ID = /^[a-z0-9][a-z0-9-]*$/;
-const UNIT = /^\d+\.\d+$/;
+/* A module number, which is what a Python data directory is keyed by. It used to be a unit
+ * (`2.4`, matched by /^\d+\.\d+$/) - a DataCamp course's loose files are shared across all
+ * its chapters, and a DataCamp course is a module now. The `module-` prefix on the published
+ * directory belongs to the platform, so a manifest says `"4"` and never spells the path. */
+const MODULE = /^\d+$/;
 
 /**
  * Read and validate `<contentDir>/playground.json`.
@@ -159,7 +163,7 @@ function readDatasets(s, label, claimed, bad) {
   return out;
 }
 
-/* A Python set names files inside a course's per-unit data directory, plus the name the
+/* A Python set names files inside a course's per-module data directory, plus the name the
  * student's own code will open them by. */
 function readFiles(s, label, claimed, bad) {
   if (!Array.isArray(s.files) || !s.files.length) {
@@ -168,16 +172,27 @@ function readFiles(s, label, claimed, bad) {
   }
   const out = [];
   for (const f of s.files) {
-    if (!f || typeof f.course !== 'string' || typeof f.name !== 'string' || typeof f.unit !== 'string') {
-      bad(`${label}: every file needs a course, a unit and a name`);
+    /* Named explicitly so a manifest written against the old numbering fails with the
+     * reason rather than with "every file needs a course, a module and a name". Python data
+     * moved from a per-unit directory to a per-module one when a DataCamp course stopped
+     * being a unit, and a manifest is authored in another repo on another schedule - so the
+     * one that has not caught up yet is the normal case, not the exceptional one. */
+    if (f && typeof f.unit === 'string' && f.module === undefined) {
+      bad(`${label}: "unit": "${f.unit}" is the old numbering - Python data is per module `
+        + `now, so this is "module": "${String(f.unit).split('.')[0]}"`);
       continue;
     }
-    if (!UNIT.test(f.unit)) {
-      bad(`${label}: "${f.unit}" is not a unit number - Python data lives under data/<unit>/`);
+    if (!f || typeof f.course !== 'string' || typeof f.name !== 'string' || typeof f.module !== 'string') {
+      bad(`${label}: every file needs a course, a module and a name`);
+      continue;
+    }
+    if (!MODULE.test(f.module)) {
+      bad(`${label}: "${f.module}" is not a module number - Python data lives under `
+        + 'data/module-<n>/');
       continue;
     }
     /* `as` is the WORKING filename, and it is the whole reason this field exists: a student
-     * writes `pd.read_csv('gapminder.csv')`, never a path into someone else's unit
+     * writes `pd.read_csv('gapminder.csv')`, never a path into someone else's module
      * directory. It is also the only knob that resolves a collision without renaming
      * anything in the course the file belongs to. */
     const as = typeof f.as === 'string' && f.as.trim() ? f.as.trim() : f.name;
@@ -189,7 +204,7 @@ function readFiles(s, label, claimed, bad) {
     if (owner === s.id) bad(`${label}: "${as}" is mounted twice by this set`);
     else if (owner) bad(`${label}: "${as}" is also mounted by set "${owner}"`);
     else claimed.set(as, s.id);
-    out.push({ course: f.course, unit: f.unit, name: f.name, ...(as === f.name ? {} : { as }) });
+    out.push({ course: f.course, module: f.module, name: f.name, ...(as === f.name ? {} : { as }) });
   }
   return out;
 }
@@ -207,7 +222,7 @@ function readFiles(s, label, claimed, bad) {
  * even when it was authored as a directory of files - the builder concatenates - so this is
  * the published shape, not the authored one. */
 export const publishedPath = ref =>
-  ref.unit ? `data/${ref.unit}/${ref.name}` : `data/${ref.name}.sql`;
+  ref.module ? `data/module-${ref.module}/${ref.name}` : `data/${ref.name}.sql`;
 
 export function borrowed(manifest) {
   const sql = (manifest?.sql?.sets || []).flatMap(s => s.datasets || [])

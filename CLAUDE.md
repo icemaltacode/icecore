@@ -25,18 +25,19 @@ that could be shown externally or open-sourced.
 - `bin/icecore.mjs` — the CLI. `root` and `publicDir` are supplied here, not in
   `app/vite.config.js`, so the same app builds against any course repo. `icecore slides`
   also lives here: the platform owns the deck build, so the selection logic exists once.
-- `src/decks.mjs` — the **only** place a deck is parsed. One `@slidev/parser` load yields
-  both the section ranges the player interleaves with and the transitive `src:` include
-  graph selective building needs. Parsing decks twice for the two features is how they
-  drift apart.
+- `src/decks.mjs` — the **only** place a deck is parsed, and the only definition of where a
+  built deck is published (`deckPrefix`). One `@slidev/parser` load yields both the section
+  ranges — one per topic of the unit — and the transitive `src:` include graph selective
+  building needs. Parsing decks twice for the two features is how they drift apart.
 - `src/playground.mjs` — the **only** place a playground manifest is parsed, for the same
   reason as `decks.mjs`: `build` emits it and `verify` fails on it, and two readers would
   disagree about what a valid manifest is exactly when it mattered.
 - `app/src/playground-db.js` — the Playground's composed PGlite session. Deliberately not
   `db.js`: that one clones cached data directories, which cannot be merged.
 - `app/src/walk.js` — pure, like `compare.js` and `dragdrop.js`. The order a student moves
-  through a topic. `App.vue` and `ContentsModal.vue` both draw it, and the two disagreeing
-  reads as exercises going missing.
+  through a topic: its slides, then the exercises that practise them. `App.vue` and
+  `ContentsModal.vue` both draw it, and the two disagreeing reads as exercises going
+  missing.
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 
@@ -71,61 +72,83 @@ whole of `content/`.
 repo is one course. Only topics are directories and only topics hold exercises; the levels
 above exist so a few hundred exercises stay navigable.
 
-Use these words exactly -- a fourth vocabulary is how the old model ended up calling a unit
-a course and a topic a unit. Importing from DataCamp: their *track* is a module, their
-*course* is a unit, their *chapter* is a topic.
+Use these words exactly -- a fifth vocabulary is how the old model ended up calling a unit
+a course and a topic a unit.
 
-## Slides, sections and interleaving
+**An ICE course is one DataCamp track.** It maps as **track → course, course → module,
+chapter → unit, video → topic**: so a topic is a single video's worth of slides plus the
+exercises that practise it, which is the smallest thing worth putting a Next button around.
 
-**A topic has a deck when `slides/topic-<topic>.md` exists** — the *source*, never built
-output. Deriving it from `content/slides/<topic>/index.html` coupled the content pipeline to
+This replaced a model where one ICE course spanned several tracks. Everything shifted down
+a name and the top level disappeared:
+
+| was | is now | DataCamp |
+|---|---|---|
+| Course, spanning tracks | *(gone)* | — |
+| Module `1` | **Course** | track |
+| Unit `1.2` | Module `2` | course |
+| Topic `1.2.3` | Unit `2.3` | chapter |
+| `section: 2` on an exercise | Topic `2.3.2` | video |
+
+**Depth and numbering did not change** — three components, four container words. What
+changed is which DataCamp thing each word points at, and that a *section* stopped being an
+annotation and became the topic level. The old numbering converts by dropping the leading
+module digit and appending the section: `1.2.3 §2` → `2.3.2`. `dc-split` in the importer
+did it; it is one-off and should never need running again.
+
+## Slides, topics and interleaving
+
+**A unit has a deck when `slides/unit-<unit>.md` exists** — the *source*, never built
+output. Deriving it from `content/slides/<unit>/index.html` coupled the content pipeline to
 the deck pipeline: skipping the deck build then published a course with no slides links at
 all, silently. That decoupling is what makes selective deck building safe, so don't undo it.
 
-**A section is not a fifth level.** It is an annotation on a run of exercises within a topic
-— a label and a slide range — so topics still hold the exercises and the numbering stays at
-three components. `CLAUDE.md` is emphatic that a fourth vocabulary is how the old model came
-to call a unit a course; a fifth level would be the same mistake. The ordinal is internal and
-never shown to a student.
+**A topic is one section of its unit's deck.** The deck belongs to the unit — a DataCamp
+chapter — and each `layout: statement` run inside it is one topic, in order, so a topic's
+own third number is the ordinal that selects its slide range. Nothing joins the two but
+that ordinal.
 
 - A section opens on `layout: statement` and closes on the `layout: statement_alt`
-  ("Let's practice!") that follows. **That is a contract now, not a style choice.** A deck
-  that opens a section with any other layout drops it silently. A full-bleed heading that
-  *isn't* a section needs a different layout name.
-- **`routerMode: hash` must stay** in every topic deck. Deep links are `#/<n>` and resolve
+  ("Let's practice!") that follows. **That is a contract, not a style choice.** A deck that
+  opens a topic with any other layout drops it silently. A full-bleed heading that *isn't*
+  a topic needs a different layout name.
+- **A deck one section short leaves a topic with no slides**, and `verify` fails on it
+  rather than shipping an empty topic. Two units of the Data Analyst SQL course are in
+  exactly that state — their "Congratulations!" wrap-up video became a topic and the deck
+  was never given a closing section for it.
+- **`routerMode: hash` must stay** in every unit deck. Deep links are `#/<n>` and resolve
   client-side; drop it and every link 404s in production while still working in dev.
-- **Slide numbers are composed-deck numbers.** `topic-1.1.1.md` pulls in the module frame,
-  the unit frame and its page file, so a regex over the page counts from the wrong place.
-  Only the parser resolves `src:`.
-- `section: N` on an exercise is derived from `content/raw/**` by `dc-sections` in the
-  importer, never typed. **Anything that regenerates an exercise file must carry it** — a
-  forced `dc-convert` in particular, the same standing hazard `### Nondeterministic` has.
-- The walk is driven by the **deck's** sections, not by which sections have exercises. 1.10.4
-  lost both of section 1's exercises to `VisualExercise` on import; driving off exercises
-  would silently drop its slides, and every topic's closing section with them.
-- `verify` fails if a `section:` points past the end of its deck. A topic with no `section:`
-  anywhere simply doesn't interleave.
-- **A slide step is walled to its section.** `SlidesStep.vue` clamps the frame's hash to
-  `[slide, end]` on `hashchange`, because Slidev's Next walks the whole topic deck and
-  paging out of a section skips the exercises interleaved after it. `hashchange` rather than
-  the controls: arrows, keys, swipe and clicking a slide in the overview all end up there.
+- **Slide numbers are composed-deck numbers.** `unit-1.1.md` pulls in the module frame and
+  its page file, so a regex over the page counts from the wrong place. Only the parser
+  resolves `src:`.
+- **Deck prefixes are scoped to the course**: `slides/<courseId>/<unit>/`. They used to be
+  a flat `slides/<unit>/`, which was unique only while one course spanned every module on
+  the site — every course numbers its own modules from 1 now, so two courses both own a
+  unit 1.1. `deckPrefix` in `decks.mjs` is the one definition; `dist/slides/` mirrors the
+  bucket so the sync is a straight copy, and `.built.json` carries the course id so the
+  pipeline reads the prefix rather than rebuilding it in YAML where nothing tests it.
+- **A slide step is walled to its topic.** `SlidesStep.vue` clamps the frame's hash to
+  `[slide, end]` on navigation, because Slidev's Next walks the whole unit deck and paging
+  out of a topic skips the exercises that practise it. Hooked on the patched `pushState`
+  rather than `hashchange`: vue-router's hash mode drives the History API directly, so a
+  `hashchange` listener sees nothing at all.
 - **Speaker notes are shown to students**, in a panel beside the slide step. That is only
   safe because of the house rule that a note is a handout rather than a stage direction -
   it is a property of the content, not of the code, and a course that wrote "pause here"
   notes would be publishing those too. `decks.mjs` yields them from the same parse as the
-  sections and the include graph; they are derived from the deck **source**, so a topic has
-  notes on exactly the terms it has a Slides button.
-- **The notes text ships per topic, the count ships in `index.json`.** 880KB across the
-  Data Analyst course against ~11KB for one topic, so putting the prose in `index.json`
-  would be a quarter of it for something a student reads one topic of. The per-topic count
-  is what lets the player offer the panel - or not - without a request that might come back
-  empty. Notes are raw markdown rendered by the player's own `md.js`: one renderer, one set
-  of typography. Nothing in them references an image or a link today, which is what makes
-  that free.
+  sections and the include graph; they are derived from the deck **source**, so a unit has
+  notes on exactly the terms its topics have a Slides button.
+- **The notes text ships per UNIT, the count ships per topic in `index.json`.** The file is
+  the deck's and is keyed by composed-deck slide number, so cutting it per topic would be
+  the same file three ways and re-fetched as a student walks one unit. 880KB across the
+  Data Analyst course against ~11KB for one unit, so putting the prose in `index.json`
+  would be a quarter of it for something a student reads one unit of. The per-topic count
+  is of that topic's own range - counting the deck's would offer the panel on a topic with
+  no notes in it. Notes are raw markdown rendered by the player's own `md.js`: one
+  renderer, one set of typography.
 - **The notes panel follows the FRAME, not the step.** A slide step is a range and the
   student pages through it inside the iframe, so the panel rides the same patched
-  `pushState` the section clamp uses. A listener on `hashchange` alone sees nothing -
-  vue-router's hash mode drives the History API directly.
+  `pushState` the clamp uses.
 - **Which nav controls a student gets lives in `slidev-theme-ice/styles/nav.css`**, not in
   CSS the player injects. A deck is also watched in a tab, at its published URL, and under
   `slidev dev`; the set has to be the same in all of them. Matched on each button's `title`,
@@ -133,8 +156,8 @@ never shown to a student.
   `@slidev/client/internals/NavControls.vue` if one reappears.
 - **`@slidev/parser` is resolved from the course's `slides/`**, not from here — it has to
   match the Slidev that builds the decks. So `npm ci --prefix slides` is a prerequisite of
-  building *content*, not just of building decks. Miss it and every topic loses its
-  interleaving and ships that way without failing.
+  building *content*, not just of building decks. Miss it and every topic loses its slide
+  range and ships that way without failing.
 
 ## Publishing
 
@@ -153,7 +176,10 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
 
 - **Never `aws s3 sync --delete` against `slides/` as a whole.** With a partial `dist/slides`
   — which is now the normal case — it deletes every deck that wasn't rebuilt. Sync one deck
-  prefix at a time and reconcile removed decks explicitly.
+  prefix at a time and reconcile removed decks explicitly. **The reconcile is scoped to the
+  publishing course's own prefix** (`slides/<courseId>/`) for the same reason the content
+  sync is: listing `slides/` as a whole walks every other course's decks and, finding none
+  of them in this repo's manifest, would delete the lot.
 - **Each deck ships only the images it references.** Slidev copies all of `public/` into
   every build; that was 84MB and 861 objects for a deck whose own content is 6.4MB. Pruned
   after the build, so `slidev dev` still sees all of `public/` and the markdown is untouched.
@@ -251,7 +277,10 @@ part that constrains other work.
   `content/playground.json` and its starter files, and nothing else. That keeps the rule
   intact in the one place it looks like an exception.
 - **Datasets are borrowed by `{course, name}`, never copied** - the shape
-  `loadDatasetSql(courseId, dataset)` already takes. So the coupling is real and nothing
+  `loadDatasetSql(courseId, dataset)` already takes. A Python file is borrowed by
+  `{course, module, name}`; it was `unit` until a DataCamp course stopped being a unit, and
+  `readFiles` names the old field in its error so a manifest that has not caught up says
+  why rather than reading as malformed. So the coupling is real and nothing
   local can see it: the playground repo does not have the data. Three checks in three
   places, none of which subsumes another - structure in `verify`, resolution and collisions
   in `verify` *with the lender's content dir passed*, and the load-bearing one against the
@@ -436,6 +465,17 @@ server-side content artifact and a fatter hint service. `build` writes `solution
 Don't re-strip it.
 
 ## Gotchas
+
+- **`content/data/` holds two unrelated kinds of thing, and the NAME says which.** A SQL
+  dataset is `<name>.sql` or a `<name>/` directory of `.sql`; a `module-<n>/` directory is
+  the loose `.csv`/`.p`/`.feather` files a Python exercise opens by bare filename, mounted
+  beside it at runtime. Both kinds can be directories, so the shape tells you nothing. This
+  used to be `2.4/` matched by `/^\d+\.\d+$/` — "shaped like a unit number, which is not
+  something anyone would call a dataset" — and the files belong to a whole DataCamp course,
+  which is a module now, so that pattern would have to become a bare `4/`. A lone digit is a
+  far weaker claim to not-a-dataset than a dotted pair was, so the kind went into the name.
+  Getting it wrong makes a dataset vanish, and a missing dataset surfaces much later as an
+  exercise reporting that a table does not exist.
 
 - **`'globalThis.process.env': 'undefined'` in `app/vite.config.js` is load-bearing**, and it
   looks like a no-op. Vite defines `globalThis.process.env` as `{}` for a client build, `{}`

@@ -15,7 +15,7 @@
 # WHAT MAKES THE SELECTIVITY SAFE. Two traps, both of which used to make this actively
 # destructive rather than merely wasteful:
 #
-#   1. The Slides button used to be derived from *built output* in content/slides/<topic>/.
+#   1. The Slides button used to be derived from *built output* in content/slides/<unit>/.
 #      Skipping the deck build therefore published a course with no slides links at all,
 #      silently. It now comes from the deck source, so the two pipelines are independent.
 #   2. `aws s3 sync --delete` against slides/ with a partial dist DELETES EVERY DECK THAT
@@ -380,27 +380,42 @@ jobs:
           if [ -f "$manifest" ]; then
             mapfile -t built < <(jq -r '.built[]' "$manifest")
             mapfile -t all   < <(jq -r '.all[]'   "$manifest")
+            # DECKS ARE SCOPED TO THEIR COURSE, and the scope is read from the manifest
+            # rather than rebuilt here. They used to sit at slides/<unit>/, which was
+            # unique only while one course spanned the whole site: every course numbers its
+            # own modules from 1 now, so two courses both have a unit 1.1 and the second to
+            # publish would serve its slides over the first's. `dist/slides/` already
+            # mirrors the bucket, so this is a straight copy - the course id is read here
+            # only to name the prefix in logs and in the reconcile below, never to rebuild a
+            # path that `--base` has already baked into every asset URL.
+            deckCourse=$(jq -r '.course // empty' "$manifest")
+            if [ -z "$deckCourse" ]; then
+              echo "::error::content/slides/.built.json has no course - rebuild the decks with a current icecore"
+              exit 1
+            fi
 
             # One prefix at a time. --delete is scoped to the single deck being replaced, so
             # it can only ever remove files belonging to that deck - never a deck this run
             # did not rebuild.
-            for topic in ${built[@]+"${built[@]}"}; do
-              [ -d "dist/slides/$topic" ] || continue
-              echo "publishing slides/$topic"
-              aws s3 sync "dist/slides/$topic/" "s3://$BUCKET/slides/$topic/" --delete
-              paths+=("/slides/$topic/*")
+            for unit in ${built[@]+"${built[@]}"}; do
+              [ -d "dist/slides/$deckCourse/$unit" ] || continue
+              echo "publishing slides/$deckCourse/$unit"
+              aws s3 sync "dist/slides/$deckCourse/$unit/" "s3://$BUCKET/slides/$deckCourse/$unit/" --delete
+              paths+=("/slides/$deckCourse/$unit/*")
             done
 
             # Reconcile: a deck whose source has been deleted should stop being served, and
-            # nothing above would ever remove it. Guarded to things shaped like a topic
-            # number so an unrelated prefix under slides/ is never touched.
-            live=$(aws s3 ls "s3://$BUCKET/slides/" | awk '/PRE/ {print $2}' | tr -d '/')
-            for topic in $live; do
-              [[ "$topic" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
-              printf '%s\n' ${all[@]+"${all[@]}"} | grep -qx "$topic" && continue
-              echo "removing slides/$topic - the course no longer has a deck for it"
-              aws s3 rm "s3://$BUCKET/slides/$topic/" --recursive
-              paths+=("/slides/$topic/*")
+            # nothing above would ever remove it. Scoped to THIS course's prefix - listing
+            # slides/ as a whole would walk every other course's decks and, finding none of
+            # them in this repo's manifest, delete the lot. Guarded to things shaped like a
+            # unit number as well, so an unrelated prefix is never touched.
+            live=$(aws s3 ls "s3://$BUCKET/slides/$deckCourse/" | awk '/PRE/ {print $2}' | tr -d '/')
+            for unit in $live; do
+              [[ "$unit" =~ ^[0-9]+(\.[0-9]+)*$ ]] || continue
+              printf '%s\n' ${all[@]+"${all[@]}"} | grep -qx "$unit" && continue
+              echo "removing slides/$deckCourse/$unit - the course no longer has a deck for it"
+              aws s3 rm "s3://$BUCKET/slides/$deckCourse/$unit/" --recursive
+              paths+=("/slides/$deckCourse/$unit/*")
             done
           fi
 

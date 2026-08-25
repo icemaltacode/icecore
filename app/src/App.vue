@@ -101,7 +101,7 @@ onBeforeUnmount(() => removeEventListener('pointerdown', outside));
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
 const goTopic = d => {
   const t = topics.value[topicIndex.value + d];
-  // The first *row*, which for an interleaved topic is its opening slides rather than an
+  // The first *row*, which for a topic with slides is those slides rather than an
   // exercise dropped on the student with no lead-in.
   const first = flat.value.find(r => r.topicId === t?.topic);
   if (first) currentId.value = first.id;
@@ -122,8 +122,8 @@ const isAdmin = computed(() => session.admin);
  * above exist to make 200-odd exercises navigable. */
 const topics = computed(() =>
   (course.value?.modules || []).flatMap(m => m.units.flatMap(u => u.topics)));
-/* Every row the student walks, slides included - see walk.js. Where a topic interleaves,
- * its slides are dealt in at the section boundaries; where it doesn't, this is just its
+/* Every row the student walks, slides included - see walk.js. A topic with a slide range
+ * opens on it and its exercises follow; where there is none, this is just its
  * exercises and everything below behaves as it always did. */
 const flat = computed(() => walkCourse(course.value));
 const current = computed(() => flat.value.find(e => e.id === currentId.value));
@@ -480,7 +480,7 @@ nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
 .navitem:hover { background: var(--ice-bg); color: var(--ice-fg); }
 .navitem.active { background: var(--ice-bg); color: var(--ice-fg); box-shadow: inset 2px 0 0 var(--ice-primary); }
 .navitem.done { color: var(--ice-fg); }
-/* A section row is a heading first and a step second: it gets the weight and a rule above
+/* A slides row is a heading first and a step second: it gets the weight and a rule above
    it, so the sidebar reads as three labelled runs rather than one undifferentiated list. */
 .navitem.section { color: var(--ice-fg); font-weight: 600; margin-top: 10px; }
 .navitem.section:first-child { margin-top: 0; }

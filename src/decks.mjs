@@ -1,19 +1,22 @@
 /* The course's Slidev decks, as the platform sees them.
  *
+ * A DECK BELONGS TO A UNIT. It used to belong to a topic, and the rename is the whole of
+ * what changed here: a DataCamp chapter is a unit now rather than a topic, so the file it
+ * was always the deck for is a unit's. What a topic gets instead is one of that deck's
+ * sections - a slide range - which is exactly what `sectionsOf` has always returned.
+ *
  * One helper, two callers, deliberately:
  *
- *   - `build.mjs` needs each deck's *sections* - the slide ranges a topic's exercises are
- *     interleaved with.
+ *   - `build.mjs` needs each deck's *sections* - one per topic of the unit, in order.
  *   - `icecore slides` needs each deck's *includes* - the transitive `src:` graph, so a
  *     push can rebuild only the decks a change actually touched.
  *
  * Both come out of one `@slidev/parser` load. Parsing every deck twice would be the
  * obvious way to write this and is how the two features drift apart.
  *
- * WHY THE PARSER AND NOT A REGEX. A topic deck is a shell:
+ * WHY THE PARSER AND NOT A REGEX. A unit deck is a shell:
  *
- *     topic-1.1.1.md  ->  _frame-module-1.md, _unit-1.1.md,
- *                         1.1.1-relational-databases.md, _frame-close.md
+ *     unit-1.1.md  ->  _frame-module-1.md, 1.1-relational-databases.md, _frame-close.md
  *
  * so the slide numbering a deep link addresses (`index.html#/13`) exists only after those
  * `src:` includes are resolved. A regex over the page file counts from the wrong place and
@@ -35,12 +38,26 @@ import { pathToFileURL } from 'node:url';
  * no Slidev in it - and silently degrades every course to "no interleaving". */
 export const slidesSrcDir = contentDir => path.resolve(contentDir, '..', 'slides');
 
-/** `1.1.1` -> `<slides>/topic-1.1.1.md`, for every deck the course actually has. */
+/* Where a built deck is PUBLISHED, and the one definition of it.
+ *
+ * Scoped by course, which it did not used to be. Deck prefixes lived at `slides/<unit>/`
+ * while a course spanned every module in the site, so a deck number was globally unique by
+ * construction. It is not any more: each course numbers its own modules from 1, so two
+ * courses on one site both have a unit 1.1 and would write the same prefix - one silently
+ * serving the other's slides.
+ *
+ * `build.mjs` puts this in index.json, `icecore slides` passes it to `--base`, and the
+ * publish reads the course out of `.built.json` rather than reconstructing it. The three
+ * must agree exactly: --base decides what URL a deck's own assets ask for, so a mismatch
+ * 404s every image in production while working perfectly from a dev server at the root. */
+export const deckPrefix = (courseId, unit) => `slides/${courseId}/${unit}`;
+
+/** `1.1` -> `<slides>/unit-1.1.md`, for every deck the course actually has. */
 export function deckFiles(srcDir) {
   const out = new Map();
   if (!fs.existsSync(srcDir)) return out;
   for (const f of fs.readdirSync(srcDir)) {
-    const m = f.match(/^topic-(\d[\d.]*)\.md$/);
+    const m = f.match(/^unit-(\d[\d.]*)\.md$/);
     if (m) out.set(m[1], f);
   }
   return out;
@@ -62,9 +79,15 @@ export async function loadParser(srcDir) {
 }
 
 /* A section opens on `layout: statement` and closes on the `layout: statement_alt`
- * ("Let's practice!") that follows it. This is a contract the decks already keep - all 59
+ * ("Let's practice!") that follows it. This is a contract the decks already keep - all 79
  * of them - not a convention being introduced here. A deck that opens a section with some
  * other layout drops that section silently, which is why `verify` counts them.
+ *
+ * ONE SECTION PER TOPIC, IN ORDER. A section's ordinal is its topic's third number: the
+ * second section of `unit-2.3.md` is topic 2.3.2. That alignment is the whole interleaving
+ * contract now - it used to be an annotation joining exercises to slides, and it is the
+ * hierarchy itself. A deck one section short therefore leaves a topic with no slides, which
+ * is what `verify` fails on.
  *
  * `end` is carried as well as `slide` so the player can walk a section rather than dumping
  * the student at its first slide and leaving them to find where it stops. */
@@ -72,7 +95,8 @@ const OPENS = 'statement';
 const CLOSES = 'statement_alt';
 /* Frames belong to the deck, not to any section: a section must never run into the closing
  * slide of the deck. */
-const FRAME = new Set(['closing_slide', 'module_title', 'topic_title', 'contents', 'title']);
+const FRAME = new Set(['closing_slide', 'module_title', 'unit_title', 'topic_title',
+                       'contents', 'title']);
 
 export function sectionsOf(slides) {
   const layout = i => slides[i]?.frontmatter?.layout || '';
@@ -97,7 +121,7 @@ export function sectionsOf(slides) {
   return out;
 }
 
-/* The speaker notes, keyed by COMPOSED-DECK slide number - the same numbering a section's
+/* The speaker notes, keyed by COMPOSED-DECK slide number - the same numbering a topic's
  * range and a deep link use, and the only one that means anything once `src:` includes are
  * resolved. Sparse: about a quarter of slides have no note, and an entry for each of those
  * would be three quarters of a file saying nothing.
@@ -125,17 +149,17 @@ export function notesOf(slides) {
  * `includes` is repo-relative and covers the whole transitive `src:` chain, entry file
  * included - it is what maps "this file changed" to "these decks must be rebuilt".
  */
-export async function readDeck(srcDir, topic, file) {
+export async function readDeck(srcDir, unit, file) {
   const parser = await loadParser(srcDir);
   if (!parser) return null;
   // Absolute: the parser opens the entry relative to the process cwd, not to the root it is
-  // handed, so a bare `topic-1.1.1.md` only resolves when you happen to be standing in
+  // handed, so a bare `unit-1.1.md` only resolves when you happen to be standing in
   // slides/ - which the CLI never is.
   const data = await parser.load(srcDir, path.join(srcDir, file));
   const includes = [...Object.keys(data.watchFiles || {})]
     .map(p => path.relative(srcDir, path.resolve(srcDir, p)));
   return {
-    topic,
+    unit,
     file,
     slides: data.slides.length,
     sections: sectionsOf(data.slides),
@@ -147,8 +171,8 @@ export async function readDeck(srcDir, topic, file) {
 
 /* Which files under public/ a deck actually asks for.
  *
- * Slidev copies the whole of public/ into every build, and public/ is 77MB of every topic's
- * figures - so a deck for 1.1.1 ships 1.10.4's images, and 59 decks ship the same 77MB 59
+ * Slidev copies the whole of public/ into every build, and public/ is 77MB of every unit's
+ * figures - so a deck for 1.1 ships 10.4's images, and 79 decks ship the same 77MB 79
  * times. Knowing what a deck references is what lets the build drop the rest.
  *
  * Two sources, unioned, because getting this wrong deletes a figure that is genuinely used
@@ -183,23 +207,22 @@ function imagesUsedBy(srcDir, data, includes) {
  * wholesale into every build. Changing one of those rebuilds the lot.
  *
  * Markdown, by contrast, is attributable - and only through the include graph. "Rebuild
- * only 1.5.2" is not a filename match: topic-1.5.2.md pulls in _frame-module-1.md and
- * _unit-1.5.md as well as its own page, so editing _unit-1.5.md affects four decks and
- * editing _frame-module-1.md affects all of them. */
+ * only 5.2" is not a filename match: unit-5.2.md pulls in _frame-module-5.md as well as its
+ * own page, so editing _frame-module-5.md affects every deck of module 5. */
 const isMarkdown = rel => rel.endsWith('.md');
 
 /**
  * Which decks a set of changed files forces a rebuild of.
  *
  * `changed` is repo-relative, as `git diff --name-only` gives it. Paths outside slides/
- * cannot affect a deck and are ignored. Returns the topics to rebuild and why, so the
- * command can say "all 59, because slides/public/images/x.png changed" rather than just
+ * cannot affect a deck and are ignored. Returns the units to rebuild and why, so the
+ * command can say "all 79, because slides/public/images/x.png changed" rather than just
  * doing it.
  */
 export function affectedDecks(decks, changed) {
   const all = [...decks.keys()];
   const global = [];
-  const byTopic = new Map();
+  const byUnit = new Map();
   for (const p of changed) {
     const norm = p.split(path.sep).join('/');
     if (!norm.startsWith('slides/')) continue;
@@ -207,12 +230,12 @@ export function affectedDecks(decks, changed) {
     if (!isMarkdown(rel)) { global.push(rel); continue; }
     for (const d of decks.values())
       if (d.includes.includes(rel)) {
-        if (!byTopic.has(d.topic)) byTopic.set(d.topic, []);
-        byTopic.get(d.topic).push(rel);
+        if (!byUnit.has(d.unit)) byUnit.set(d.unit, []);
+        byUnit.get(d.unit).push(rel);
       }
   }
-  if (global.length) return { topics: all, global, reasons: new Map(all.map(t => [t, global])) };
-  return { topics: [...byTopic.keys()], global: [], reasons: byTopic };
+  if (global.length) return { units: all, global, reasons: new Map(all.map(u => [u, global])) };
+  return { units: [...byUnit.keys()], global: [], reasons: byUnit };
 }
 
 /**
@@ -226,11 +249,11 @@ export async function readDecks(srcDir, { onError = () => {} } = {}) {
   const decks = new Map();
   const parser = await loadParser(srcDir);
   if (!parser) return decks;
-  for (const [topic, file] of deckFiles(srcDir)) {
+  for (const [unit, file] of deckFiles(srcDir)) {
     try {
-      decks.set(topic, await readDeck(srcDir, topic, file));
+      decks.set(unit, await readDeck(srcDir, unit, file));
     } catch (e) {
-      onError(topic, String(e.message).split('\n')[0]);
+      onError(unit, String(e.message).split('\n')[0]);
     }
   }
   return decks;

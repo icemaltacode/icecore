@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
-import { slidesSrcDir, deckFiles, readDecks, affectedDecks } from '../src/decks.mjs';
+import { slidesSrcDir, deckFiles, readDecks, affectedDecks, deckPrefix } from '../src/decks.mjs';
 import { checkAgainst, borrowed, readListing, resolveAgainst, MANIFEST }
   from '../src/playground.mjs';
 import { compareResults } from '../app/src/compare.js';
@@ -94,7 +94,7 @@ switch (cmd) {
                  [--lenders]                  ...list the courses it borrows from
                  [--sizes <file>]             ...against an "aws s3 ls --recursive"
                                                  listing, and stamp the sizes in
-  icecore slides [contentDir]               build the course's per-topic decks
+  icecore slides [contentDir]               build the course's per-unit decks
                                             (and export each one to slides.pdf; --no-pdf skips)
                  [--since <sha>]              ...only those a change since <sha> affects
                  [--only 1.1.1,1.2.3]         ...only these
@@ -283,19 +283,19 @@ async function cmdVerify() {
                    ...missingCorrections, ...badPlayground,
                    ...cross.problems]) { fail++; bad.push(m); }
   for (const course of courses) {
-    for (const unit of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
-      for (const ex of unit.exercises) {
+    for (const topic of course.modules.flatMap(m => m.units).flatMap(u => u.topics)) {
+      for (const ex of topic.exercises) {
         // Drag-and-drop has no SQL to run: the content itself is what gets checked.
         if (ex.type === 'dragdrop') {
           const problems = validateDragDrop(ex);
-          if (problems.length) bad.push(...problems.map(p => `${unit.topic} ${ex.file}: ${p}`));
+          if (problems.length) bad.push(...problems.map(p => `${topic.topic} ${ex.file}: ${p}`));
           else dnd++;
           continue;
         }
         if (ex.type !== 'coding') continue;
         // Step shape is checked before anything is run, and independently of the dataset:
         // a dropped question is invisible otherwise, because the other steps still pass.
-        for (const problem of stepProblems(ex)) { fail++; bad.push(`${unit.topic} ${ex.file}: ${problem}`); }
+        for (const problem of stepProblems(ex)) { fail++; bad.push(`${topic.topic} ${ex.file}: ${problem}`); }
         mcqSteps += (ex.steps || []).filter(st => st.kind === 'mcq').length;
 
         if (!ex.dataset || !datasets[ex.dataset]) continue;
@@ -304,14 +304,14 @@ async function cmdVerify() {
           try { await startingPoint(ex.dataset, ex.setup); }
           catch (e) {
             fail++;
-            bad.push(`${unit.topic} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
+            bad.push(`${topic.topic} ${ex.file}: setup failed - ${String(e.message).split('\n')[0]}`);
             continue;
           }
           setups++;
         }
         for (const [i, step] of (ex.steps || []).entries()) {
           if (!step.solution) continue;
-          const label = `${unit.topic} ${ex.file}${ex.steps.length > 1 ? ` step ${i + 1}` : ''}`;
+          const label = `${topic.topic} ${ex.file}${ex.steps.length > 1 ? ` step ${i + 1}` : ''}`;
           if (!step.expected) { fail++; bad.push(`${label}: no expected result computed`); continue; }
           const v = compareResults(step.expected, await runQuery(ex.dataset, step.solution, ex.setup));
           if (v.pass) pass++; else { fail++; bad.push(`${label}: ${v.reason}`); }
@@ -426,15 +426,15 @@ async function freePort(from) {
   die(`no free port between ${from} and ${from + 50}`);
 }
 
-/* Build the course's per-topic decks - all of them, or only the ones a change actually
+/* Build the course's per-unit decks - all of them, or only the ones a change actually
  * touched.
  *
  * This used to be a shell loop in each course's package.json:
  *
- *     for f in topic-*.md; do slidev build "$f" --base ... --out ...; done
+ *     for f in unit-*.md; do slidev build "$f" --base ... --out ...; done
  *
  * an unconditional glob with no change detection, which is how fixing a typo in one slide
- * came to rebuild 59 decks. The selection lives here rather than in the course repo so
+ * came to rebuild every deck in the course. The selection lives here rather than in the course repo so
  * there is one copy of it, and so the include graph it needs is the same one the sections
  * come out of.
  *
@@ -447,51 +447,59 @@ async function cmdSlides() {
   const srcDir = slidesSrcDir(contentDir);
   if (!fs.existsSync(srcDir)) die(`No slides/ beside ${contentDir} - nothing to build`);
   const outRoot = path.join(contentDir, 'slides');
+  /* A deck's published prefix is course-scoped, so the build has to know whose course this
+   * is before it can set `--base`. Read here rather than passed as a flag: course.json is
+   * already the one place a course states its id, and a flag would be a second one that
+   * could disagree with what build.mjs wrote into index.json. */
+  const courseFile = path.join(contentDir, 'course.json');
+  if (!fs.existsSync(courseFile)) die(`No course.json in ${contentDir} - cannot tell whose decks these are`);
+  const courseId = JSON.parse(fs.readFileSync(courseFile, 'utf8')).id;
+  if (!courseId) die(`course.json in ${contentDir} has no id`);
 
   const sources = deckFiles(srcDir);
-  if (!sources.size) die(`No topic-*.md in ${srcDir}`);
+  if (!sources.size) die(`No unit-*.md in ${srcDir}`);
   const decks = await readDecks(srcDir, {
-    onError: (topic, msg) => console.error(`  ! ${topic}: ${msg}`),
+    onError: (unit, msg) => console.error(`  ! ${unit}: ${msg}`),
   });
   if (!decks.size)
     die(`@slidev/parser is not installed in ${srcDir} - run npm ci there first`);
 
   // What to build.
-  let topics, why = 'no filter given, so all of them';
+  let units, why = 'no filter given, so all of them';
   let reasons = new Map();
   if (has('only')) {
-    topics = String(flag('only')).split(',').map(s => s.trim()).filter(Boolean);
-    const unknown = topics.filter(t => !decks.has(t));
+    units = String(flag('only')).split(',').map(s => s.trim()).filter(Boolean);
+    const unknown = units.filter(u => !decks.has(u));
     if (unknown.length) die(`no deck for ${unknown.join(', ')}`);
     why = '--only';
   } else if (has('since')) {
     const since = String(flag('since'));
     const changed = changedSince(since, path.dirname(srcDir));
     if (changed === null) {
-      topics = [...decks.keys()];
+      units = [...decks.keys()];
       why = `cannot diff against ${since.slice(0, 8)} - falling back to every deck`;
     } else {
       const a = affectedDecks(decks, changed);
-      ({ topics, reasons } = a);
+      ({ units, reasons } = a);
       why = a.global.length
         ? `shared files changed (${a.global.slice(0, 3).join(', ')}`
           + `${a.global.length > 3 ? `, +${a.global.length - 3} more` : ''}), so every deck`
         : `${changed.length} file(s) changed since ${since.slice(0, 8)}`;
     }
   } else {
-    topics = [...decks.keys()];
+    units = [...decks.keys()];
   }
-  topics.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+  units.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
 
-  console.log(`slides: ${topics.length} of ${decks.size} deck(s) to build - ${why}`);
+  console.log(`slides: ${units.length} of ${decks.size} deck(s) to build - ${why}`);
   // Said out loud, because the failure mode of selective building is publishing less than
   // you meant to and never finding out.
-  for (const t of topics) {
-    const r = [...new Set(reasons.get(t) || [])];
-    console.log(`  ${t}${r.length ? `  <- ${r.join(', ')}` : ''}`);
+  for (const u of units) {
+    const r = [...new Set(reasons.get(u) || [])];
+    console.log(`  ${u}${r.length ? `  <- ${r.join(', ')}` : ''}`);
   }
   if (flags.list) return;
-  if (!topics.length) { writeManifest(outRoot, [], [...decks.keys()]); return; }
+  if (!units.length) { writeManifest(outRoot, courseId, [], [...decks.keys()]); return; }
 
   // Resolved from the course's own node_modules rather than npx: npx would happily go to
   // the network for a Slidev that must match the theme and the lockfile.
@@ -499,21 +507,21 @@ async function cmdSlides() {
   if (!fs.existsSync(bin)) die(`slidev is not installed in ${srcDir} - run npm ci there first`);
 
   const t0 = Date.now();
-  for (const [i, topic] of topics.entries()) {
-    const out = path.join(outRoot, topic);
-    console.log(`\n[${i + 1}/${topics.length}] building ${topic}`);
+  for (const [i, unit] of units.entries()) {
+    const out = path.join(outRoot, unit);
+    console.log(`\n[${i + 1}/${units.length}] building ${unit}`);
     // --base has to match where the deck lands, or every asset it asks for 404s in
     // production while working perfectly from a dev server at the root.
     const r = spawnSync(bin, [
-      'build', sources.get(topic),
-      '--base', `/slides/${topic}/`,
+      'build', sources.get(unit),
+      '--base', `/${deckPrefix(courseId, unit)}/`,
       '--out', path.relative(srcDir, out),
     ], { cwd: srcDir, stdio: 'inherit' });
-    if (r.status !== 0) die(`slidev build failed for ${topic}`);
+    if (r.status !== 0) die(`slidev build failed for ${unit}`);
 
     /* THE PDF IS PART OF BUILDING A DECK, not a separate errand.
      *
-     * The player's download button is derived from the topic having a deck at all - the
+     * The player's download button is derived from the unit having a deck at all - the
      * same decoupling the Slides button needs - so "has a deck" must imply "has a PDF" or
      * the button 404s for a student and nothing anywhere says why. Making it a step of this
      * loop is what keeps that true; a `--pdf` opt-in would drift the moment someone forgot
@@ -528,24 +536,24 @@ async function cmdSlides() {
      * Both are per-deck, so a selective run pays it only for the decks it touched. */
     if (!flags['no-pdf']) {
       const e = spawnSync(bin, [
-        'export', sources.get(topic),
+        'export', sources.get(unit),
         '--output', path.relative(srcDir, path.join(out, 'slides.pdf')),
         '--with-toc',
       ], { cwd: srcDir, stdio: 'inherit' });
       if (e.status !== 0)
-        die(`slidev export failed for ${topic}`
+        die(`slidev export failed for ${unit}`
           + ' - if Playwright has no browser, run `npx playwright install chromium-headless-shell`'
           + ' in the course\'s slides/, or pass --no-pdf to build decks without them');
       const pdf = path.join(out, 'slides.pdf');
       if (fs.existsSync(pdf)) console.log(`  slides.pdf  ${mb(fs.statSync(pdf).size)}`);
     }
 
-    const p = pruneAssets(out, decks.get(topic).images);
+    const p = pruneAssets(out, decks.get(unit).images);
     if (p.removed)
       console.log(`  pruned ${p.removed} unused file(s), ${mb(p.freed)} - ${p.kept} kept`);
   }
-  writeManifest(outRoot, topics, [...decks.keys()]);
-  console.log(`\nbuilt ${topics.length} deck(s) in ${Math.round((Date.now() - t0) / 1000)}s`);
+  writeManifest(outRoot, courseId, units, [...decks.keys()]);
+  console.log(`\nbuilt ${units.length} deck(s) in ${Math.round((Date.now() - t0) / 1000)}s`);
 }
 
 /* Repo-relative paths changed between <sha> and the working tree. Null - not an empty list
@@ -563,7 +571,7 @@ function changedSince(sha, repoDir) {
 
 /* Drop the copied public/ files this deck never asks for.
  *
- * Slidev copies public/ wholesale into every build. public/ is 77MB of every topic's
+ * Slidev copies public/ wholesale into every build. public/ is 77MB of every unit's
  * figures, so a deck for 1.1.1 shipped 1.10.4's images and 59 decks shipped the same 77MB
  * 59 times - measured at 84MB and 861 objects for one deck, of which 6.4MB was the deck.
  * That, not the build time, was the reason a one-slide typo re-uploaded gigabytes.
@@ -615,12 +623,19 @@ function prunEmpty(dir) {
  * throws the moment the first deck finishes building. */
 function mb(bytes) { return `${(bytes / 1048576).toFixed(1)}MB`; }
 
-function writeManifest(outRoot, built, all) {
+/* What this run produced, for the publish step.
+ *
+ * `course` is in here so the pipeline reads the deck prefix rather than reconstructing it.
+ * A deck's published path is `slides/<course>/<unit>/` and three things have to agree on
+ * it - `--base` above, `slides:` in index.json, and the `aws s3 sync` destination. The
+ * first two share `deckPrefix`; carrying the course id through the manifest is what stops
+ * the third being a fourth opinion written in YAML, where nothing would ever test it. */
+function writeManifest(outRoot, course, built, all) {
   fs.mkdirSync(outRoot, { recursive: true });
   // Dot-prefixed and never copied to dist: build.mjs only carries directories that hold an
   // index.html, so this stays on the build machine where it belongs.
   fs.writeFileSync(path.join(outRoot, '.built.json'),
-    JSON.stringify({ built, all }, null, 2));
+    JSON.stringify({ course, built, all }, null, 2));
 }
 
 async function cmdBundle() {
