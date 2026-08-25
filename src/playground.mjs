@@ -199,11 +199,21 @@ function readFiles(s, label, claimed, bad) {
  * published at. What the cross-repo and publish-time checks resolve, and what the size
  * stamp walks.
  */
+/* WHERE A BORROWED THING IS PUBLISHED, relative to its owning course's content prefix.
+ *
+ * One definition, because three things have to agree about it and they run in three
+ * different places: `borrowed()` below, the sibling-checkout check, and the pipeline
+ * resolving against the live bucket. A dataset always publishes as a single `<name>.sql`
+ * even when it was authored as a directory of files - the builder concatenates - so this is
+ * the published shape, not the authored one. */
+export const publishedPath = ref =>
+  ref.unit ? `data/${ref.unit}/${ref.name}` : `data/${ref.name}.sql`;
+
 export function borrowed(manifest) {
   const sql = (manifest?.sql?.sets || []).flatMap(s => s.datasets || [])
-    .map(d => ({ kind: 'dataset', course: d.course, name: d.name, path: `data/${d.name}.sql` }));
+    .map(d => ({ kind: 'dataset', course: d.course, name: d.name, path: publishedPath(d) }));
   const py = (manifest?.python?.sets || []).flatMap(s => s.files || [])
-    .map(f => ({ kind: 'file', course: f.course, name: f.name, path: `data/${f.unit}/${f.name}` }));
+    .map(f => ({ kind: 'file', course: f.course, name: f.name, path: publishedPath(f) }));
   const seen = new Set();
   return [...sql, ...py].filter(r => {
     const k = `${r.course} ${r.path}`;
@@ -327,4 +337,73 @@ export function checkAgainst(manifest, contentDirs) {
   }
 
   return { problems, notes };
+}
+
+/* ------------------------------------------------------------------------------------
+ * Resolving against what is ACTUALLY PUBLISHED, and stamping the sizes in.
+ *
+ * THIS IS THE LOAD-BEARING CHECK. The structural one sees only the manifest; the
+ * sibling-checkout one sees a working copy that may be ahead of or behind the bucket. This
+ * one asks the bucket, which is the thing a student's browser will ask. A renamed dataset
+ * is invisible to the repo that borrows it - the manifest still parses, the build still
+ * succeeds, and the failure arrives as a set that will not load, in front of a student.
+ *
+ * IT ALSO STAMPS THE SIZE, and that is not a bolt-on. The picker has to say a set is 13MB
+ * BEFORE it is loaded, and the player cannot know without fetching - which is exactly what
+ * the label exists to prevent. The bucket is the only place the honest number exists, so
+ * the check that visits it is the one that should carry it back. The authored manifest and
+ * the published one therefore differ, the same way an exercise's markdown and its
+ * index.json entry do.
+ * ---------------------------------------------------------------------------------- */
+
+/**
+ * Parse `aws s3 ls --recursive` output into a map of `<course>/<path>` -> bytes.
+ *
+ * The raw listing rather than something jq-shaped, on purpose: the pipeline should not have
+ * to reformat before it can ask a question, and a reformatting step is one more place for a
+ * key to end up built differently from the way `publishedPath` builds it.
+ */
+export function readListing(text, prefix = 'content/') {
+  const sizes = new Map();
+  for (const line of String(text).split('\n')) {
+    // date time size key. Split off exactly three leading fields - a key may contain spaces.
+    const m = /^\s*\S+\s+\S+\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    const key = m[2];
+    if (!key.startsWith(prefix)) continue;
+    sizes.set(key.slice(prefix.length), Number(m[1]));
+  }
+  return sizes;
+}
+
+/**
+ * Check every borrowed reference against a listing, and return a copy of the manifest with
+ * `bytes` stamped on each entry.
+ *
+ * `{ problems, manifest, total }` - a problem is a reference the bucket does not have, and
+ * `total` is bytes per language, for the log.
+ */
+export function resolveAgainst(manifest, sizes) {
+  const problems = [];
+  const out = JSON.parse(JSON.stringify(manifest || {}));
+  const total = {};
+  for (const lang of LANGUAGES) {
+    if (!out[lang]) continue;
+    let bytes = 0;
+    for (const set of out[lang].sets || []) {
+      for (const ref of [...(set.datasets || []), ...(set.files || [])]) {
+        const path = publishedPath(ref);
+        const n = sizes.get(`${ref.course}/${path}`);
+        if (n === undefined) {
+          problems.push(`${MANIFEST}: ${lang} set "${set.id}" borrows ${ref.course}/${path}, `
+            + 'which is not published on this site');
+          continue;
+        }
+        ref.bytes = n;
+        bytes += n;
+      }
+    }
+    total[lang] = bytes;
+  }
+  return { problems, manifest: out, total };
 }

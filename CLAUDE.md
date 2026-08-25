@@ -256,7 +256,15 @@ part that constrains other work.
   places, none of which subsumes another - structure in `verify`, resolution and collisions
   in `verify` *with the lender's content dir passed*, and the load-bearing one against the
   bucket in the pipeline. **A lender that is not checked out is reported as skipped, never
-  assumed fine.** The pipeline half of that is not built yet.
+  assumed fine.**
+- **The pipeline check runs BEFORE the content sync**, so a playground borrowing something
+  absent never reaches the bucket. Split deliberately: `icecore playground dist --lenders`
+  names the courses, the workflow does the `aws s3 ls`, and `--sizes <listing>` resolves and
+  **stamps the byte counts in**. The credentials stay in the workflow and the resolution
+  stays in icecore - written as YAML it would live somewhere nothing tests. The published
+  manifest therefore differs from the authored one, the same way `index.json` differs from
+  the exercise markdown, and the picker's "13 MB" comes from the bucket rather than from
+  anyone typing it.
 - **A course is a playground because it has a manifest**, and it is `open` because
   `course.json` says so. Two different things: `playground` decides which screen renders,
   `open` decides whose grid it appears on without an enrolment row. Both derived from their

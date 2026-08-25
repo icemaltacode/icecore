@@ -78,6 +78,20 @@ const running = ref(false);
 
 const loaded = computed(() => sets.value.filter(s => state.value[s.id] === 'loaded'));
 
+/* HOW BIG A SET IS, BEFORE IT IS LOADED.
+ *
+ * The whole mitigation for offering a 13MB set casually is that clicking it is a decision
+ * rather than a surprise - which needs the number on the button, and the player cannot know
+ * it without fetching, which is exactly what the label exists to prevent. So the publish
+ * stamps `bytes` onto each entry from what is actually in the bucket, and this adds them up.
+ *
+ * Absent is a normal state, not a broken one: a dev build never visits a bucket, and a
+ * manifest published before the pipeline learned to stamp has no sizes either. Say nothing
+ * rather than say zero. */
+const size = set => [...(set.datasets || []), ...(set.files || [])]
+  .reduce((n, r) => (r.bytes ? n + r.bytes : n), 0);
+const human = n => (n >= 1048576 ? `${Math.round(n / 1048576)} MB` : `${Math.round(n / 1024)} KB`);
+
 async function refresh() {
   try { tables.value = await schema(); } catch { tables.value = []; }
 }
@@ -175,6 +189,7 @@ onMounted(() => { database().then(refresh, () => {}); });
                   @click="load(s)">
             <span class="row">
               <span class="name">{{ s.title }}</span>
+              <span v-if="size(s) && !state[s.id]" class="bytes">{{ human(size(s)) }}</span>
               <span class="mark">{{ state[s.id] === 'loaded' ? 'loaded'
                                   : state[s.id] === 'loading' ? 'loading…' : 'load' }}</span>
             </span>
@@ -290,6 +305,11 @@ onMounted(() => { database().then(refresh, () => {}); });
 .set .name { font-size: 13px; font-weight: 600; }
 /* The state, not the action, when it is loaded - the button stays pressable because
    pressing it again is harmless, but it must not keep saying "load" once it has. */
+/* The size sits between the name and the action, and goes once the set is loaded - it is
+   there to inform the decision, and after the decision it is just noise. */
+.set .bytes { margin-left: auto; font-family: var(--ice-font-mono); font-size: 9.5px;
+              color: var(--ice-fg-muted); }
+.set .row:has(.bytes) .mark { margin-left: 8px; }
 .set .mark { margin-left: auto; font-family: var(--ice-font-mono); font-size: 9.5px;
              letter-spacing: .05em; text-transform: uppercase; color: var(--ice-fg-muted); }
 .set.on { border-color: var(--ice-primary-soft); background: var(--ice-raise-soft); }

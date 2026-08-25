@@ -680,14 +680,20 @@ Roughly in the order they are worth doing.
 2. **The data browser** - table list, paginated grid, search, two counts. `DataGrid` is
    already the renderer it needs; what is missing is the chrome and, for Python, the plain
    JavaScript CSV parse so the pane works before Pyodide is up.
-3. **The publish-time check.** The pipeline is the load-bearing resolver - the local one
-   sees a checkout, which may be ahead of or behind the bucket - and it is also where sizes
-   get stamped. Nothing checks a playground's borrowings against the bucket today.
-4. **Sizes in the picker.** Waiting on 3; the player cannot know before fetching, and
-   fetching to find out is the thing the label exists to prevent.
-5. **The AI assistant** - new route on the hint Lambda, read-only, shape plus three sample
+3. **The AI assistant** - new route on the hint Lambda, read-only, shape plus three sample
    rows.
-6. **`idb://` persistence**, with the multi-tab question answered.
+4. **`idb://` persistence**, with the multi-tab question answered.
+
+### Done since
+
+- **The publish-time check.** `icecore playground <dist> --lenders` says which courses to
+  list and `--sizes <listing>` resolves against them, so the credentials stay in the
+  workflow and the logic stays somewhere testable. It runs *before* the sync, so a
+  playground borrowing something absent never reaches the bucket. Measured against the live
+  site: 7 borrowed files, 18.2MB, resolved in one `aws s3 ls` per lender.
+- **Sizes in the picker**, stamped by that same step from what is actually in the bucket -
+  the only place the honest number exists. Absent is a normal state and says nothing rather
+  than zero, because a dev build never visits a bucket.
 
 ### A collision that already exists
 

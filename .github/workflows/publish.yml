@@ -293,6 +293,49 @@ jobs:
           role-to-assume: ${{ inputs.aws-role-arn }}
           aws-region: ${{ inputs.aws-region }}
 
+      # THE ONLY CHECK THAT SEES THE REAL DEPENDENCY.
+      #
+      # A playground borrows its datasets from other courses, published by other pipelines
+      # from other repos. Nothing in its own repo can see them: `verify` checks the manifest
+      # is well formed, and `verify` with sibling checkouts checks a working copy that may
+      # be ahead of or behind what is actually live. Only the bucket knows what a student's
+      # browser will find.
+      #
+      # Without this a renamed dataset publishes green - the manifest still parses, the
+      # build still succeeds - and surfaces as a set that will not load, in front of a
+      # student, with nothing anywhere saying why.
+      #
+      # It STAMPS as well as checks: the picker has to say a set is 13MB before loading it,
+      # and the player cannot know without fetching, which is the thing the label exists to
+      # prevent. So the manifest that ships is not the one the repo authored, the same way
+      # index.json is not the exercise markdown.
+      #
+      # Before the sync, deliberately. A playground that borrows something absent must not
+      # reach the bucket at all.
+      #
+      # The listing stays here and the logic stays in icecore: this needs credentials and
+      # `icecore playground` must not want any. Reimplementing the resolution as YAML would
+      # put it somewhere nothing tests.
+      - name: Resolve what the playground borrows
+        env:
+          BUCKET: ${{ inputs.site-bucket }}
+        run: |
+          set -euo pipefail
+          mapfile -t lenders < <(./node_modules/.bin/icecore playground dist --lenders)
+          if [ ${#lenders[@]} -eq 0 ]; then
+            echo "no playground in this build - nothing to resolve"
+            exit 0
+          fi
+          listing=$(mktemp)
+          for course in "${lenders[@]}"; do
+            echo "listing content/$course/data/"
+            # A lender with no prefix at all exits non-zero and lists nothing, which is not
+            # an error here: it becomes "borrows something this site does not publish",
+            # named per file, which is the message worth reading.
+            aws s3 ls "s3://$BUCKET/content/$course/data/" --recursive >> "$listing" || true
+          done
+          ./node_modules/.bin/icecore playground dist --sizes "$listing"
+
       - name: Publish
         env:
           BUCKET: ${{ inputs.site-bucket }}

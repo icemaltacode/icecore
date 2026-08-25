@@ -21,7 +21,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
 import { slidesSrcDir, deckFiles, readDecks, affectedDecks } from '../src/decks.mjs';
-import { checkAgainst } from '../src/playground.mjs';
+import { checkAgainst, borrowed, readListing, resolveAgainst, MANIFEST }
+  from '../src/playground.mjs';
 import { compareResults } from '../app/src/compare.js';
 import { validate as validateDragDrop, allItems } from '../app/src/dragdrop.js';
 
@@ -36,7 +37,7 @@ const cmd = argv[0];
 // `--name value` and `--name=value` are accepted. Flags take a value unless they are named
 // here, and a missing value is an error rather than a silent boolean: `--since` with
 // nothing after it must not quietly mean "rebuild everything".
-const BOOLEAN = new Set(['list', 'dry-run', 'no-pdf']);
+const BOOLEAN = new Set(['list', 'dry-run', 'no-pdf', 'lenders']);
 const flags = {};
 const positional = [];
 for (let i = 1; i < argv.length; i++) {
@@ -79,6 +80,7 @@ switch (cmd) {
   case 'dev':    await cmdDev(); break;
   case 'bundle': await cmdBundle(); break;
   case 'slides': await cmdSlides(); break;
+  case 'playground': await cmdPlayground(); break;
   default:
     console.log(`icecore - ICE practice platform
 
@@ -88,6 +90,10 @@ switch (cmd) {
   icecore dev    [contentDir...] [--port n]   run the player against a content directory
                  [--as student|admin|signin]  ...as a signed-in user, with no AWS
   icecore bundle [contentDir...] [--out dir] build a deployable site (app + content)
+  icecore playground <distDir>              resolve a playground's borrowed datasets
+                 [--lenders]                  ...list the courses it borrows from
+                 [--sizes <file>]             ...against an "aws s3 ls --recursive"
+                                                 listing, and stamp the sizes in
   icecore slides [contentDir]               build the course's per-topic decks
                                             (and export each one to slides.pdf; --no-pdf skips)
                  [--since <sha>]              ...only those a change since <sha> affects
@@ -98,6 +104,74 @@ contentDir defaults to ./content. build, dev and bundle take one per course - a 
 may carry several - while slides works on the first. verify grades the first and reads any
 others as lenders, for a playground whose sets borrow their datasets from them.`);
     process.exit(cmd ? 1 : 0);
+}
+
+/* THE LOAD-BEARING CHECK ON A PLAYGROUND, run by the publish pipeline.
+ *
+ * A playground borrows its datasets from other courses, published by other pipelines from
+ * other repos. Nothing in its own repo can see them: `verify` checks structure, and
+ * `verify` with sibling checkouts checks a working copy that may be ahead of or behind
+ * what is actually live. Only the bucket knows what a student's browser will find.
+ *
+ * TWO MODES, BECAUSE THE LISTING IS THE PIPELINE'S JOB. This command has no AWS credentials
+ * and should not want any - `--lenders` says which courses to list, the workflow lists
+ * them, and `--sizes` resolves against the result. Keeping the S3 call in the workflow and
+ * the logic here is what stops this being reimplemented as untested YAML.
+ *
+ * It stamps as well as checks. The picker has to say a set is 13MB before loading it, and
+ * the bucket is the only place that number honestly exists.
+ *
+ * A dist with no playground in it is a no-op that succeeds, so the pipeline can call this
+ * unconditionally rather than guessing whether this repo is one.
+ */
+async function cmdPlayground() {
+  const distDir = path.resolve(positional[0] || 'dist');
+  const contentOut = path.join(distDir, 'content');
+  if (!fs.existsSync(contentOut)) die(`No ${path.relative(process.cwd(), contentOut)} - build first`);
+
+  // Every course in this dist that published a manifest. Usually one; a multi-course build
+  // could hold more, and nothing here needs to care which.
+  const found = [];
+  for (const id of fs.readdirSync(contentOut)) {
+    const file = path.join(contentOut, id, MANIFEST);
+    if (fs.existsSync(file)) found.push({ id, file, manifest: JSON.parse(fs.readFileSync(file, 'utf8')) });
+  }
+  if (!found.length) {
+    if (!has('lenders')) console.log('no playground in this build - nothing to resolve');
+    return;
+  }
+
+  if (has('lenders')) {
+    // Bare ids on stdout, one per line: the workflow loops over them. Everything else this
+    // command says goes to stderr so the loop is never fed a log line.
+    const ids = [...new Set(found.flatMap(f => borrowed(f.manifest).map(r => r.course)))].sort();
+    for (const id of ids) console.log(id);
+    return;
+  }
+
+  if (!has('sizes')) die('icecore playground needs --lenders or --sizes <file>');
+  const listing = String(flag('sizes'));
+  if (!fs.existsSync(listing)) die(`No listing at ${listing}`);
+  const sizes = readListing(fs.readFileSync(listing, 'utf8'));
+  console.log(`resolving against ${sizes.size} published object(s)`);
+
+  const bad = [];
+  for (const { id, file, manifest } of found) {
+    const { problems, manifest: stamped, total } = resolveAgainst(manifest, sizes);
+    bad.push(...problems.map(p => `${id}: ${p}`));
+    if (problems.length) continue;
+    fs.writeFileSync(file, JSON.stringify(stamped, null, 2));
+    const said = Object.entries(total)
+      .map(([lang, n]) => `${lang} ${(n / 1048576).toFixed(1)}MB`).join(', ');
+    console.log(`  ${id}: ${borrowed(manifest).length} borrowed file(s) resolved and sized (${said})`);
+  }
+
+  if (bad.length) {
+    console.error('\nA playground borrows something this site does not publish:\n');
+    for (const b of bad) console.error(`  ${b}`);
+    console.error('\nEither the lending course has not published yet, or a dataset was renamed.');
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
