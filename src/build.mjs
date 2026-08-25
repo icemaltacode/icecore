@@ -845,7 +845,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
                         wheelDir: WHEEL_DIR, dataDir: path.join(contentDir, 'data'),
                         exercises: [] });
       jobs.get(set).exercises.push({
-        key, unit, setup: ex.setup, seed: seedFor(ex),
+        key, dataDir: mod, setup: ex.setup, seed: seedFor(ex),
         steps: (ex.steps || []).map(st => ({ solution: st.solution, sct: st.sct })),
       });
       outcomes.set(key, { u, ex });

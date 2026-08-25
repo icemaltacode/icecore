@@ -34,15 +34,17 @@ const grader = await createGrader({
   readWheel: name => fs.promises.readFile(path.join(job.wheelDir, name)),
 });
 
-/* Mounted once per unit, per process. A unit's files are shared by its exercises and some
- * are megabytes; re-reading them per exercise would dwarf the grading. */
+/* Mounted once per data directory, per process. A DataCamp course's files are shared by
+ * every exercise in it and some are megabytes; re-reading them per exercise would dwarf
+ * the grading. The directory is a module's - `module-4` - which the caller decides; this
+ * only joins it to job.dataDir. */
 const mounted = new Set();
-const mount = unit => {
-  const at = `/ice-data/${unit}`;
-  if (mounted.has(unit)) return at;
-  mounted.add(unit);
+const mount = sub => {
+  const at = `/ice-data/${sub}`;
+  if (mounted.has(sub)) return at;
+  mounted.add(sub);
   pyodide.FS.mkdirTree(at);
-  const dir = path.join(job.dataDir, unit);
+  const dir = path.join(job.dataDir, sub);
   for (const f of (fs.existsSync(dir) ? fs.readdirSync(dir) : []))
     if (fs.statSync(path.join(dir, f)).isFile())
       pyodide.FS.writeFile(`${at}/${f}`, fs.readFileSync(path.join(dir, f)));
@@ -51,7 +53,7 @@ const mount = unit => {
 
 const results = [];
 for (const ex of job.exercises) {
-  const cwd = mount(ex.unit);
+  const cwd = mount(ex.dataDir);
   const outcome = { setupError: null, steps: [] };
   for (const step of ex.steps) {
     if (!step.solution || !step.sct) { outcome.steps.push(null); continue; }
