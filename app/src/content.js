@@ -22,6 +22,13 @@ export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.jso
  * is one. */
 export const loadPlayground = id => json(`${BASE}${encodeURIComponent(id)}/playground.json`);
 
+/* A topic's speaker notes, by composed-deck slide number. Fetched per topic and only when
+ * a student opens the panel: 880KB across a course, 11KB for the one they are reading.
+ * Absent for a topic whose deck has none, so a miss is a normal answer rather than an
+ * error - the caller treats it as "no notes". */
+export const loadNotes = (courseId, topic) =>
+  json(`${BASE}${encodeURIComponent(courseId)}/notes/${encodeURIComponent(topic)}.json`);
+
 /** A course's card image, published beside its content and named in the manifest. */
 export const courseImage = rel => `${BASE}${rel}`;
 

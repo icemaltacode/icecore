@@ -51,7 +51,14 @@ const host = ref(null);
 const dragging = ref(false);
 
 const horizontal = computed(() => props.direction === 'row');
-const style = computed(() => (props.single ? {} : { flex: `0 0 ${size.value}%` }));
+/* `single` has to GROW the pane, not merely stop constraining it. Leaving flex unset falls
+ * back to `flex: 0 1 auto`, so the pane sizes to its own content along the split axis - and
+ * a pane whose child is `flex: 1` inside a cross-axis flex column has no content width to
+ * measure, so it collapses to nothing and takes the whole layout with it. That is not a
+ * theoretical edge: it is what hiding the notes did to the slides. */
+const style = computed(() => (props.single
+  ? { flex: '1 1 auto' }
+  : { flex: `0 0 ${size.value}%` }));
 
 const remember = () => {
   if (props.storageKey) localStorage.setItem(KEY(props.storageKey), String(size.value));

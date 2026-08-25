@@ -97,6 +97,28 @@ export function sectionsOf(slides) {
   return out;
 }
 
+/* The speaker notes, keyed by COMPOSED-DECK slide number - the same numbering a section's
+ * range and a deep link use, and the only one that means anything once `src:` includes are
+ * resolved. Sparse: about a quarter of slides have no note, and an entry for each of those
+ * would be three quarters of a file saying nothing.
+ *
+ * Raw markdown, not HTML. Slidev renders these itself in its presenter view and the player
+ * has its own markdown renderer for exercise prose; handing the player the source means one
+ * renderer and one set of typography rather than two that drift.
+ *
+ * These are worth showing a student BECAUSE of how they are written - the house rule is
+ * that a note is a handout, not a stage direction, so there is nothing in them addressed to
+ * a presenter. That is a property of the content, not of this function; a course that wrote
+ * "remember to pause here" notes would be publishing them to students too. */
+export function notesOf(slides) {
+  const out = {};
+  slides.forEach((s, i) => {
+    const note = String(s.note || '').trim();
+    if (note) out[i + 1] = note;
+  });
+  return out;
+}
+
 /**
  * Everything the platform wants to know about one deck.
  *
@@ -117,6 +139,7 @@ export async function readDeck(srcDir, topic, file) {
     file,
     slides: data.slides.length,
     sections: sectionsOf(data.slides),
+    notes: notesOf(data.slides),
     includes,
     images: imagesUsedBy(srcDir, data, includes),
   };

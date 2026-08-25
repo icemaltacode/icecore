@@ -26,6 +26,11 @@ const PATHS = {
   // a play triangle. Stroked rather than filled like the rest of the set, so it sits at the
   // same visual weight as its neighbours instead of reading as a heavier glyph.
   run: 'M7 4.5v15l13-7.5-13-7.5Z',
+  // lines of prose on a page: a note, not a document icon and not a speech bubble
+  notes: 'M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M8 8h8M8 12h8M8 16h5',
+  // which way the divider runs - the pane arrangement, not an action
+  rows: 'M4 4h16v7H4zM4 13h16v7H4z',
+  columns: 'M4 4h7v16H4zM13 4h7v16h-7z',
 };
 </script>
 

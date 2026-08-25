@@ -109,6 +109,23 @@ never shown to a student.
   `[slide, end]` on `hashchange`, because Slidev's Next walks the whole topic deck and
   paging out of a section skips the exercises interleaved after it. `hashchange` rather than
   the controls: arrows, keys, swipe and clicking a slide in the overview all end up there.
+- **Speaker notes are shown to students**, in a panel beside the slide step. That is only
+  safe because of the house rule that a note is a handout rather than a stage direction -
+  it is a property of the content, not of the code, and a course that wrote "pause here"
+  notes would be publishing those too. `decks.mjs` yields them from the same parse as the
+  sections and the include graph; they are derived from the deck **source**, so a topic has
+  notes on exactly the terms it has a Slides button.
+- **The notes text ships per topic, the count ships in `index.json`.** 880KB across the
+  Data Analyst course against ~11KB for one topic, so putting the prose in `index.json`
+  would be a quarter of it for something a student reads one topic of. The per-topic count
+  is what lets the player offer the panel - or not - without a request that might come back
+  empty. Notes are raw markdown rendered by the player's own `md.js`: one renderer, one set
+  of typography. Nothing in them references an image or a link today, which is what makes
+  that free.
+- **The notes panel follows the FRAME, not the step.** A slide step is a range and the
+  student pages through it inside the iframe, so the panel rides the same patched
+  `pushState` the section clamp uses. A listener on `hashchange` alone sees nothing -
+  vue-router's hash mode drives the History API directly.
 - **Which nav controls a student gets lives in `slidev-theme-ice/styles/nav.css`**, not in
   CSS the player injects. A deck is also watched in a tab, at its published URL, and under
   `slidev dev`; the set has to be the same in all of them. Matched on each button's `title`,

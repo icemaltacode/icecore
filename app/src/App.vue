@@ -366,6 +366,8 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
           v-else-if="current?.kind === 'slides'"
           :key="current.id"
           :deck="currentTopic?.slides"
+          :course-id="course.id"
+          :note-count="currentTopic?.notes"
           :row="current" />
         <component
           v-else-if="current"

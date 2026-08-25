@@ -10,14 +10,23 @@
  * It is also why the student can page through the section with the deck's own keyboard
  * shortcuts once they have clicked into it.
  */
-import { computed, ref } from 'vue';
+import { computed, ref, watch, onMounted } from 'vue';
 import DeckActions from './DeckActions.vue';
+import SplitPane from './SplitPane.vue';
+import Icon from './Icon.vue';
+import { loadNotes } from '../content.js';
+import { md } from '../md.js';
 
 const props = defineProps({
   /* `slides` off the topic - `slides/1.1.1/index.html`, or an absolute URL when a deck
    * lives somewhere else entirely. */
   deck: String,
   row: Object,     // the walk row: title, slide, end
+  courseId: String,
+  /* How many of the topic's slides carry a note, off the topic in index.json. A count
+   * rather than the notes themselves, so the button can be offered - or not - without a
+   * request that might come back empty. */
+  noteCount: Number,
 });
 
 const base = computed(() => /^https?:\/\//.test(props.deck || '')
@@ -33,6 +42,55 @@ const count = computed(() => (props.row.end - props.row.slide) + 1);
 const range = computed(() => props.row.total
   ? `${props.row.slide}\u2013${props.row.end} of ${props.row.total}`
   : `${count.value} slide${count.value === 1 ? '' : 's'}`);
+
+/* THE SPEAKER NOTES, BESIDE THE SLIDE.
+ *
+ * Slidev keeps these for the presenter, and a student reading the deck on their own never
+ * sees them - which is a waste here specifically, because the house rule is that a note is
+ * a handout rather than a stage direction. They are written to be read by the person
+ * looking at the slide.
+ *
+ * FOLLOWS THE FRAME, not the step. A slide step is a RANGE, and the student pages through
+ * it inside the iframe, so the panel has to track where they actually are rather than where
+ * the step began. The hash is the only thing that knows, and it is already being watched
+ * for the clamp below - so the note follows for free rather than needing its own mechanism.
+ *
+ * FETCHED ON FIRST OPEN, not on mount. 11KB for a topic is nothing, but a student who never
+ * opens the panel should not pay for it on every slide step in the course. Cached per topic
+ * because paging between two sections of one deck remounts this component. */
+const NOTES_OPEN = 'ice-notes-open';
+const NOTES_SIDE = 'ice-notes-side';
+/* Right by default: on a wide window the stage is limited by HEIGHT, so the notes take
+ * horizontal room the slide could not have used anyway. Narrow, that reverses - hence the
+ * side being a choice rather than a constant, and remembered. */
+const showNotes = ref(localStorage.getItem(NOTES_OPEN) === 'yes');
+const side = ref(localStorage.getItem(NOTES_SIDE) === 'column' ? 'column' : 'row');
+watch(showNotes, v => localStorage.setItem(NOTES_OPEN, v ? 'yes' : 'no'));
+watch(side, v => localStorage.setItem(NOTES_SIDE, v));
+
+const notes = ref(null);          // slide number -> markdown
+const notesError = ref('');
+const current = ref(props.row.slide);
+
+const cache = new Map();
+async function fetchNotes() {
+  if (notes.value || !props.courseId || !props.row?.topicId) return;
+  const key = `${props.courseId}/${props.row.topicId}`;
+  if (!cache.has(key)) cache.set(key, loadNotes(props.courseId, props.row.topicId));
+  try { notes.value = await cache.get(key); }
+  catch (e) {
+    // A topic whose deck has no notes publishes no file. Not an error worth a red banner -
+    // the panel just says there are none.
+    cache.delete(key);
+    notesError.value = String(e.message || e);
+    notes.value = {};
+  }
+}
+watch(showNotes, open => { if (open) fetchNotes(); });
+onMounted(() => { if (showNotes.value) fetchNotes(); });
+
+const note = computed(() => notes.value?.[current.value] || '');
+const noteHtml = computed(() => (note.value ? md(note.value) : ''));
 
 /* SHOW SLIDEV'S OWN CONTROL BAR.
  *
@@ -108,6 +166,12 @@ const onLoad = () => {
 
   const { slide: lo, end: hi } = props.row;
   const at = () => Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]) || 0;
+  /* The notes panel rides on the clamp's hash watch rather than installing a second one.
+   * Same reasoning as the clamp itself: vue-router hash mode drives pushState and fires no
+   * hashchange, so anything watching the hash on its own would sit still while the deck
+   * paged happily along. Clamped into range first, so the panel never shows a note for a
+   * slide the student is being sent back from. */
+  const track = () => { const n = at(); if (n >= lo && n <= hi) current.value = n; };
   let fixing = false;
   const clamp = () => {
     const n = at();
@@ -128,11 +192,12 @@ const onLoad = () => {
    * iframe navigates or the step is left. The iframe is keyed on `src`, so moving between
    * two sections of one deck builds a new element rather than reusing this one with a stale
    * range closed over. */
+  const both = () => { clamp(); track(); };
   const push = win.history.pushState;
-  win.history.pushState = function (...a) { const r = push.apply(this, a); clamp(); return r; };
-  win.addEventListener('popstate', clamp);
-  win.addEventListener('hashchange', clamp);
-  clamp();
+  win.history.pushState = function (...a) { const r = push.apply(this, a); both(); return r; };
+  win.addEventListener('popstate', both);
+  win.addEventListener('hashchange', both);
+  both();
 };
 
 </script>
@@ -143,7 +208,23 @@ const onLoad = () => {
       <span class="eyebrow">Slides</span>
       <h2>{{ row.title }}</h2>
       <span class="count">{{ range }}</span>
-      <DeckActions class="actions" :deck="base" :open="src" :name="row.title" />
+      <div class="actions">
+        <!-- Offered only when the topic actually has notes. A toggle that opens an empty
+             panel teaches a student that the feature is broken rather than that this deck
+             is quiet. -->
+        <button v-if="noteCount" class="notesbtn" :class="{ on: showNotes }"
+                :aria-pressed="showNotes"
+                :title="showNotes ? 'Hide the notes' : `Notes (${noteCount} slides)`"
+                @click="showNotes = !showNotes">
+          <Icon name="notes" :size="15" />
+        </button>
+        <button v-if="noteCount && showNotes" class="notesbtn"
+                :title="side === 'row' ? 'Move the notes below' : 'Move the notes beside'"
+                @click="side = side === 'row' ? 'column' : 'row'">
+          <Icon :name="side === 'row' ? 'rows' : 'columns'" :size="15" />
+        </button>
+        <DeckActions :deck="base" :open="src" :name="row.title" />
+      </div>
     </header>
     <!-- The frame is held at 16:9 rather than filled to the pane. A deck letterboxes itself
          to that ratio against a BLACK #slide-container, so any other shape puts black bands
@@ -151,15 +232,39 @@ const onLoad = () => {
          as the deck using the wrong theme. Giving it exactly the shape it renders at means
          there is no letterbox to colour, and the controls sit over the slide where they
          were designed to. What is left over is the player's own themed ground. -->
-    <div class="frame">
-      <div class="stage">
-      <!-- Keyed on src so moving between two sections of the same deck reloads the frame at
-           the new hash. Without it the iframe keeps its old location: same document, and the
-           router has already consumed the hash it booted with. -->
-      <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
-              @load="onLoad"></iframe>
-      </div>
-    </div>
+    <!-- `single` rather than `v-if` on the pane: SplitPane keeps its remembered size and
+         the frame is not torn down and rebuilt - which would reload the iframe and lose the
+         student's place in the section - every time the notes are toggled. -->
+    <SplitPane class="work" :direction="side" :single="!showNotes"
+               :storage-key="`slides-notes-${side}`"
+               :initial="side === 'row' ? 68 : 62" :min="30" :max="85" :min-px="200">
+      <template #a>
+        <div class="frame">
+          <div class="stage">
+          <!-- Keyed on src so moving between two sections of the same deck reloads the frame
+               at the new hash. Without it the iframe keeps its old location: same document,
+               and the router has already consumed the hash it booted with. -->
+          <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
+                  @load="onLoad"></iframe>
+          </div>
+        </div>
+      </template>
+
+      <template #b>
+        <aside class="notes">
+          <div class="notehead">
+            <span class="eyebrow">Notes</span>
+            <span class="count">slide {{ current }}</span>
+          </div>
+          <!-- Keyed on the slide so the pane scrolls back to the top when the student
+               pages: a long note left half-scrolled under a short one reads as the panel
+               having failed to update. -->
+          <div v-if="noteHtml" :key="current" class="notebody" v-html="noteHtml"></div>
+          <p v-else-if="notes" class="quiet">No notes on this slide.</p>
+          <p v-else class="quiet">Loading…</p>
+        </aside>
+      </template>
+    </SplitPane>
   </article>
 </template>
 
@@ -176,12 +281,29 @@ const onLoad = () => {
  * Same shape as App.vue's `.bar` once rounding TopBar's corners, because TopBar's root
  * happened to be <header class="bar">. Pick a name nothing else would choose. */
 .slidestep { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; height: 100%; }
+.slidestep .work { min-height: 0; min-width: 0; }
 .slidestep > header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 12px; }
 .slidestep .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
            font-family: var(--ice-font-mono); color: var(--ice-primary-strong); }
 .slidestep h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
-.slidestep .actions { margin-left: auto; align-self: center; }
+/* The header's controls, as one group. `gap` rather than margins because the notes buttons
+   come and go - the orientation toggle only exists while the panel is open - and a margin
+   on a button that is not rendered spaces nothing. The wider gap before DeckActions says
+   these are two groups: what to do with the notes, and what to do with the deck. */
+.slidestep .actions { margin-left: auto; align-self: center;
+                      display: flex; align-items: center; gap: 4px; }
+.slidestep .actions :deep(.deckactions) { margin-left: 8px; }
+/* Same geometry as DeckActions' own buttons, deliberately: they sit in one row and a
+   control that is two pixels different from its neighbour reads as misaligned rather than
+   as distinct. */
+.slidestep .notesbtn { display: grid; place-items: center; width: 28px; height: 28px;
+                       border-radius: var(--ice-radius); color: var(--ice-fg-muted);
+                       background: none; border: 0; cursor: pointer; }
+.slidestep .notesbtn:hover { color: var(--ice-fg); background: var(--ice-bg-soft); }
+.slidestep .notesbtn:focus-visible { outline: 2px solid var(--ice-primary); outline-offset: -2px; }
+/* Pressed, not merely hovered: this one is a toggle and has to say which state it is in. */
+.slidestep .notesbtn.on { color: var(--ice-primary); background: var(--ice-primary-soft); }
 /* Centres the deck in whatever space the pane has, and owns the surround.
  *
  * THE STAGE IS THE SLIDE PLUS THE CONTROL STRIP, and it is sized so that BOTH fit. The
@@ -200,6 +322,7 @@ const onLoad = () => {
  *
  * cqw/cqh are the container's CONTENT box, so the padding is already excluded from both. */
 .slidestep .frame { --bar: 74px;
+                    flex: 1; min-height: 0; min-width: 0;
                     container-type: size;
                     display: grid; place-items: center; min-height: 0; overflow: hidden;
                     padding: 20px;
@@ -217,4 +340,25 @@ const onLoad = () => {
 .slidestep iframe { position: absolute; inset: 0; width: 100%; height: 100%;
          border: 0; background: #fff;
          border-radius: var(--ice-radius); box-shadow: 0 2px 18px var(--ice-scrim); }
+
+/* THE NOTES. Prose, so they get the reading measure and the body font rather than the
+   monospace-and-tables treatment the rest of this pane wears. */
+.slidestep .notes { flex: 1; min-height: 0; min-width: 0;
+                    display: flex; flex-direction: column;
+                    background: var(--ice-bg-soft); }
+.slidestep .notehead { display: flex; align-items: baseline; gap: 10px;
+                       padding: 14px 20px 8px; }
+.slidestep .notehead .count { margin-left: auto; }
+.slidestep .notebody { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 24px;
+                       font-size: 14px; line-height: 1.65; max-width: 72ch; }
+.slidestep .notebody :deep(p) { margin: 0 0 .8em; }
+.slidestep .notebody :deep(ul), .slidestep .notebody :deep(ol) { margin: 0 0 .8em; padding-left: 1.3em; }
+.slidestep .notebody :deep(li) { margin: 0 0 .35em; }
+.slidestep .notebody :deep(code) { font-family: var(--ice-font-mono); font-size: .88em;
+                                   background: var(--ice-raise-strong); padding: 1px 5px;
+                                   border-radius: 4px; }
+.slidestep .notebody :deep(pre) { background: var(--ice-code-bg); padding: 10px 12px;
+                                  border-radius: var(--ice-radius); overflow: auto; }
+.slidestep .notebody :deep(pre code) { background: none; padding: 0; }
+.slidestep .quiet { color: var(--ice-fg-muted); font-size: 13px; padding: 0 20px; margin: 0; }
 </style>

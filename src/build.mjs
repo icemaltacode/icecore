@@ -503,6 +503,18 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
       // which then loads the whole player inside the iframe.
       if (!u.slides && sources.has(u.topic)) u.slides = `slides/${u.topic}/index.html`;
 
+      /* How many of this topic's slides carry a note. A COUNT, not the notes themselves:
+       * 880KB of prose across the course would be a quarter of index.json for something a
+       * student only reads one topic of, so the text ships per topic and is fetched with
+       * the deck. The count is here so the player can offer the panel - or not - without
+       * a request that might come back empty.
+       *
+       * Set for every topic with a deck, not only interleaved ones: the loop below returns
+       * early for a topic whose exercises carry no `section:`, and those topics still have
+       * slides worth reading. */
+      const noted = Object.keys(decks.get(u.topic)?.notes || {}).length;
+      if (noted) u.notes = noted;
+
       /* Interleaving. A section is an annotation on a run of exercises within a topic - a
        * label and a slide range - not a level of the hierarchy that owns them. Topics still
        * hold the exercises; `section:` just groups them. That keeps "only topics are
@@ -902,6 +914,24 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         images++;
       }
 
+      /* Speaker notes, one file per topic. Under content/ like everything else the player
+       * fetches, so they inherit the content sync and the CloudFront key group - a note is
+       * course material and should be no more public than the exercise beside it.
+       *
+       * Derived from the deck SOURCE, so a topic has notes on exactly the same terms it has
+       * a Slides button: `slides/topic-<n>.md` exists. Deriving it from built output would
+       * couple the two pipelines again, and skipping the deck build would silently publish
+       * a course whose notes had all vanished. */
+      let noteFiles = 0;
+      for (const t of topicsOf(course)) {
+        const notes = decks.get(t.topic)?.notes;
+        if (!notes || !Object.keys(notes).length) continue;
+        const to = path.join(dir, 'notes', `${t.topic}.json`);
+        fs.mkdirSync(path.dirname(to), { recursive: true });
+        fs.writeFileSync(to, JSON.stringify(notes));
+        noteFiles++;
+      }
+
       // Whole directories, not single files: an app is a shell plus its own assets.
       let apps = 0;
       for (const ref of usedApps) {
@@ -963,6 +993,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
           `${units.length} units, ${topics.length} topics, ${all.length} exercises, ` +
           `${images} image${images === 1 ? '' : 's'}, ${apps} app${apps === 1 ? '' : 's'}, ` +
           `${pyFiles ? `${pyFiles} data file${pyFiles === 1 ? '' : 's'}, ` : ''}` +
+          `${noteFiles ? `notes for ${noteFiles} topic${noteFiles === 1 ? '' : 's'}, ` : ''}` +
           `datasets [${shipped.join(', ') || 'none'}]`);
       // Said out loud: a playground's whole output is one JSON file, so a build that
       // silently emitted nothing looks exactly like a build that emitted it.
