@@ -182,20 +182,39 @@ const onLoad = () => {
 .slidestep h2 { margin: 0; font-size: 18px; line-height: 1.3; }
 .slidestep .count { font-size: 11px; font-family: var(--ice-font-mono); color: var(--ice-fg-muted); }
 .slidestep .actions { margin-left: auto; align-self: center; }
-/* Centres the deck in whatever space the pane has, and owns the surround. */
-/* The extra bottom padding is the strip the control bar drops into - the stage below stays
-   exactly 16:9, and the iframe overhangs it by that much. */
+/* Centres the deck in whatever space the pane has, and owns the surround.
+ *
+ * THE STAGE IS THE SLIDE PLUS THE CONTROL STRIP, and it is sized so that BOTH fit. The
+ * previous version sized the stage at exactly 16:9 with `max-height: 100%` as the guard and
+ * had the iframe overhang it by `--bar` pixels, on the reasoning that the overhang would
+ * land in the frame's bottom padding. Two fragile things stacked, and both gave way at once
+ * on a wide window: the percentage max-height did not clamp against the grid area, so the
+ * stage grew past the frame, and the overhanging strip - the whole control bar - was then
+ * clipped clean off. Measured at 2350x1396: the frame clipped at y=1312 and the bar sat at
+ * 1435-1505. Narrower windows were fine, because the width-derived height still fit, which
+ * is what made it look like a large-window bug rather than a layout one.
+ *
+ * So: no overhang, and no percentage maximum. `min()` over container-query units states the
+ * constraint directly - the widest 16:9 slide whose strip ALSO fits the height - and the
+ * iframe simply fills the stage. Nothing can be clipped because nothing sticks out.
+ *
+ * cqw/cqh are the container's CONTENT box, so the padding is already excluded from both. */
 .slidestep .frame { --bar: 74px;
+                    container-type: size;
                     display: grid; place-items: center; min-height: 0; overflow: hidden;
-                    padding: 0 20px calc(20px + var(--bar));
+                    padding: 20px;
                     border-top: 1px solid var(--ice-border); }
-.slidestep .stage { position: relative; aspect-ratio: 16 / 9;
-                    width: 100%; max-width: 100%; max-height: 100%; }
-/* aspect-ratio with both maxima: wide panes are limited by height and tall ones by width,
-   so the frame is always exactly 16:9 and never overflows in either direction.
+.slidestep .stage { --w: min(100cqw, (100cqh - var(--bar)) * 16 / 9);
+                    position: relative;
+                    width: var(--w); height: calc(var(--w) * 9 / 16 + var(--bar)); }
+/* The strip is where Slidev's control bar lands: the injected CSS pins the slide to the top
+   of the deck's container, so the leftover height collects underneath it. The bar is white
+   with black icons there, against the iframe's own white - legible, and checked rather than
+   assumed.
+
    White behind it deliberately - a deck is its own site with its own light theme, and the
    player's dark ground showing through while it loads reads as a broken frame. */
-.slidestep iframe { position: absolute; inset: 0; width: 100%;
-         height: calc(100% + var(--bar)); border: 0; background: #fff;
+.slidestep iframe { position: absolute; inset: 0; width: 100%; height: 100%;
+         border: 0; background: #fff;
          border-radius: var(--ice-radius); box-shadow: 0 2px 18px var(--ice-scrim); }
 </style>
