@@ -112,19 +112,42 @@ export async function gradePython(course, exercise, step, submission) {
   const g = await graderFor(exercise);
   const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
   return g.grade({ pec: exercise.setup, solution: step.solution, submission,
-                   sct: step.sct, cwd, seed: seedFor(exercise) });
+                   sct: step.sct, cwd, seed: seedFor(exercise), capture: true });
 }
 
 /**
- * Run a submission without grading it, so the student can see what it prints.
+ * Run a submission without grading it, so the student can see what it did.
  *
- * Deliberately the same execution path as grading rather than a second one: it goes through
- * the grader with the submission as BOTH sides, so what the student sees printed is what
- * the SCT will be looking at. A separate `runPython` would drift from it.
+ * Returns { output, error, figures, files }, where a file carries its own bytes.
+ *
+ * This used to go through `gradePython` with the submission as both sides, so that what the
+ * student saw printed was what the SCT would look at. It is now the grader's own `run`,
+ * which reaches pythonwhat's `run_single_process` in the same stub mode and the same
+ * working directory that grading uses - the same guarantee, without executing the student's
+ * code twice. Twice was not merely wasteful: whatever the first run wrote was already on
+ * disk when the second wrote it, so a file the student had plainly just created looked
+ * unchanged and was never offered to them.
  */
 export async function runPython(course, exercise, step, submission) {
-  const r = await gradePython(course, exercise, { ...step, solution: submission }, submission);
-  return { output: r.output, error: r.error };
+  const mod = moduleDataDir(exercise.topicId || exercise.topic);
+  const g = await graderFor(exercise);
+  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
+  const r = await g.run({ pec: exercise.setup, submission, cwd, seed: seedFor(exercise) });
+  return { ...r, files: readFiles(g.pyodide, cwd, r.files) };
+}
+
+/* The bytes of each file the run wrote. Read here rather than base64'd through the bridge:
+ * a workbook is a quarter of a megabyte and the interpreter's filesystem is right there.
+ * A file that vanishes between being named and being read is skipped rather than fatal -
+ * nothing else in the run is worth losing over it. */
+function readFiles(pyodide, cwd, names = []) {
+  const out = [];
+  for (const name of names) {
+    try {
+      out.push({ name, bytes: pyodide.FS.readFile(`${cwd}/${name}`) });
+    } catch { /* gone, or not a plain file after all */ }
+  }
+  return out;
 }
 
 /** Whether the interpreter has already been paid for, so the UI can say so honestly. */

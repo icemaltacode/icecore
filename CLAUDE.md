@@ -443,6 +443,13 @@ and none is custom.
 - **Nothing is precomputed.** The interpreter is already up and a check is ~20ms, so grading
   is live. What the builder does instead is *validate*: every reference solution is graded
   against its own SCT, and one that does not mark itself correct fails the build.
+- **That validation is only half the question**, and `python-worker.mjs` can now be asked the
+  other half. A step may carry its own `submission` and `expect: 'incorrect'`, and the step
+  then fails if the SCT marks that submission correct. Validating the solution against itself
+  asks whether a check ACCEPTS the right answer; a `### Check` holding only
+  `success_msg("ok")` passes that and accepts everything, which is exactly what refusing a
+  *missing* check exists to prevent. `ppf-sct-probe` in the importer drives it, grading an
+  empty submission against every exercise in a course.
 - **A step with a Solution and no `### Check` accepts every submission.** That is the failure
   that gets worse the later it is found, so the build refuses to produce it — as it does a
   `type: coding` exercise with neither a `dataset:` nor an SCT.
@@ -450,6 +457,50 @@ and none is custom.
   everything else comes from the jsDelivr CDN, which is what DataCamp's own player does.
   They are **build assets, not `public/`** — `icecore dev` points Vite's publicDir at the
   course's staging directory, so the app's own `public/` is never served.
+- **A `WHEELS_BY_NAME` value may be a list, and then it is in install order with
+  dependencies first.** micropip resolves each install independently and would otherwise
+  fetch the dependency from PyPI, which is the one bit of network trust vendoring exists to
+  avoid. `openpyxl` needs `et_xmlfile`, so asking for openpyxl brings both. The map is keyed
+  by *module* name because the Playground looks a wheel up by what the student tried to
+  import — which is why `et_xmlfile` is also listed alone. `wheelsFor()` is the one reader.
+
+### What a run gives back
+
+A graded step is marked by its SCT, but a student also has to be able to see what their code
+did. Both are collected by the same bridge and both are **opt-in**: `grade()` takes
+`capture`, defaulting to false, so the builder runs exactly the code it ran before any of
+this existed and a cached verdict keeps meaning what it meant. `test/python-artefacts.mjs`
+(`npm run test:python`) covers all of it end to end against real Pyodide.
+
+- **Figures are collected in the SETUP, not around the run.** The backend is Agg, so
+  `plt.show()` produces nothing a student can see and an exercise that plots looks like an
+  exercise that does nothing. But grading runs the **solution first and the submission
+  second**, in one interpreter — see `pythonwhat.local.run_exercise` — so afterwards
+  matplotlib's registry holds both runs' figures with nothing to tell them apart. The fix is
+  a prologue prepended to the setup, which `run_single_process` executes before *each* side:
+  by the time the submission's setup has run, the solution's figures are already closed.
+- **It closes rather than records a baseline**, and that is the difference between working
+  and not. An exercise whose setup does `fig, ax = plt.subplots()` and asks the student to
+  draw into `ax` must still show that figure, so the baseline has to be empty where the setup
+  *starts* rather than where it ends.
+- **The setup can't see the bridge's names.** pythonwhat execs it in a namespace of its own,
+  so the prologue reaches back through `import __main__` rather than calling a helper
+  directly.
+- **Files written are collected on Run and never on Check.** Both sides of a grade write to
+  one working directory and the solution goes first, so a submission writing the same bytes
+  the solution just wrote leaves the file untouched and would be reported as having written
+  nothing. Run executes no solution, so there it is honest.
+- **Run no longer grades the submission against itself.** It used to, so that what the
+  student saw printed was what the SCT would look at, and it threw the verdict away. That ran
+  their code *twice* — which is what made written files undetectable on the second pass. It
+  now calls pythonwhat's own `run_single_process` in the same stub mode and working directory
+  grading uses, so the guarantee survives without the second execution.
+- **File bytes are read out of `pyodide.FS`, not returned through the bridge.** Python hands
+  back names only; base64ing a quarter-megabyte workbook across the boundary buys nothing
+  when the filesystem is right there. Capped at 8 files and 25MB each.
+- **A figure gets a literal white plate**, like a figure in prose and an embedded app.
+  matplotlib draws for a light page whatever the player is wearing, and a dark plate under
+  dark axis labels reads as a broken chart rather than a themed one.
 
 **Not everything is graded by result set.** `dragdrop` exercises have no SQL and no
 dataset: they're graded structurally by `app/src/dragdrop.js`, which is pure and shared with
@@ -488,6 +539,21 @@ Don't re-strip it.
   client transform when the command is not `build`. A bug that exists only in the artefact
   nobody runs locally — which is the argument for grepping the built bundle, not reloading
   the dev server, after touching `define`.
+- **A deck can build clean and ship a blank control bar**, and it has done, twice. Slidev's
+  nav buttons are nothing but `<div class="i-carbon:arrow-left">`; UnoCSS is meant to turn
+  that class into a mask-image and does not, because the classes live inside
+  `@slidev/client` — in node_modules, outside UnoCSS's scan. `slidev-theme-ice` carries a
+  `uno.config.ts` that walks the client, collects every `i-<collection>:<name>` and injects
+  the generated CSS as a preflight. **That file is not in the theme's `files` allowlist, so
+  npm never packs it**: a clean `npm ci` simply does not have it, the deck builds and exits
+  0, and the six transport controls render as empty boxes. The allowlist foot-gun `just
+  deploy` documents, in a place where forgetting is invisible rather than loud. `icecore
+  slides` now fails a deck whose CSS holds no `i-carbon` rule — 54 when it works, 0 when it
+  does not, so it is not a threshold. The real fix is one line in the theme repo.
+- **`icecore slides` clears a deck's output directory first.** `slidev build` writes into it
+  without emptying it, so a rebuild leaves the previous run's hashed assets behind to be
+  published — and a stale stylesheet made the icon check above pass on output the run had
+  not produced, which is how the check first appeared to work when it did not.
 - **Slidev hides its own nav bar on a wide screen**, and the theme puts it back —
   `slidev-theme-ice/styles/nav.css`. `persistNav` is `height - width / (16/9) > 120`, a
   presenter's rule that lands on a knife edge for real windows: the player's slides pane is

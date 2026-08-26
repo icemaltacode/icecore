@@ -18,7 +18,8 @@
     "src"
   ],
   "scripts": {
-    "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content"
+    "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content",
+    "test:python": "node test/python-artefacts.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.9.0",

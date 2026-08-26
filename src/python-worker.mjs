@@ -58,13 +58,22 @@ for (const ex of job.exercises) {
   for (const step of ex.steps) {
     if (!step.solution || !step.sct) { outcome.steps.push(null); continue; }
     try {
+      /* Normally the reference solution is graded against itself, which asks whether the
+       * SCT ACCEPTS the right answer. A caller may instead supply its own `submission` and
+       * `expect: 'incorrect'` to ask the other half - whether the SCT REJECTS a wrong one.
+       * An SCT that is present but vacuous passes the first question and fails the second,
+       * and it is the failure `build` refuses a missing "### Check" to avoid. */
+      const wrong = step.expect === 'incorrect';
       const r = await grader.grade({ pec: ex.setup, solution: step.solution,
-                                     submission: step.solution, sct: step.sct,
+                                     submission: step.submission ?? step.solution, sct: step.sct,
                                      cwd, seed: ex.seed });
-      outcome.steps.push(r.correct
-        ? { expected: { python: true } }
-        : { error: `the reference solution does not satisfy its own SCT - ${
-              String(r.message || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().slice(0, 160)}` });
+      const clean = String(r.message || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+      outcome.steps.push(r.correct === !wrong
+        ? { expected: { python: true }, message: clean }
+        : { error: wrong
+              ? 'the SCT accepts a submission that does not do the exercise - it would accept '
+                + 'every answer, which is what a missing "### Check" would have done'
+              : `the reference solution does not satisfy its own SCT - ${clean.slice(0, 160)}` });
     } catch (e) {
       /* Last line, not first: a pythonwhat failure arrives as a Python traceback and the
        * first line is always "Traceback (most recent call last):". The bottom line carries

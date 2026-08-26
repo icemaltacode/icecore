@@ -84,12 +84,28 @@ export const GRADER_WHEELS = [
 ];
 
 /* Packages a unit needs that Pyodide does not bundle. `packages` on a unit names things
- * `loadPackage` can fetch; these have to come from a wheel. Both are pure Python.
- * numpy, pandas, matplotlib, scipy and statsmodels are all bundled and go in `packages`. */
+ * `loadPackage` can fetch; these have to come from a wheel. All of them are pure Python.
+ * numpy, pandas, matplotlib, scipy and statsmodels are all bundled and go in `packages`.
+ *
+ * KEYED BY MODULE NAME, because the Playground looks a wheel up by what the student tried
+ * to import. A value may be a LIST, and then it is in install order with dependencies
+ * first: micropip resolves each install independently and would otherwise go to PyPI for
+ * the dependency, which is the one bit of network trust vendoring exists to avoid. openpyxl
+ * needs et_xmlfile, so asking for openpyxl has to bring both.
+ *
+ * et_xmlfile is listed on its own as well - not redundant. This map answers two questions:
+ * "what does `wheels: [openpyxl]` install" and "a student typed `import et_xmlfile`, what
+ * provides that". */
 export const WHEELS_BY_NAME = {
   seaborn: 'seaborn-0.13.2-py3-none-any.whl',
   pingouin: 'pingouin-0.6.1-py3-none-any.whl',
+  et_xmlfile: 'et_xmlfile-2.0.0-py3-none-any.whl',
+  openpyxl: ['et_xmlfile-2.0.0-py3-none-any.whl', 'openpyxl-3.1.5-py2.py3-none-any.whl'],
 };
+
+/** The wheel files a list of module names needs, in install order, without repeats. */
+export const wheelsFor = names =>
+  [...new Set((names || []).flatMap(n => WHEELS_BY_NAME[n] || []))];
 
 /* The bridge, defined once per interpreter rather than per check.
  *
@@ -105,9 +121,9 @@ export const WHEELS_BY_NAME = {
  * reverse of the order `test_exercise` names its parameters in. Getting that backwards
  * grades the student's submission against itself and passes everything. */
 const BRIDGE = `
-import os
+import base64, io, os, sys
 import pythonwhat.utils
-from pythonwhat.local import run_exercise
+from pythonwhat.local import ChDir, run_exercise, run_single_process
 from pythonwhat.test_exercise import test_exercise
 
 # pythonwhat pretty-prints code INTO A FEEDBACK MESSAGE with black, and imports it lazily
@@ -148,23 +164,150 @@ except ImportError:
     pass
 '''
 
-def _ice_grade(pec, sol, stu, sct, cwd, seed):
+# ---- artefacts: what the run drew, and what it wrote -------------------------
+#
+# WHY A PROLOGUE RATHER THAN A SNAPSHOT AROUND run_exercise. Grading runs the SOLUTION
+# first and the submission second - see pythonwhat.local.run_exercise - in one interpreter,
+# so afterwards matplotlib's figure registry holds both runs' figures with nothing to tell
+# them apart. The prologue runs at the head of the setup, which run_single_process executes
+# before EACH side, so by the time the submission's own setup has run the solution's
+# figures are already closed and everything still open belongs to the student.
+#
+# It closes rather than merely records: an exercise whose setup does 'fig, ax =
+# plt.subplots()' and asks the student to draw into ax must still show that figure, so the
+# baseline has to be empty at the point the setup starts rather than after it.
+#
+# The setup is exec'd in a namespace of its own, so it reaches back through __main__ - the
+# module this bridge is running in - rather than calling a name it cannot see.
+_ICE_PROLOGUE = '''
+import __main__ as _ice_main
+_ice_main._ice_before()
+'''
+
+# A file a student wrote is worth at most a download button, so the caps are deliberately
+# mean: enough for a spreadsheet or a couple of figures, not enough to wedge a tab.
+_ICE_MAX_FILES = 8
+_ICE_MAX_BYTES = 25 * 1024 * 1024
+
+_ice_seen = {}
+
+def _ice_before():
+    """Head of the setup: drop the previous run's figures and note what is on disk."""
+    if "matplotlib" in sys.modules:
+        try:
+            import matplotlib.pyplot as plt
+            plt.close("all")
+        except Exception:
+            pass
+    _ice_seen.clear()
+    _ice_seen.update(_ice_listing(os.getcwd()))
+
+def _ice_listing(wd):
+    """Every plain file in wd, as name -> (size, mtime). Cheap enough to do twice a run."""
+    out = {}
+    try:
+        entries = os.listdir(wd)
+    except OSError:
+        return out
+    for name in entries:
+        try:
+            st = os.stat(os.path.join(wd, name))
+        except OSError:
+            continue
+        import stat as _ice_stat
+        if _ice_stat.S_ISREG(st.st_mode):
+            out[name] = (st.st_size, st.st_mtime)
+    return out
+
+def _ice_figures():
+    """Whatever the run drew, as base64 PNGs.
+
+    The backend is Agg, so a figure exists in memory and plt.show() did nothing at all -
+    which is why an exercise that plots looks, without this, like an exercise that does
+    nothing. Rendered at the end rather than at show() time: an exercise may draw over the
+    same figure several times and only the last state is worth seeing."""
+    if "matplotlib" not in sys.modules:
+        return []
+    out = []
+    try:
+        import matplotlib.pyplot as plt
+        for n in plt.get_fignums():
+            buf = io.BytesIO()
+            try:
+                plt.figure(n).savefig(buf, format="png", dpi=110, bbox_inches="tight")
+            except Exception:
+                continue
+            out.append(base64.b64encode(buf.getvalue()).decode())
+        plt.close("all")
+    except Exception:
+        pass
+    return out
+
+def _ice_written(wd):
+    """Names of the files the run created or changed, against the prologue's listing.
+
+    Names only: the caller reads the bytes out of the interpreter's filesystem itself,
+    rather than paying to base64 a spreadsheet through the bridge and back."""
+    out = []
+    for name, stamp in sorted(_ice_listing(wd).items()):
+        if _ice_seen.get(name) == stamp:
+            continue
+        if stamp[0] > _ICE_MAX_BYTES:
+            continue
+        out.append(name)
+        if len(out) >= _ICE_MAX_FILES:
+            break
+    return out
+
+def _ice_run(pec, code, cwd, seed):
+    """Run a submission and report what happened - no solution, no SCT.
+
+    The Run button, which used to grade the submission against itself and throw the verdict
+    away. That ran the student's code TWICE, so anything it wrote was already on disk before
+    the second run wrote it again, and a file whose content had not changed looked like a
+    file nobody had written. It goes through pythonwhat's own run_single_process, in the
+    same stub mode and the same working directory as grading, so the two cannot drift about
+    what running a submission means."""
+    wd = cwd or os.getcwd()
+    setup = _ice_setup(pec, seed)
+    with ChDir(wd):
+        _, raw, err = run_single_process(setup, code, mode="stub")
+        return {"output": raw or "", "error": err or "",
+                "figures": _ice_figures(), "files": _ice_written(wd)}
+
+def _ice_setup(pec, seed, capture=True):
+    """Seed, then the prologue, then the exercise's own setup.
+
+    The prologue is skipped when nothing is being collected, so the builder - which grades
+    every reference solution against its own SCT and wants no artefacts at all - runs the
+    exact code it ran before any of this existed. A cached verdict has to keep meaning what
+    it meant."""
+    return ((_ICE_SEED.format(seed=int(seed)) if seed is not None else "")
+            + (_ICE_PROLOGUE if capture else "")
+            + (pec or ""))
+
+def _ice_grade(pec, sol, stu, sct, cwd, seed, capture):
     # Where the exercise's own data files are mounted, so \`pd.read_csv("cars.csv")\` finds
     # one. Passed per call rather than set with a global chdir: one interpreter serves a
     # whole topic, and a process-wide cwd would leave the next exercise reading the last
     # one's data - which grades against the wrong numbers rather than failing.
     wd = cwd or os.getcwd()
-    setup = (_ICE_SEED.format(seed=int(seed)) if seed is not None else "") + (pec or "")
+    setup = _ice_setup(pec, seed, capture)
     sol_p, stu_p, raw, err = run_exercise(setup, sol, stu, mode="stub", sol_wd=wd, stu_wd=wd)
     result = test_exercise(
         sct=sct, student_code=stu, solution_code=sol, pre_exercise_code=pec,
         student_process=stu_p, solution_process=sol_p, raw_student_output=raw,
         ex_type="NormalExercise", error=err)
+    # Figures only, never files. Both runs write to one working directory, and the solution
+    # goes first: a submission that writes the same bytes the solution just wrote leaves the
+    # file untouched and would be reported as having written nothing. The Run button is the
+    # honest place to collect files, and it runs no solution at all.
     return {
         "correct": bool(result.get("correct")),
         "message": result.get("message") or "",
         "output": raw or "",
         "error": err or "",
+        "figures": _ice_figures() if capture else [],
     }
 `;
 
@@ -204,7 +347,7 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
   const micropip = pyodide.pyimport('micropip');
   const dir = '/ice-wheels';
   try { pyodide.FS.mkdir(dir); } catch { /* already there on a second grader */ }
-  const names = [...GRADER_WHEELS, ...wheels.map(w => WHEELS_BY_NAME[w]).filter(Boolean)];
+  const names = [...GRADER_WHEELS, ...wheelsFor(wheels)];
   for (const name of names)
     pyodide.FS.writeFile(`${dir}/${name}`, await readWheel(name));
   // One at a time, in order: micropip resolves each call independently, and markdown2 has
@@ -214,6 +357,13 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
   if (packages.includes('matplotlib')) pyodide.runPython(HEADLESS);
   pyodide.runPython(BRIDGE);
   const call = pyodide.globals.get('_ice_grade');
+  const exec = pyodide.globals.get('_ice_run');
+
+  /* Python hands back a proxy; every caller wants a plain object and none wants the leak. */
+  const plain = result => {
+    try { return result.toJs({ dict_converter: Object.fromEntries }); }
+    finally { result.destroy?.(); }
+  };
 
   return {
     /* Exposed so a caller can mount data into THIS interpreter's filesystem. It matters
@@ -230,13 +380,20 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
      * argument x?" - which is worth far more to a student than anything we would write, and
      * is the second reason for running their grader rather than writing one.
      */
-    async grade({ pec = '', solution, submission, sct, cwd = '', seed = DEFAULT_SEED }) {
-      const result = call(pec, solution, submission, sct, cwd, seed);
-      try {
-        return result.toJs({ dict_converter: Object.fromEntries });
-      } finally {
-        result.destroy?.();
-      }
+    async grade({ pec = '', solution, submission, sct, cwd = '', seed = DEFAULT_SEED,
+                  capture = false }) {
+      return plain(call(pec, solution, submission, sct, cwd, seed, capture));
+    },
+
+    /**
+     * Run a submission without grading it. Returns { output, error, figures, files }.
+     *
+     * `figures` are base64 PNGs of whatever the run drew - the Agg backend means plt.show()
+     * produced nothing a student could see. `files` are the NAMES of files the run created
+     * or changed in `cwd`; the caller reads their bytes out of `pyodide.FS` itself.
+     */
+    async run({ pec = '', submission, cwd = '', seed = DEFAULT_SEED }) {
+      return plain(exec(pec, submission, cwd, seed));
     },
   };
 }

@@ -509,6 +509,12 @@ async function cmdSlides() {
   const t0 = Date.now();
   for (const [i, unit] of units.entries()) {
     const out = path.join(outRoot, unit);
+    /* CLEARED FIRST. `slidev build` writes into the directory without emptying it, so a
+     * deck rebuilt after a rename keeps the old hashed asset beside the new one - dead
+     * weight that is then published, and, worse, a stale stylesheet that made the icon
+     * check below pass on output the run had not produced. A deck's directory holds what
+     * this build emitted, exactly as `dist/slides/<course>/<unit>/` does. */
+    fs.rmSync(out, { recursive: true, force: true });
     console.log(`\n[${i + 1}/${units.length}] building ${unit}`);
     // --base has to match where the deck lands, or every asset it asks for 404s in
     // production while working perfectly from a dev server at the root.
@@ -518,6 +524,35 @@ async function cmdSlides() {
       '--out', path.relative(srcDir, out),
     ], { cwd: srcDir, stdio: 'inherit' });
     if (r.status !== 0) die(`slidev build failed for ${unit}`);
+
+    /* A DECK WITH NO ICON CSS BUILDS PERFECTLY AND SHIPS WITH A BLANK CONTROL BAR.
+     *
+     * Slidev's own nav buttons are `<div class="i-carbon:arrow-left">` and nothing more -
+     * UnoCSS is expected to turn that class into a mask-image. It does not, on its own: the
+     * classes live inside `@slidev/client`, which is in node_modules and outside UnoCSS's
+     * scan, so the theme carries a `uno.config.ts` that walks the client, collects every
+     * `i-<collection>:<name>` it finds and injects the generated CSS as a preflight.
+     *
+     * That file is not in the theme's `files` allowlist, so npm does not pack it and an
+     * install simply does not have it. The deck then builds clean, exits 0, and renders its
+     * transport controls as six 20x20 holes - visible only to a human looking at the bar,
+     * which is how it reached two courses. The allowlist foot-gun `just deploy` documents,
+     * in a place where forgetting is invisible rather than loud.
+     *
+     * 54 `i-carbon` rules when it works, 0 when it does not, so this is not a threshold. */
+    const cssHasIcons = (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { if (walk(full)) return true; continue; }
+        if (e.name.endsWith('.css') && fs.readFileSync(full, 'utf8').includes('i-carbon')) return true;
+      }
+      return false;
+    })(out);
+    if (!cssHasIcons)
+      die(`${unit} built with no icon CSS - its nav controls would render as empty boxes.\n`
+        + `  The theme's uno.config.ts is what generates it, and it is missing from\n`
+        + `  ${path.join(srcDir, 'node_modules/slidev-theme-ice/uno.config.ts')}\n`
+        + '  because it is not in the theme package.json\'s "files" allowlist.');
 
     /* THE PDF IS PART OF BUILDING A DECK, not a separate errand.
      *

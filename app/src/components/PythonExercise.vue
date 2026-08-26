@@ -32,6 +32,8 @@ const stepIndex = ref(0);
 const code = ref('');
 const output = ref('');
 const error = ref('');
+const figures = ref([]);       // base64 PNGs of whatever the run drew
+const files = ref([]);         // { name, bytes } for whatever it wrote
 const verdict = ref(null);
 const busy = ref(false);
 const booting = ref(false);
@@ -48,6 +50,7 @@ const multi = computed(() => steps.value.length > 1);
 watch(() => [props.exercise.id, stepIndex.value], () => {
   code.value = step.value.sample || '';
   output.value = ''; error.value = ''; verdict.value = null;
+  figures.value = []; files.value = [];
   showHint.value = false; showSolution.value = false;
   tutor.value = null; tutorError.value = '';
 }, { immediate: true });
@@ -67,20 +70,24 @@ const wrap = async fn => {
 };
 
 async function doRun() {
-  verdict.value = null; error.value = '';
+  verdict.value = null; error.value = ''; figures.value = []; files.value = [];
   const r = await wrap(() => runPython(props.courseId, props.exercise, step.value, code.value));
   if (!r) return;
   output.value = r.output || '';
   error.value = r.error || '';
+  figures.value = r.figures || [];
+  files.value = r.files || [];
 }
 
 async function doCheck() {
-  error.value = '';
+  error.value = ''; figures.value = []; files.value = [];
   const r = await wrap(() => gradePython(props.courseId, props.exercise, step.value, code.value));
   if (!r) return;
   // Whatever the submission printed is shown either way: a student who got it wrong wants
-  // to see what their code actually did at least as much as one who got it right.
+  // to see what their code actually did at least as much as one who got it right. Same for
+  // the plot: being marked wrong is the moment a student most wants to see what they drew.
   output.value = r.output || '';
+  figures.value = r.figures || [];
   if (r.error) error.value = r.error;
   /* DataCamp's own feedback, and far better than anything we would write - it names the
    * argument you got wrong. It arrives as HTML with <code> in it, from the SCT, which is
@@ -105,6 +112,34 @@ async function askForHelp() {
 }
 
 function useSolution() { code.value = step.value.solution; verdict.value = null; }
+
+/* Hand a student the file their code just wrote.
+ *
+ * `wb.save("report.xlsx")` lands in the interpreter's in-memory filesystem and stays there:
+ * the exercise grades on the workbook object, but a unit whose whole premise is producing
+ * something a manager opens in Excel is not taught by a spreadsheet nobody can open. Same
+ * for the `fig.savefig()` unit, which is about saving a figure to share with someone.
+ *
+ * The object URL is revoked on the next tick rather than immediately - Safari abandons a
+ * download whose blob is released in the same task. */
+function save(file) {
+  const url = URL.createObjectURL(new Blob([file.bytes]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/* Enough to tell a 2KB stub from the real thing, which is the only question being asked. */
+const sizeOf = bytes => bytes.length < 1024
+  ? `${bytes.length} B`
+  : bytes.length < 1024 * 1024
+    ? `${Math.round(bytes.length / 1024)} KB`
+    : `${(bytes.length / 1024 / 1024).toFixed(1)} MB`;
+
+const ranQuietly = computed(() =>
+  !output.value && !error.value && !figures.value.length && !files.value.length);
 </script>
 
 <template>
@@ -172,7 +207,18 @@ function useSolution() { code.value = step.value.solution; verdict.value = null;
         <div class="console">
           <p v-if="error" class="err">{{ error }}</p>
           <pre v-if="output">{{ output }}</pre>
-          <p v-if="!output && !error" class="muted">Run your code to see its output.</p>
+          <!-- The backend is Agg, so without this a student's plot appears to do nothing. -->
+          <img v-for="(f, i) in figures" :key="i" class="figure"
+               :src="`data:image/png;base64,${f}`" alt="A figure your code drew">
+          <div v-if="files.length" class="wrote">
+            <h4>Files your code wrote</h4>
+            <button v-for="f in files" :key="f.name" class="filebtn" @click="save(f)">
+              <Icon name="download" :size="14" />
+              <span class="fname">{{ f.name }}</span>
+              <span class="fsize">{{ sizeOf(f.bytes) }}</span>
+            </button>
+          </div>
+          <p v-if="ranQuietly" class="muted">Run your code to see its output.</p>
         </div>
       </div>
     </section>
@@ -231,4 +277,19 @@ function useSolution() { code.value = step.value.solution; verdict.value = null;
 .console .err { margin: 0 0 8px; color: var(--ice-bad); font-family: var(--ice-font-mono);
                 font-size: 12px; white-space: pre-wrap; }
 .console .muted { color: var(--ice-fg-muted); font-size: 12px; }
+/* Literal white, like a figure in prose and an embedded app: matplotlib draws for a light
+   page whatever the player happens to be wearing, and a dark plate under dark axis labels
+   reads as a broken chart rather than as a themed one. */
+.figure { display: block; max-width: 100%; height: auto; margin: 10px 0 0;
+          background: #fff; border-radius: var(--ice-radius); }
+.wrote { margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.wrote h4 { flex-basis: 100%; margin: 0; font-family: var(--ice-font-mono); font-size: 11px;
+            font-weight: 400; color: var(--ice-fg-muted); }
+.filebtn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px;
+           font: inherit; font-size: 12px; color: var(--ice-fg); cursor: pointer;
+           background: var(--ice-raise-soft); border: 1px solid var(--ice-border);
+           border-radius: var(--ice-radius); }
+.filebtn:hover { background: var(--ice-raise); border-color: var(--ice-primary); }
+.filebtn .fname { font-family: var(--ice-font-mono); }
+.filebtn .fsize { font-family: var(--ice-font-mono); font-size: 11px; color: var(--ice-fg-muted); }
 </style>

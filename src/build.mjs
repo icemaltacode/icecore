@@ -20,7 +20,7 @@ import { EXTENSIONS } from './extensions.mjs';
 import { slidesSrcDir, deckFiles, readDecks, deckPrefix } from './decks.mjs';
 import { openExpectedCache } from './expected-cache.mjs';
 import { readPlayground, borrowed } from './playground.mjs';
-import { seedFor, packageKey, GRADER_WHEELS, WHEELS_BY_NAME } from '../app/src/python.js';
+import { seedFor, packageKey, GRADER_WHEELS, wheelsFor } from '../app/src/python.js';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -55,7 +55,10 @@ const pyRuntimeKey = ex => {
     }
     pyRuntime = `pyodide@${v} ${GRADER_WHEELS.join(',')}`;
   }
-  const wheels = (ex.wheels || []).map(w => WHEELS_BY_NAME[w]).filter(Boolean).sort();
+  /* The wheels this exercise actually loads, dependencies included: `wheels: [openpyxl]`
+   * installs et_xmlfile too, and a key that named only one of them would replay a verdict
+   * reached under a different set. Sorted, so declaration order is not part of the key. */
+  const wheels = wheelsFor(ex.wheels).sort();
   return `${pyRuntime} ${wheels.join(',')}`;
 };
 
@@ -347,6 +350,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   if (!courseMeta.id || !courseMeta.title) throw new Error('course.json needs an id and a title');
 
   const warnings = [];
+  const exerciseIds = new Map();  // id -> where, course-wide: see the derivation below
   const usedImages = new Set();   // "<topic>/<file>", so unreferenced files aren't shipped
   const missingImages = [];       // verify fails on these - a dropped figure is the bug
   const usedApps = new Set();     // "<topic>/<name>", same idea for embedded apps
@@ -416,6 +420,29 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
         }
         return parseExercise(f, text);
       });
+
+    /* AN EXERCISE MUST HAVE AN ID, AND THE PLAYER IS WHERE THAT BITES.
+     *
+     * `id` came in as DataCamp's own exercise number and nothing here ever read it, so it
+     * looked like provenance. It is not: `App.vue` keys the current exercise, the Next
+     * button, the sidebar rows and the solved set on it. A course whose exercises carry no
+     * `id:` therefore ships thirteen `undefined`s, which collapse into ONE exercise -
+     * finishing the first marks its siblings done, and neither the sidebar nor Next can
+     * reach them. Nothing failed and nothing warned; it was found by clicking.
+     *
+     * So it is derived rather than required. `<topic>/<file>` is already unique, and is
+     * already the identity the corrections register uses. Only filled in when absent, so a
+     * course that carries DataCamp's numbers keeps them - changing those would reset every
+     * student's progress, which is stored under exactly this key. */
+    for (const e of exercises) {
+      if (e.id == null) e.id = `${topicId}/${e.file}`;
+      /* Checked across the whole COURSE, not the topic: the solved set and the place-marker
+       * are one per course, so a clash between two topics is the same collapse. */
+      const clash = exerciseIds.get(String(e.id));
+      if (clash) warnings.push(`${topicId} ${e.file}: id ${e.id} is already used by ${clash} `
+        + '- the two would share one row and one progress entry in the player');
+      else exerciseIds.set(String(e.id), `${topicId}/${e.file}`);
+    }
 
     for (const e of exercises.filter(e => e.type === 'coding'))
       for (const problem of stepProblems(e)) warnings.push(`${topicId} ${e.file}: ${problem}`);
