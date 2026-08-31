@@ -167,15 +167,32 @@ that ordinal.
 One definition, in `.github/workflows/publish.yml`, called by each course repo with its four
 variables. Pass them explicitly: `vars` does not resolve inside a called workflow.
 
-- **A platform change needs the course's lockfile re-pinned, and the pipeline now insists.**
-  npm pins a git dependency to a commit, so CI installs whatever `package-lock.json` names
-  however many times icecore has been pushed. That pinning is deliberate — a bad platform
-  commit must not silently regrade a whole course — but a pin nobody refreshed is invisible
-  and produces a green build running old code, whose failures read as broken content. The
-  publish compares the pin against icecore's `main` and fails with the count. Fix:
-  `npm update icecore --package-lock-only`, then commit the lockfile. It needs no
-  credentials — icecore is the public repo, which is what keeping course material out of it
-  buys.
+- **CI publishes against icecore's `main`, always, and no lockfile needs touching.** A course
+  declares `"icecore": "github:icemaltacode/icecore"` — no ref, which already means main. It
+  never asked to be pinned; npm resolves a git dependency to a commit at install time, writes
+  that into `package-lock.json`, and `npm ci` then reinstalls that commit forever. The publish
+  re-resolves it (`npm update icecore --package-lock-only`) before `npm ci` and prints the SHA
+  into the run summary.
+
+  That mechanic used to be treated as the feature and guarded with a check that failed the
+  publish when the pin was behind — the reasoning being that a bad platform commit must not
+  silently regrade a whole course. **The build already answers that, directly and loudly:**
+  every reference solution is graded against its own SCT and one that does not mark itself
+  correct fails the build. What the gate actually bought was a manual lockfile bump in six
+  course repos on every platform push, to re-agree with what `package.json` says by default.
+  A tax like that gets skipped, and then the pin is stale *and* unguarded — strictly worse
+  than not having one.
+
+  It needs no credentials, and that is load-bearing: the lockfile records a `git+ssh://` URL
+  and a runner has no SSH key, so this only works because icecore is the *public* repo and npm
+  falls back to HTTPS for a hosted GitHub dependency. Keeping course material out of icecore
+  is what buys that. Note also each course's `.npmrc` carries `allow-git=root` — npm 12 refuses
+  git dependencies without it, with `EALLOWGIT`.
+
+  **Known hole, and it predates this:** `.icecore/cache` keys a Python verdict on the Pyodide
+  version and the wheel filenames, not on the icecore commit, so a change to grading *logic*
+  does not invalidate a cached verdict. Putting the commit in the key would close it and bust
+  the whole cache on every platform push — 13 minutes a run — which is why it has not been.
 
 - **Never `aws s3 sync --delete` against `slides/` as a whole.** With a partial `dist/slides`
   — which is now the normal case — it deletes every deck that wasn't rebuilt. Sync one deck
