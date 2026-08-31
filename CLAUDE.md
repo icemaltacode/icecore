@@ -34,6 +34,9 @@ that could be shown externally or open-sourced.
   disagree about what a valid manifest is exactly when it mattered.
 - `app/src/playground-db.js` — the Playground's composed PGlite session. Deliberately not
   `db.js`: that one clones cached data directories, which cannot be merged.
+- `app/src/csv.js` — pure, like `compare.js` and `dragdrop.js`. A real CSV parser rather
+  than `split(',')` because the input is a spreadsheet export: a name is often
+  `"Borg, Jane"`, Excel doubles quotes inside quotes and writes CRLF.
 - `app/src/walk.js` — pure, like `compare.js` and `dragdrop.js`. The order a student moves
   through a topic: its slides, then the exercises that practise them. `App.vue` and
   `ContentsModal.vue` both draw it, and the two disagreeing reads as exercises going
@@ -266,6 +269,57 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
 - AWS work needs `AWS_PROFILE=ice` (account 845106282768). The default profile is a different
   account that also has a GitHub OIDC provider installed, so a wrong-account `cdk diff`
   reports the whole stack as new rather than failing.
+
+## Managing users
+
+`AdminPanel.vue`, `UserDialog.vue`, `UserImport.vue` and `infra/lambda/admin/` — one route,
+`/api/admin/users`, doing GET/POST/PUT/DELETE. It replaced a screen that could only ask "who
+is on course X" and could only invite and unenrol.
+
+- **Cognito owns identity; the table owns enrolment.** Name, email, sign-in status, enabled,
+  and membership of `admins` are read back from the pool, never from a copy. The name is
+  still echoed onto each `ENROL#` row as a cache, and PUT rewrites it on a rename — one fact
+  in two places diverges unless something keeps them together.
+- **The sub is not the username, and Admin\* calls take the username.** The pool signs in by
+  email alias, so Cognito generated an opaque username of its own and `sub` is a separate
+  attribute. Passing a sub where a username is wanted fails with `UserNotFound` on a user who
+  plainly exists. `lookup()` resolves it with `ListUsers` filtered on `sub` — which also
+  means a caller cannot mismatch a sub and an address into modifying one account in the pool
+  and a different one in the table.
+- **An admin may not unmake themselves.** Only the `admins` group can reach the function, so
+  self-demotion or self-suspension is a lockout the app cannot undo — the fix is
+  `just grant-admin`, run by somebody who still has rights. Blocking it also means the group
+  can never be emptied here: demoting the last admin is always demoting yourself.
+- **The listing is one query per USER, not per course.** Only the first is authoritative: the
+  catalogue lives in the content bucket, assembled from every `card.json` in it, so this
+  function does not know which courses exist — and somebody enrolled on a withdrawn course is
+  still enrolled. It is also why the Admin function alone gets 30 seconds rather than 10. The
+  listing is capped, and says `truncated` rather than letting a partial list read as the
+  whole pool. `byCourse` therefore has no reader yet; it is kept for the admin panel's later
+  pages, which are per course and so ask exactly the question it is shaped for.
+- **Delete removes the account first and the rows second.** The other order leaves somebody
+  who can still sign in with no progress, which reads to them as their work being lost; this
+  order can at worst orphan rows keyed on a sub that signs in nowhere.
+- **POST is additive, PUT is the whole desired set.** The CSV import runs POST once per row,
+  and a row that happens not to mention a course must not take it away. Taking courses away
+  is PUT's job, where the set is stated rather than implied.
+- **The import's ticked courses are ADDED to every row**, not used to fill in only the rows
+  whose `courses` column is blank. Both rules cover the common case - a class list with no
+  courses column at all - and only this one can be stated in a sentence. The tick list is
+  also shown before a file is chosen: gated on "some row has no courses" it was invisible in
+  exactly the case it matters most, because a plain class list has no such column and so no
+  rows to notice.
+- **The import is one POST per row, sequential.** Each row is an `AdminCreateUser` and an
+  email, both rate-limited; thirty at once is how an import half-succeeds with a throttling
+  error that names none of the students it dropped. Sequential is also the progress bar.
+- **A CSV line opening with `#` is a comment.** The template ends with the list of course ids
+  written that way — a tutor cannot guess that a course is called `data-analyst-sql`, and an
+  import whose course column is quietly wrong succeeds and leaves a class with an empty grid.
+  The legend goes *under* the data: a comment before the header makes the header the second
+  line, and every spreadsheet then imports the comment as its column names.
+- **`preview.js` stubs all four methods, including both refusals.** `icecore dev --as admin`
+  is the only way to look at this screen without a pool behind it, and a disabled control
+  whose message cannot be reached locally is a message nobody reads before shipping.
 
 ## The Playground
 

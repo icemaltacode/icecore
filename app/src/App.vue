@@ -208,8 +208,8 @@ async function loadCourses() {
 
 /** Back to the grid. Drops ?course= as well, or a reload would walk straight past it. */
 function backToCourses() {
-  // The logo is the way home from anywhere, enrolment included - leaving that open would
-  // make it look like it had done nothing.
+  // The logo is the way home from anywhere, user management included - leaving that open
+  // would make it look like it had done nothing.
   showAdmin.value = false;
   course.value = null;
   playground.value = null;
@@ -262,8 +262,9 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
       @home="backToCourses" @admin="showAdmin = true" @signout="signOut" />
 
-    <!-- Enrolment is a whole mode of its own, not a pane of the player: it has no use for
-         the exercise nav, and it has to be reachable from the grid, where there is none. -->
+    <!-- User management is a whole mode of its own, not a pane of the player: it has no
+         use for the exercise nav, and it has to be reachable from the grid, where there is
+         none. -->
     <AdminPanel v-if="showAdmin" :courses="allCourses" @close="showAdmin = false" />
 
     <CourseGrid

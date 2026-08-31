@@ -1,126 +1,203 @@
 <script setup>
-import { ref, watch } from 'vue';
+/* User management: everyone who can sign in, and what they are on.
+ *
+ * This replaced a screen that could only answer "who is on course X", one course at a time,
+ * and whose only two actions were invite and unenrol. A person exists across courses -
+ * their account, their rights, whether their invitation ever landed - so the list is of
+ * people, and the course is a filter over it rather than the thing being listed.
+ *
+ * The whole list arrives in one call and every filter is applied here. That is a deliberate
+ * ceiling: it is right for a training company's few hundred accounts and wrong for tens of
+ * thousands, and the API says `truncated` when it has stopped rather than letting a partial
+ * list read as the whole pool.
+ */
+import { ref, computed, onMounted } from 'vue';
 import { api } from '../auth.js';
+import UserDialog from './UserDialog.vue';
+import UserImport from './UserImport.vue';
 
 const props = defineProps({ courses: Array });
 const emit = defineEmits(['close']);
 
-const course = ref(props.courses?.[0]?.id || '');
-const email = ref('');
-const name = ref('');
 const users = ref([]);
-const busy = ref(false);
+const truncated = ref(false);
+const loading = ref(true);
 const error = ref('');
 const notice = ref('');
 
+const query = ref('');
+const filter = ref('');        // '' | a course id | '!none' | '!admins' | '!invited' | '!suspended'
+const editing = ref(undefined);  // undefined = closed, null = adding, object = editing
+const importing = ref(false);
+
+const titles = computed(() => Object.fromEntries((props.courses || []).map(c => [c.id, c.title])));
+
 async function refresh() {
-  if (!course.value) return;
-  error.value = '';
+  error.value = ''; loading.value = true;
   try {
-    const r = await api(`admin/enrolments?course=${encodeURIComponent(course.value)}`);
+    const r = await api('admin/users');
     users.value = r.users;
+    truncated.value = !!r.truncated;
   } catch (e) { error.value = e.message; }
+  finally { loading.value = false; }
 }
-watch(course, refresh, { immediate: true });
+onMounted(refresh);
 
-async function add() {
-  error.value = ''; notice.value = ''; busy.value = true;
-  try {
-    const r = await api('admin/enrolments', {
-      method: 'POST',
-      body: { email: email.value.trim(), name: name.value.trim() || undefined, course: course.value },
-    });
-    notice.value = r.invited
-      ? `Invitation sent to ${email.value.trim()}.`
-      : `${email.value.trim()} was already registered, and is now on this course.`;
-    email.value = ''; name.value = '';
-    await refresh();
-  } catch (e) { error.value = e.message; }
-  finally { busy.value = false; }
+async function done(message) {
+  editing.value = undefined;
+  importing.value = false;
+  notice.value = message || '';
+  await refresh();
 }
 
-async function remove(user) {
-  if (!confirm(`Take ${user.email} off this course? Their account and progress stay.`)) return;
-  error.value = ''; notice.value = '';
-  try {
-    await api(`admin/enrolments?sub=${encodeURIComponent(user.sub)}&course=${encodeURIComponent(course.value)}`,
-      { method: 'DELETE' });
-    await refresh();
-  } catch (e) { error.value = e.message; }
-}
+/* Sorted by name, and the sort key is what the row actually shows: a user with no name is
+ * drawn by their address, so sorting on the empty name would file them all together at the
+ * top under nothing. */
+const label = u => u.name || u.email;
+
+const shown = computed(() => {
+  const q = query.value.trim().toLowerCase();
+  return users.value
+    .filter(u => !q || u.email.includes(q) || u.name.toLowerCase().includes(q))
+    .filter(u => {
+      const f = filter.value;
+      if (!f) return true;
+      if (f === '!none') return !u.courses.length;
+      if (f === '!admins') return u.admin;
+      if (f === '!invited') return u.status === 'FORCE_CHANGE_PASSWORD';
+      if (f === '!suspended') return !u.enabled;
+      return u.courses.includes(f);
+    })
+    .sort((a, b) => label(a).localeCompare(label(b)));
+});
+
+const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
+  : u.status === 'FORCE_CHANGE_PASSWORD' ? { text: 'Invited', tone: 'wait' }
+  : { text: 'Active', tone: 'good' });
 </script>
 
 <template>
   <div class="admin">
     <div class="card">
       <header>
-        <h2>Course enrolment</h2>
-        <button class="btn ghost" @click="emit('close')">Done</button>
+        <div>
+          <h2>Users</h2>
+          <p class="muted">Everyone who can sign in. Adding somebody creates their account
+            and emails them a temporary password that lasts seven days.</p>
+        </div>
+        <div class="actions">
+          <button class="btn" @click="importing = true">Import CSV</button>
+          <button class="btn primary" @click="editing = null">Add user</button>
+          <button class="btn ghost" @click="emit('close')">Done</button>
+        </div>
       </header>
-      <p class="muted">Inviting someone who has no account creates one and emails them a
-        temporary password. There is no progress reporting here yet.</p>
 
-      <label for="course">Course</label>
-      <select id="course" v-model="course">
-        <option v-for="c in courses" :key="c.id" :value="c.id">{{ c.topic }} — {{ c.title }}</option>
-      </select>
-
-      <form class="add" @submit.prevent="add">
-        <div>
-          <label for="email">Email</label>
-          <input id="email" v-model="email" type="email" required placeholder="student@example.com">
-        </div>
-        <div>
-          <label for="name">Name <span class="opt">optional</span></label>
-          <input id="name" v-model="name" type="text" placeholder="Jane Borg">
-        </div>
-        <button class="btn primary" type="submit" :disabled="busy || !course">Invite &amp; enrol</button>
-      </form>
+      <div class="tools">
+        <input v-model="query" type="search" class="search" placeholder="Search name or email…">
+        <select v-model="filter" aria-label="Filter">
+          <option value="">All users</option>
+          <option v-for="c in courses" :key="c.id" :value="c.id">On {{ c.title }}</option>
+          <option value="!none">On no course</option>
+          <option value="!admins">Admins</option>
+          <option value="!invited">Not signed in yet</option>
+          <option value="!suspended">Suspended</option>
+        </select>
+        <span class="count">{{ shown.length }}<template v-if="shown.length !== users.length"> of {{ users.length }}</template></span>
+      </div>
 
       <p v-if="error" class="err">{{ error }}</p>
       <p v-if="notice" class="ok">{{ notice }}</p>
+      <p v-if="truncated" class="err">There are more accounts than this screen lists. Search
+        narrows what is drawn, not what was fetched - so somebody may be missing from it.</p>
 
-      <h3>On this course <span class="count">{{ users.length }}</span></h3>
-      <ul class="people">
-        <li v-for="u in users" :key="u.sub">
-          <span class="who">
-            <strong>{{ u.name || u.email }}</strong>
-            <small v-if="u.name">{{ u.email }}</small>
-          </span>
-          <button class="link" @click="remove(u)">Remove</button>
-        </li>
-        <li v-if="!users.length" class="none">Nobody yet.</li>
-      </ul>
+      <p v-if="loading" class="muted">Loading…</p>
+      <div v-else class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Email</th><th>Courses</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in shown" :key="u.sub" @click="editing = u">
+              <td>
+                <strong>{{ u.name || '—' }}</strong>
+                <span v-if="u.admin" class="tag admin">admin</span>
+              </td>
+              <td class="addr">{{ u.email }}</td>
+              <td>
+                <span v-if="!u.courses.length" class="dim">none</span>
+                <span v-for="c in u.courses" :key="c" class="tag">{{ titles[c] || c }}</span>
+              </td>
+              <td><span class="state" :class="state(u).tone">{{ state(u).text }}</span></td>
+              <td class="right"><button class="link" @click.stop="editing = u">Edit</button></td>
+            </tr>
+            <tr v-if="!shown.length"><td colspan="5" class="none">
+              {{ users.length ? 'Nobody matches that.' : 'Nobody yet.' }}
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
+
+    <UserDialog
+      v-if="editing !== undefined"
+      :user="editing" :courses="courses"
+      @done="done" @close="editing = undefined" />
+
+    <!-- Closed rather than finished - escape, or the scrim - still refreshes: an import
+         that was interrupted has already invited everyone it got to. -->
+    <UserImport
+      v-if="importing"
+      :courses="courses"
+      @done="done" @close="importing = false; refresh()" />
   </div>
 </template>
 
 <style scoped>
-.admin { height: 100%; overflow: auto; padding: 40px; display: flex; justify-content: center; }
-.card { width: min(720px, 100%); }
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.admin { height: 100%; overflow: auto; padding: 40px 32px; display: flex; justify-content: center; }
+.card { width: min(1040px, 100%); }
+header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 h2 { margin: 0; font-size: 22px; }
-.muted { color: var(--ice-fg-muted); font-size: 13px; margin: 8px 0 24px; }
-label { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-        color: var(--ice-fg-muted); margin-bottom: 6px; }
-.opt { text-transform: none; letter-spacing: 0; opacity: .7; }
-select, input { width: 100%; font: inherit; font-size: 14px; padding: 9px 11px;
-                background: var(--ice-bg); color: var(--ice-fg);
-                border: 1px solid var(--ice-border); border-radius: 8px; }
-select:focus, input:focus { outline: none; border-color: var(--ice-primary); }
-.add { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: end; margin-top: 20px; }
-.add .btn { height: 38px; }
+.actions { display: flex; gap: 8px; flex: none; }
+.muted { color: var(--ice-fg-muted); font-size: 13px; margin: 8px 0 0; max-width: 60ch; line-height: 1.6; }
+
+.tools { display: flex; align-items: center; gap: 10px; margin: 24px 0 14px; }
+.search { flex: 1; max-width: 320px; }
+.search, select { font: inherit; font-size: 14px; padding: 8px 11px;
+                  background: var(--ice-bg); color: var(--ice-fg);
+                  border: 1px solid var(--ice-border); border-radius: 8px; }
+.search:focus, select:focus { outline: none; border-color: var(--ice-primary); }
+.count { margin-left: auto; font-size: 12px; color: var(--ice-fg-muted);
+         background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
+         border-radius: 5px; padding: 3px 8px; }
+
 .err { color: var(--ice-bad); font-size: 13px; }
 .ok { color: var(--ice-good); font-size: 13px; }
-h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
-     color: var(--ice-fg-muted); margin: 32px 0 10px; }
-.count { background: var(--ice-bg-soft); border: 1px solid var(--ice-border); border-radius: 5px;
-         padding: 1px 6px; margin-left: 6px; }
-.people { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.people li { display: flex; align-items: center; justify-content: space-between; gap: 12px;
-             padding: 12px 14px; background: var(--ice-bg-soft);
-             border: 1px solid var(--ice-border); border-radius: var(--ice-radius); font-size: 14px; }
-.who small { display: block; color: var(--ice-fg-muted); font-size: 12px; }
-.people li.none { color: var(--ice-fg-muted); justify-content: flex-start; }
-@media (max-width: 640px) { .add { grid-template-columns: 1fr; } }
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--ice-border); border-radius: var(--ice-radius); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+     color: var(--ice-fg-muted); font-weight: 500; padding: 10px 14px;
+     background: var(--ice-bg-soft); border-bottom: 1px solid var(--ice-border); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--ice-border); vertical-align: middle; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--ice-raise); }
+td strong { font-weight: 500; }
+.addr { color: var(--ice-fg-muted); font-size: 13px; }
+.right { text-align: right; white-space: nowrap; }
+.none { color: var(--ice-fg-muted); text-align: center; padding: 28px; cursor: default; }
+.dim { color: var(--ice-fg-muted); }
+
+.tag { display: inline-block; font-size: 11px; border: 1px solid var(--ice-border);
+       background: var(--ice-bg-soft); border-radius: 5px; padding: 1px 7px; margin: 1px 4px 1px 0; }
+.tag.admin { color: var(--ice-primary-strong); border-color: var(--ice-primary-soft); margin-left: 8px;
+             text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }
+.state { font-size: 12px; }
+.state.good { color: var(--ice-good); }
+.state.wait { color: var(--ice-fg-muted); }
+.state.bad { color: var(--ice-bad); }
+@media (max-width: 720px) {
+  header { flex-direction: column; }
+  .tools { flex-wrap: wrap; }
+}
 </style>

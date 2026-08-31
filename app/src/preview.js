@@ -27,16 +27,39 @@ export const previewRole = () => {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
-/* Seeded so the enrolment table has something in it - an empty table tells you nothing
- * about how a full one looks. In memory only: it resets on reload, deliberately. */
-const enrolments = new Map();
-const seed = course => {
-  if (!enrolments.has(course)) enrolments.set(course, [
-    { sub: 'preview-1', email: 'ada@example.com', name: 'Ada Lovelace', status: 'CONFIRMED' },
-    { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper', status: 'FORCE_CHANGE_PASSWORD' },
-  ]);
-  return enrolments.get(course);
-};
+/* Seeded so the user table has something in it - an empty table tells you nothing about how
+ * a full one looks, and every state the screen draws differently needs an example: invited,
+ * active, suspended, admin, and somebody on no course at all. In memory only: it resets on
+ * reload, deliberately.
+ *
+ * `ada@example.com` is the signed-in preview user - see PREVIEW_TOKEN in auth.js - so the
+ * self-editing rules have somebody to apply to. */
+let nextSub = 100;
+const people = [
+  { sub: 'preview-1', email: 'ada@example.com', name: 'Ada Lovelace',
+    status: 'CONFIRMED', enabled: true, admin: true, courses: [] },
+  { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper',
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [] },
+  { sub: 'preview-3', email: 'katherine@example.com', name: 'Katherine Johnson',
+    status: 'CONFIRMED', enabled: true, admin: false, courses: [] },
+  { sub: 'preview-4', email: 'margaret@example.com', name: 'Margaret Hamilton',
+    status: 'CONFIRMED', enabled: false, admin: false, courses: [] },
+  { sub: 'preview-5', email: 'joan@example.com', name: '',
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [] },
+];
+/* The seeded enrolments cannot be written above: they are course ids, and which courses
+ * exist depends on what `icecore dev` was pointed at. Done once, on the first listing. */
+let seeded = false;
+async function seed() {
+  if (seeded) return people;
+  seeded = true;
+  const ids = (await loadManifest()).map(c => c.id);
+  people[0].courses = ids.slice(0, 2);
+  people[2].courses = ids.slice(0, 1);
+  people[3].courses = ids.slice(0, 1);
+  return people;
+}
+const find = sub => people.find(p => p.sub === sub);
 
 const progressKey = course => `ice-platform-progress:${course}`;
 const placeKey = course => `ice-platform-place:${course}`;
@@ -81,18 +104,51 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     };
   }
 
-  if (route === 'admin/enrolments') {
-    const course = method === 'POST' ? body.course : q.get('course');
-    const users = seed(course);
-    if (method === 'GET') return { users };
+  if (route === 'admin/users') {
+    const users = await seed();
+    if (method === 'GET') return { users: users.map(u => ({ ...u })), truncated: false };
+
     if (method === 'POST') {
-      if (users.some(u => u.email === body.email)) throw new Error(`${body.email} is already on this course.`);
-      users.push({ sub: `preview-${users.length + 1}`, email: body.email, name: body.name || '', status: 'FORCE_CHANGE_PASSWORD' });
-      return { invited: true };
+      const email = String(body.email || '').trim().toLowerCase();
+      const known = users.find(u => u.email === email);
+      if (known) {
+        if (body.resend && known.status !== 'FORCE_CHANGE_PASSWORD')
+          throw new Error('That person has already chosen a password - there is nothing to reissue.');
+        // Additive, exactly as the real POST is: a course left out is not a course removed.
+        known.courses = [...new Set([...known.courses, ...(body.courses || [])])];
+        if (body.admin) known.admin = true;
+        return { sub: known.sub, invited: false, resent: !!body.resend };
+      }
+      const made = {
+        sub: `preview-${nextSub++}`, email, name: body.name || '',
+        status: 'FORCE_CHANGE_PASSWORD', enabled: true,
+        admin: !!body.admin, courses: [...(body.courses || [])],
+      };
+      users.push(made);
+      return { sub: made.sub, invited: true, resent: false };
     }
+
+    if (method === 'PUT') {
+      const who = find(body.sub);
+      if (!who) throw new Error('no such user');
+      // The same two refusals the real handler makes, so the disabled controls and the
+      // messages behind them can both be looked at locally.
+      if (who.email === 'ada@example.com' && body.admin === false)
+        throw new Error('you cannot remove your own admin rights');
+      if (who.email === 'ada@example.com' && body.enabled === false)
+        throw new Error('you cannot disable your own account');
+      if (body.name !== undefined) who.name = body.name;
+      if (body.courses !== undefined) who.courses = [...body.courses];
+      if (body.admin !== undefined) who.admin = body.admin;
+      if (body.enabled !== undefined) who.enabled = body.enabled;
+      return { ok: true, sub: who.sub };
+    }
+
     if (method === 'DELETE') {
-      enrolments.set(course, users.filter(u => u.sub !== q.get('sub')));
-      return { ok: true };
+      const i = users.findIndex(u => u.sub === q.get('sub'));
+      if (i === -1) throw new Error('no such user');
+      users.splice(i, 1);
+      return { ok: true, removed: 7 };
     }
   }
 

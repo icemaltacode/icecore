@@ -38,13 +38,13 @@ admin panel. That makes the screens hardest to design the ones you cannot see lo
 
 ```
 icecore dev content --as student   # the student's view, fully signed in
-icecore dev content --as admin     # ...plus the enrolment panel
+icecore dev content --as admin     # ...plus the user management screen
 icecore dev content --as signin    # start logged out, at the sign-in screen
 ```
 
 There is no Cognito, no API and no AWS account behind any of it — `app/src/preview.js`
 stands in for the lot. Progress goes to localStorage; Ask AI returns a canned reply that
-says so; enrolments are in memory and reset on reload. In the `signin` role any password
+says so; the user list is in memory and resets on reload. In the `signin` role any password
 works, except the literal `temp`, which raises the first-login choose-a-password challenge.
 
 Preview is gated on `import.meta.env.DEV` as well as the flag, so it cannot reach anything

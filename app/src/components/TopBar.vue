@@ -49,7 +49,7 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
     </button>
 
     <div class="right">
-      <button v-if="admin" class="btn ghost" @click="$emit('admin')">Manage enrolment</button>
+      <button v-if="admin" class="btn ghost" @click="$emit('admin')">Manage users</button>
 
       <div ref="wrap" class="theme" @keydown.esc="menu = false">
         <button class="pick" :title="`Theme: ${theme}`" :aria-expanded="menu"

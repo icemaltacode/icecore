@@ -5,9 +5,19 @@
 
 export AWS_PROFILE := "ice"
 
-# The course repo to build against. Override per invocation:
-#   just course=../icecore-some-other-course dev
-course := "../icecore-datacamp-data-analyst"
+# ONE course, for the recipes that are about one course's own material - verify, build,
+# slides, decks. Override per invocation:
+#   just course=../icecore-python-fiau verify
+course := "../icecore-datacamp-data-analyst-python"
+
+# EVERY course, for the recipes that draw the site - dev and preview. A site carries more
+# than one course now, and running the player against a single content directory shows a
+# grid with one card on it: not what a student sees, and no use at all for the screens that
+# are about several courses at once, like the users page's list of courses to enrol on.
+#
+# A glob rather than a list, so a new course repo appears without this file being edited.
+# It expands in the shell, not in just, which is why it is quoted here and bare below.
+courses := "../icecore-*/content"
 
 icecore := "node " + justfile_directory() + "/bin/icecore.mjs"
 
@@ -16,9 +26,9 @@ _default:
 
 # --- local -----------------------------------------------------------------
 
-# Run the player against the course content, with hot reload.
+# Run the player against every course on the machine, with hot reload.
 dev:
-    {{icecore}} dev {{course}}/content
+    {{icecore}} dev {{courses}}
 
 # Same server, but signed in - a fake session, no Cognito, no AWS. This is the one that
 # shows the student's actual view: `just dev` runs *open*, and open hides the tutor button,
@@ -26,7 +36,7 @@ dev:
 # In `signin` any password gets you in, except `temp`, which raises the first-login
 # choose-a-password screen.
 preview role="student":
-    {{icecore}} dev {{course}}/content --as {{role}}
+    {{icecore}} dev {{courses}} --as {{role}}
 
 # Every reference solution must grade itself correct, and a wrong query must fail.
 verify:

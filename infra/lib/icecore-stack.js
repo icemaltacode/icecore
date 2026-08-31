@@ -147,8 +147,12 @@ export class IcecoreStack extends Stack {
 
     // Single-table. Cognito owns accounts; this owns everything about them.
     //   PK = USER#<sub>   SK = PROFILE | ENROL#<course> | PROG#<course>#<unit>
-    // byCourse inverts the key so "who is on course X" is one query — needed by the
-    // admin screen even though there is no reporting view.
+    // byCourse inverts the key so "who is on course X" is one query. NOTHING READS IT YET -
+    // the users page lists the pool and asks for each person's own enrolments, because the
+    // catalogue of courses lives in the content bucket and this side of the wire does not
+    // know it. It is here for the admin panel's later pages, which are per course and so ask
+    // exactly the question it is shaped for. Not dead weight to be tidied away: the cost of
+    // adding it back later is a full index build on a live table.
     const table = new ddb.Table(this, 'Table', {
       partitionKey: { name: 'pk', type: ddb.AttributeType.STRING },
       sortKey: { name: 'sk', type: ddb.AttributeType.STRING },
@@ -315,11 +319,12 @@ export class IcecoreStack extends Stack {
     // dependency on each other's domain name.
     // Bundle the SDK rather than trusting the runtime to carry every package we use —
     // @aws-sdk/cloudfront-signer in particular is not part of the Lambda runtime image.
-    const fn = (id, dir, environment) => new lambdaNode.NodejsFunction(this, id, {
+    const fn = (id, dir, environment, opts = {}) => new lambdaNode.NodejsFunction(this, id, {
       entry: path.join(HERE, '..', 'lambda', dir, 'index.mjs'),
       runtime: lambda.Runtime.NODEJS_22_X,
       memorySize: 256,
       timeout: Duration.seconds(10),
+      ...opts,
       bundling: { externalModules: [] },
       logGroup: new logs.LogGroup(this, `${id}Logs`, {
         retention: logs.RetentionDays.ONE_MONTH,
@@ -351,11 +356,28 @@ export class IcecoreStack extends Stack {
     table.grantReadWriteData(hint);
     openaiSecret.grantRead(hint);
 
-    // Onboarding only - invite a user and put them on a course.
-    const admin = fn('Admin', 'admin', { USER_POOL_ID: users.userPoolId });
+    /* User management: invite, edit, enrol, promote, suspend, delete.
+     *
+     * Longer than the ten seconds every other function gets. Listing the pool is one
+     * Cognito call per sixty users and one DynamoDB query per user - fast, but linear in a
+     * number nobody controls, and this is an interactive admin screen rather than something
+     * on a student's critical path. A timeout here reads as "the user list is broken". */
+    const admin = fn('Admin', 'admin', { USER_POOL_ID: users.userPoolId },
+      { timeout: Duration.seconds(30) });
     table.grantReadWriteData(admin);
     admin.addToRolePolicy(new iam.PolicyStatement({
-      actions: ['cognito-idp:AdminCreateUser', 'cognito-idp:AdminGetUser'],
+      actions: [
+        'cognito-idp:ListUsers',
+        'cognito-idp:ListUsersInGroup',
+        'cognito-idp:AdminCreateUser',
+        'cognito-idp:AdminGetUser',
+        'cognito-idp:AdminUpdateUserAttributes',
+        'cognito-idp:AdminEnableUser',
+        'cognito-idp:AdminDisableUser',
+        'cognito-idp:AdminAddUserToGroup',
+        'cognito-idp:AdminRemoveUserFromGroup',
+        'cognito-idp:AdminDeleteUser',
+      ],
       resources: [users.userPoolArn],
     }));
 
@@ -382,8 +404,8 @@ export class IcecoreStack extends Stack {
     });
     // The admin group check happens inside the function - a JWT authorizer can't see groups.
     api.addRoutes({
-      path: '/api/admin/enrolments',
-      methods: [HttpMethod.GET, HttpMethod.POST, HttpMethod.DELETE],
+      path: '/api/admin/users',
+      methods: [HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('AdminIntegration', admin),
     });
 
