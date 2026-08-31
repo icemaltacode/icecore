@@ -75,7 +75,15 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
 
   if (route === 'session') {
     const courses = (await loadManifest()).map(c => c.id);
-    return { courses, admin: role === 'admin', expires: Date.now() + 12 * 3600 * 1000 };
+    /* The admin role is deliberately enrolled on NOTHING. An admin sees every course
+     * because App.vue derives that from the admin flag, and handing this role a full
+     * enrolment list would let the grid look right while that rule was broken - the
+     * ordinary student path would be carrying it. Empty is the only value that tests it. */
+    return {
+      courses: role === 'admin' ? [] : courses,
+      admin: role === 'admin',
+      expires: Date.now() + 12 * 3600 * 1000,
+    };
   }
 
   if (route === 'progress') {

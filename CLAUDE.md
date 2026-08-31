@@ -309,6 +309,15 @@ is on course X" and could only invite and unenrol.
   plainly exists. `lookup()` resolves it with `ListUsers` filtered on `sub` — which also
   means a caller cannot mismatch a sub and an address into modifying one account in the pool
   and a different one in the table.
+- **An admin sees every course, and it is derived rather than enrolled.** `App.vue` skips the
+  enrolment filter when `session.admin` is set. Writing enrolment rows on promotion instead
+  would be rows to withdraw on demotion and — the part that would actually rot — rows somebody
+  has to remember to add for every course published afterwards. It is also not something the
+  Lambda could do: it does not know which courses exist, for the same reason its listing
+  queries per user. Same shape as `open`, against a boundary that was only ever about what is
+  *shown* — the signed cookie covers the whole origin. Promotion takes effect on the next
+  sign-in, with nothing to migrate. `preview.js` gives the admin role an **empty** enrolment
+  list on purpose: a full one would let the grid look right while this rule was broken.
 - **An admin may not unmake themselves.** Only the `admins` group can reach the function, so
   self-demotion or self-suspension is a lockout the app cannot undo — the fix is
   `just grant-admin`, run by somebody who still has rights. Blocking it also means the group

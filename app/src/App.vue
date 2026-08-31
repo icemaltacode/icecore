@@ -181,8 +181,20 @@ async function loadCourses() {
      * Note what this does and does not do. The signed cookie's policy covers the whole
      * origin, so any signed-in student can already fetch any course's content by URL;
      * enrolment has only ever decided what is SHOWN. `open` changes exactly that, and
-     * nothing else. */
-    manifest.value = session.courses
+     * nothing else.
+     *
+     * AN ADMIN SEES EVERY COURSE, and it is DERIVED rather than enrolled. Enrolling them on
+     * each course instead would be rows to write on promotion, rows to withdraw on demotion,
+     * and - the part that would actually rot - rows that somebody has to remember to add for
+     * every course published afterwards. It is also not something this side of the wire could
+     * do: the catalogue is assembled from every card.json in the bucket, so the admin Lambda
+     * does not know which courses exist, which is the same reason its listing queries per
+     * user rather than per course.
+     *
+     * The same shape as `open`, and for the same reason: a property of who you are, resolved
+     * where the catalogue is actually known, against a boundary that was only ever about what
+     * is shown. Promotion takes effect on the next sign-in, with nothing to migrate. */
+    manifest.value = session.courses && !isAdmin.value
       ? published.filter(c => c.open || session.courses.includes(c.id))
       : published;
     if (!manifest.value.length) throw new Error(session.courses
