@@ -563,7 +563,8 @@ export class IcecoreStack extends Stack {
     new CfnOutput(this, 'AdminBootstrap', {
       value: adminEmail
         ? `${adminEmail} created and added to admins`
-        : 'NOT CONFIGURED - if this pool has no admin, redeploy with -c adminEmail=you@icemalta.com',
+        : 'NOT CONFIGURED - adminEmail is missing from infra/cdk.json. Put it back and redeploy;'
+          + ' a pool with nobody in `admins` is a lockout nothing in this repo can undo.',
     });
     new CfnOutput(this, 'UserPoolClientId', { value: client.userPoolClientId });
     new CfnOutput(this, 'TableName', { value: table.tableName });

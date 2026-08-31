@@ -97,14 +97,21 @@ infra-diff:
 
 # Create or update the stack.
 #
-# Pass admin= to create that person and put them in the `admins` group. Only the `admins`
-# group can invite users or assign courses, and nothing else in this repo ever adds anyone
-# to it - so a pool with no admin is a pool nobody can ever sign anyone in to, from a deploy
-# that went green. Idempotent: naming someone who already exists promotes them.
+# The bootstrap admin is COMMITTED CONTEXT - `adminEmail` in infra/cdk.json - for the same
+# reason the alarm email is. Only the `admins` group can invite users or assign courses, and
+# nothing else in this repo ever adds anyone to it, so a pool with no admin is a pool nobody
+# can ever sign anyone in to, from a deploy that went green. Passed as a flag it is a fact
+# that has to be remembered every single time: forget it once and CloudFormation removes the
+# bootstrap again, silently, from a deploy that goes green. Today that is survivable only
+# because neither custom resource has a delete handler and the admin already exists - on a
+# pool that had just been replaced, the deploy that recreates it would create nobody.
 #
-#   just infra-deploy you@icemalta.com
+# admin= overrides it, to bootstrap somebody else without editing cdk.json. Idempotent
+# either way: naming an existing user promotes them rather than failing the deploy.
 #
-# Create or update the stack; admin= also bootstraps someone who can invite people.
+#   just infra-deploy someone-else@icemalta.com
+#
+# Create or update the stack.
 infra-deploy admin="":
     cd infra && npx cdk deploy --require-approval any-change \
       {{ if admin == "" { "" } else { "-c adminEmail=" + admin } }}

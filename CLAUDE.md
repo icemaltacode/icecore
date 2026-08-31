@@ -249,11 +249,17 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   every content request. The committed public pem and its private half are a pair, and only
   one of them is in git.
 - **Only the `admins` Cognito group can invite anyone**, and a pool with nobody in it is a
-  lockout that arrives via a deploy that goes green. `just infra-deploy you@icemalta.com`
-  creates that user and adds them to the group; `just admins` lists who is in
-  it and `just grant-admin <email>` promotes someone on a pool that is already up. The
-  bootstrap is idempotent — an existing user is promoted rather than failing the deploy —
-  and has no delete handler, because tearing the stack down must not delete a person.
+  lockout that arrives via a deploy that goes green. The bootstrap admin is `adminEmail` in
+  `infra/cdk.json`, **not a `-c` flag**, for the reason the alarm email is not one: passed as
+  a flag it has to be remembered on every deploy, and forgetting it once removes both
+  bootstrap resources again — silently, from a deploy that goes green. That is survivable
+  today only because neither has a delete handler and the admin already exists; on a pool
+  that had just been replaced, the deploy that recreated it would create nobody. `just
+  infra-deploy someone@icemalta.com` overrides it to bootstrap a different person; `just
+  admins` lists who is in the group and `just grant-admin <email>` promotes someone on a pool
+  that is already up. The bootstrap is idempotent — an existing user is promoted rather than
+  failing the deploy — and has no delete handler, because tearing the stack down must not
+  delete a person.
 - **The pool declares `name` required, and a schema cannot be altered after the pool is
   created.** So every writer supplies one, forever - the invite Lambda and the CDK admin
   bootstrap both. Cognito rejects an `adminCreateUser` that omits it with an
