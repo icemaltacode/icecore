@@ -149,6 +149,13 @@ where the student left off. The place-marker is stored per course beside the pro
 record — server-side where there is auth, so it follows them between machines, and in
 localStorage otherwise.
 
+An exercise is worth the `xp:` in its frontmatter, and that amount is **recorded when it is
+earned** — beside the solve, in the same record. The sidebar and the course's card show what
+that course has earned; the top bar shows what the student has earned *today*, across every
+course, starting again at their own local midnight. Because the amount is recorded rather
+than added up from the content afterwards, re-tuning an exercise's `xp:` changes what it is
+worth from then on and leaves what people already earned alone.
+
 (For anyone importing from DataCamp: their *track* is a module, their *course* is a unit,
 their *chapter* is a topic.)
 

@@ -1,22 +1,30 @@
 # Pending Stuff
 
-## UX
+- [x] When a user has successfully completed a practical, their solution should still be there if they revisit it later.
+  Recorded on the server beside the solve, keyed by step. Re-solving updates the code and does not earn the XP again.
 
-- [ ] **XP is displayed and never recorded.** Every exercise carries `xp:` and the player shows
-  it, but `progress.js` and the progress Lambda store only which exercises are solved -
-  no total, no per-course sum. Either sum it from the solved set at read time, or stop
-  showing a number nothing counts.
+- [x] On screens which aren't too small (let's say 1000px vw and higher), the sidebar should start opened and pinned by default.
+  Only when no preference has been stored - a deliberate unpin still wins on the next visit.
 
-## Admin
+- [x] Since the sidebar expands and collapses automatically on hover-in and hover-out, the >> and << buttons have no effect. They should be removed from the UI.
+  Gone, along with the `dismissed` state that only the << button set, and the two chevrons in `Icon.vue`.
 
-- [x] A user management screen. Add/remove/edit users.
-  - [x] Option to tick which courses to auto-enrol users into when adding.
-  - [x] CSV import option with template download.
-  - [x] Option to promote users to admin.
+- [x] Completing an exercise should make the 'Next' button flash (show me variants).
+  Halo, looping until the student moves. One definition in `styles.css` - see `.btn.urge`.
 
-- [ ] **No progress reporting.** The users page says who is on a course and whether they ever
-  signed in; it cannot say how far anyone has got. The rows are there (`PROG#<course>#<id>`),
-  and `byCourse` answers a whole course in one query - which is what that index is being
-  kept for. Nothing reads it today; the users page asks each person for their own enrolments,
-  because listing by course would mean this side of the wire knowing which courses exist and
-  the catalogue is assembled from `card.json` in the bucket.
+- [x] When the user's code results in an error (either through Run Code or Check answer, the Ask AI button should flash to indicate that they can ask for help.)
+  The same halo, quieter, cancelled by the first keystroke in the editor. An *error*, not a wrong
+  answer: `grade.js` now marks a query that failed to run apart from one that ran and was wrong.
+
+Found while testing the above, both pre-existing and both silent:
+
+- [x] **Progress never survived a reload.** An exercise id is a number in `index.json` and comes
+  back from storage as a string, so `solved.has(id)` was always false: a finished course read as
+  untouched. One spelling now, `progressId` in `progress.js`.
+- [x] **"Resume where you left off" always started at the top.** The same mismatch in the
+  place-marker, hidden because a slides row's id is a string this side makes up - so the one case
+  that did work was the fallback looking like the feature.
+
+# Future Stuff
+
+- [ ]

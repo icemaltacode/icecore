@@ -20,7 +20,11 @@ import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 import Icon from './Icon.vue';
 
-const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
+const props = defineProps({
+  courseId: String, exercise: Object, done: Boolean,
+  /** What solved this exercise last time, keyed by step index. Absent until it has been. */
+  saved: Object,
+});
 const emit = defineEmits(['solved']);
 
 const mdx = text => md(text, {
@@ -30,6 +34,10 @@ const mdx = text => md(text, {
 
 const stepIndex = ref(0);
 const code = ref('');
+/* What solved each step, this time round: filled as steps pass and handed up whole when the
+ * exercise completes, because that is the moment there is an answer worth keeping. A step
+ * solved in a session that was abandoned half way is not a solution to anything. */
+const passed = ref({});
 const output = ref('');
 const error = ref('');
 const figures = ref([]);       // base64 PNGs of whatever the run drew
@@ -42,20 +50,36 @@ const showSolution = ref(false);
 const tutor = ref(null);
 const tutorError = ref('');
 const tutorBusy = ref(false);
+/* Their code broke rather than being wrong, so the way out is on offer: Ask AI pulses until
+ * they either take it or start typing.
+ *
+ * THE FIRST KEYSTROKE CANCELS IT. A student who is already editing has decided what to try
+ * next, and a button still asking to be pressed is then nagging them about a problem they
+ * are in the middle of solving. Watching `code` covers every route in - typing, pasting,
+ * Show answer - and the step-change reset below covers moving on.
+ *
+ * An error, not a wrong answer. Being marked incorrect is ordinary progress and needs no
+ * button waving at it; a query that would not run is the case where a student can be stuck
+ * without knowing why. */
+const urgeHelp = ref(false);
+watch(code, () => { urgeHelp.value = false; });
 
 const steps = computed(() => props.exercise.steps || []);
 const step = computed(() => steps.value[stepIndex.value] || {});
 const multi = computed(() => steps.value.length > 1);
 
 watch(() => [props.exercise.id, stepIndex.value], () => {
-  code.value = step.value.sample || '';
+  /* Their own answer wins over the sample on an exercise they have already solved: coming
+   * back to finished work and finding the starter code in the editor reads as the work
+   * having been thrown away. */
+  code.value = props.saved?.[stepIndex.value] ?? step.value.sample ?? '';
   output.value = ''; error.value = ''; verdict.value = null;
   figures.value = []; files.value = [];
   showHint.value = false; showSolution.value = false;
-  tutor.value = null; tutorError.value = '';
+  tutor.value = null; tutorError.value = ''; urgeHelp.value = false;
 }, { immediate: true });
 
-watch(() => props.exercise.id, () => { stepIndex.value = 0; });
+watch(() => props.exercise.id, () => { stepIndex.value = 0; passed.value = {}; });
 
 /* The first Python exercise of a session pays for the interpreter - Pyodide, then pandas
  * and whatever else the unit wants, then the grader's own wheels. Seconds, once. Said out
@@ -77,6 +101,7 @@ async function doRun() {
   error.value = r.error || '';
   figures.value = r.figures || [];
   files.value = r.files || [];
+  if (error.value) urgeHelp.value = true;
 }
 
 async function doCheck() {
@@ -88,18 +113,21 @@ async function doCheck() {
   // the plot: being marked wrong is the moment a student most wants to see what they drew.
   output.value = r.output || '';
   figures.value = r.figures || [];
-  if (r.error) error.value = r.error;
+  if (r.error) { error.value = r.error; urgeHelp.value = true; }
   /* DataCamp's own feedback, and far better than anything we would write - it names the
    * argument you got wrong. It arrives as HTML with <code> in it, from the SCT, which is
    * course content and carries exactly the trust an exercise prompt does. */
   verdict.value = { pass: r.correct, reason: r.message || (r.correct ? 'Correct.' : 'Not quite.') };
   if (r.correct) {
+    passed.value[stepIndex.value] = code.value;
     if (stepIndex.value < steps.value.length - 1) setTimeout(() => stepIndex.value++, 900);
-    else emit('solved', props.exercise.id);
+    else emit('solved', props.exercise.id, { ...passed.value });
   }
 }
 
 async function askForHelp() {
+  // Offer taken.
+  urgeHelp.value = false;
   tutorBusy.value = true; tutorError.value = ''; tutor.value = null;
   try {
     tutor.value = await askTutor({
@@ -172,7 +200,9 @@ const ranQuietly = computed(() =>
           <button v-if="step.hint" class="btn ghost" @click="showHint = !showHint">
             <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
           </button>
-          <button v-if="tutorAvailable()" class="btn ghost" @click="askForHelp" :disabled="tutorBusy">
+          <button v-if="tutorAvailable()" class="btn ghost"
+                  :class="{ urge: urgeHelp, soft: urgeHelp }"
+                  @click="askForHelp" :disabled="tutorBusy">
             <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
           </button>
           <button v-if="step.solution" class="btn ghost" @click="showSolution = !showSolution">

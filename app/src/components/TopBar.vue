@@ -7,7 +7,7 @@ import Wordmark from './Wordmark.vue';
  * and the sidebar each grew their own copy of the brand and their own sign-out before
  * this.
  */
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue';
+import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { theme, resolved, CHOICES } from '../theme.js';
 
 const props = defineProps({
@@ -15,6 +15,8 @@ const props = defineProps({
   email: String,
   admin: Boolean,
   authed: Boolean,
+  /** XP earned today, across every course. Zero is a real answer and is shown as one. */
+  xpToday: Number,
 });
 defineEmits(['home', 'admin', 'signout']);
 
@@ -30,6 +32,70 @@ const initials = computed(() => {
   const words = label.value.split(/[\s._-]+/).filter(Boolean);
   return (words.slice(0, 2).map(w => w[0]).join('') || '?').toUpperCase();
 });
+
+/* Earning XP is the only thing in the player that happens TO the student rather than
+ * because they clicked something, so it is the one number worth animating - a total that
+ * silently reads 340 where it read 240 a moment ago is a number nobody watches.
+ *
+ * Two parts, both quiet. The number counts up, which says it is accumulating rather than
+ * being replaced. A ring sweeps once around the pill, which registers in peripheral vision
+ * without asking to be read - this sits in the corner of a screen whose middle is an
+ * exercise, and the corner should not be competing with it.
+ *
+ * The sweep is driven from here rather than by a CSS animation because a conic gradient's
+ * angle is not an animatable property without `@property`, and one frame loop is cheaper
+ * than registering a custom property to get a second one.
+ *
+ * THE OPENING BALANCE IS NOT AN EARN. The first value this ever sees is the session's
+ * total arriving from the API, and counting up to it would celebrate work done yesterday.
+ * That one is taken silently; everything after it is something that just happened. */
+const COUNT_MS = 650;
+const SWEEP_MS = 700;
+const shown = ref(props.xpToday || 0);
+const sweeping = ref(false);
+const ring = ref(null);
+let opened = false, frame = 0, sweepFrame = 0;
+/* Respected rather than assumed: a motion that says "you earned something" is exactly the
+ * kind a student who has asked for less of it does not need. They still get the number. */
+const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function countTo(to) {
+  cancelAnimationFrame(frame);
+  const from = shown.value, started = performance.now();
+  const step = now => {
+    const p = Math.min(1, (now - started) / COUNT_MS);
+    // Ease out: quick off the mark, settling onto the figure rather than stopping at it.
+    shown.value = Math.round(from + (to - from) * (1 - (1 - p) ** 3));
+    if (p < 1) frame = requestAnimationFrame(step);
+  };
+  frame = requestAnimationFrame(step);
+}
+
+/* One turn, at a constant rate - an eased sweep reads as the ring slowing down rather than
+ * as a lap being completed. The angle is written straight onto the element instead of being
+ * bound in the template, so sixty frames of it are sixty style writes rather than sixty
+ * component re-renders. */
+function sweep() {
+  cancelAnimationFrame(sweepFrame);
+  const started = performance.now();
+  sweeping.value = true;
+  const step = now => {
+    const p = Math.min(1, (now - started) / SWEEP_MS);
+    ring.value?.style.setProperty('--sweep', (p * 360).toFixed(1) + 'deg');
+    if (p < 1) { sweepFrame = requestAnimationFrame(step); return; }
+    sweeping.value = false;
+    ring.value?.style.removeProperty('--sweep');
+  };
+  sweepFrame = requestAnimationFrame(step);
+}
+
+watch(() => props.xpToday, now => {
+  const to = now || 0;
+  if (!opened || still()) { opened = true; shown.value = to; return; }
+  if (to > shown.value) sweep();
+  countTo(to);
+});
+onBeforeUnmount(() => { cancelAnimationFrame(frame); cancelAnimationFrame(sweepFrame); });
 
 /* The theme picker. The button shows what is in force, not what was chosen, so a student
  * on System can see which way it went without opening anything. */
@@ -63,6 +129,17 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
           </li>
         </ul>
       </div>
+      <!-- Today's, not the lifetime total: a number that only ever goes up stops being
+           worth looking at, and one that starts again each morning is an invitation to do
+           something today. It sits beside the person because it is a fact about them
+           rather than about whatever course happens to be open - which is also why it is
+           counted across all of them. -->
+      <span ref="ring" class="ring" :class="{ sweeping }">
+        <span class="xp" title="XP earned today">
+          <strong>{{ shown.toLocaleString() }}</strong> XP today
+        </span>
+      </span>
+
       <div v-if="label" class="who">
         <span class="avatar">{{ initials }}</span>
         <span class="name">{{ label }}</span>
@@ -84,32 +161,27 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 .mark:hover { background: var(--ice-bg); }
 
 .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
-.who { display: flex; align-items: center; gap: 8px; padding-left: 4px; }
-.avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid;
-          place-items: center; font-size: 11px; font-weight: 600; color: var(--ice-on-primary);
-          background: var(--ice-primary); }
-.name { font-size: 13px; max-width: 180px;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The ring is the wrapper, so the pill keeps its own background and nothing moves when
+   the sweep starts: the 2px is always there, and only the gradient inside it appears. */
+.ring { padding: 2px; border-radius: 999px; background: transparent; }
+.ring.sweeping { background: conic-gradient(from -90deg, var(--ice-primary) var(--sweep, 0deg), transparent 0); }
 
-.theme { position: relative; display: flex; }
-.pick { width: 30px; height: 30px; display: grid; place-items: center; cursor: pointer;
-        background: var(--ice-bg); border: 1px solid var(--ice-border); border-radius: 8px;
-        color: var(--ice-fg-muted); font-size: 14px; line-height: 1; }
-.pick:hover { color: var(--ice-fg); border-color: var(--ice-primary-soft); }
-.menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; margin: 0;
-        padding: 4px; list-style: none; min-width: 140px;
-        background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
-        border-radius: 8px; box-shadow: 0 8px 24px var(--ice-scrim); }
-.menu button { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-               padding: 7px 8px; border: 0; border-radius: 6px; background: none;
-               cursor: pointer; font: inherit; font-size: 13px; color: var(--ice-fg); }
-.menu button:hover { background: var(--ice-raise-strong); }
-.menu button.on { color: var(--ice-primary-strong); }
-.tick { width: 12px; font-size: 11px; }
+.xp { display: flex; align-items: baseline; gap: 4px; padding: 4px 9px; border-radius: 999px;
+      background: var(--ice-primary-soft); color: var(--ice-fg-muted);
+      font-size: 11px; white-space: nowrap; }
+/* Tabular figures, or a counting number changes width on every frame and shoves the avatar
+   beside it along with it. */
+.xp strong { font-family: var(--ice-font-mono); font-variant-numeric: tabular-nums;
+             font-size: 12px; color: var(--ice-fg); }
 
-/* Below a certain width the name is the first thing worth losing - the avatar still says
-   who is signed in, and the actions still work. */
+/* A student who has asked for less motion gets the number and nothing else. */
+@media (prefers-reduced-motion: reduce) {
+  .ring.sweeping { background: transparent; }
+}
+
 @media (max-width: 720px) {
   .name { display: none; }
+  /* The count survives; the words go. It is the number that is worth the room. */
+  .xp { font-size: 0; gap: 0; padding: 4px 8px; }
 }
 </style>

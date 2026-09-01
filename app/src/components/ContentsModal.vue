@@ -16,7 +16,7 @@ import { walkTopic } from '../walk.js';
 const props = defineProps({
   course: Object,
   currentId: String,
-  solved: Object,      // Set
+  solved: Object,      // Set of string ids - see progress.js, and never compare raw
   currentUnit: String,
 });
 const emit = defineEmits(['pick', 'close']);
@@ -83,7 +83,8 @@ const isOpen = u => filtering.value || open.value.has(u.unit);
 /* Tallies count exercises only - slides are taught, not graded, and a unit reading 12/20
  * when eight of the twenty are slide decks says nothing useful. */
 const gradableOf = t => t.rows.filter(r => r.kind !== 'slides');
-const done = t => gradableOf(t).filter(e => props.solved?.has(e.id)).length;
+const isSolved = id => !!props.solved?.has(String(id));
+const done = t => gradableOf(t).filter(e => isSolved(e.id)).length;
 const unitDone = u => u.topics.reduce((n, t) => n + done(t), 0);
 const unitTotal = u => u.topics.reduce((n, t) => n + gradableOf(t).length, 0);
 const hits = computed(() => shown.value
@@ -126,9 +127,9 @@ watch(query, () => { if (box.value) box.value.scrollTop = 0; });
                 <h5>{{ t.topic }} {{ t.title }}</h5>
                 <button v-for="r in t.rows" :key="r.id" class="entry"
                         :class="{ active: r.id === currentId, section: r.kind === 'slides',
-                                  done: r.kind !== 'slides' && solved?.has(r.id) }"
+                                  done: r.kind !== 'slides' && isSolved(r.id) }"
                         @click="emit('pick', r.id)">
-                  <Badge :row="r" :done="solved?.has(r.id)" />
+                  <Badge :row="r" :done="isSolved(r.id)" />
                   <span class="label">{{ r.title }}</span>
                 </button>
               </div>

@@ -130,6 +130,42 @@ button { font-family: inherit; }
 .btn.primary { background: var(--ice-primary); border-color: var(--ice-primary); color: var(--ice-on-primary); font-weight: 600; }
 .btn.primary:hover:not(:disabled) { background: var(--ice-primary-strong); border-color: var(--ice-primary-strong); }
 
+/* THE URGE: a button asking to be pressed.
+ *
+ * One gesture with one definition, because three buttons in two components use it and a
+ * second halo written slightly differently is how a product ends up with a twitch instead
+ * of a vocabulary. A ring grows out of the button's own edge and dissolves, on a loop with
+ * a rest in it - a pulse rather than a strobe. Nothing moves and nothing changes size, so
+ * it reads at the edge of vision while the middle of the screen is an exercise.
+ *
+ * IT LOOPS UNTIL IT IS ANSWERED. That is the point of it: the signal is not "something just
+ * happened" but "there is a thing to do here", and it stays until the student does it or
+ * makes the offer irrelevant. Whoever sets it owns clearing it - Next on the next move,
+ * Ask AI on the next keystroke in the editor.
+ *
+ * `soft` is the same shape at lower amplitude: a smaller ring, a longer rest. Next is
+ * telling a student they have earned the way on; Ask AI is offering a way out of being
+ * stuck, and a button that shouts at someone who has just hit an error is nagging them.
+ *
+ * The accented border is NOT part of the animation. It holds for as long as the urge does,
+ * so the button still says it is the one to press between pulses - and so that a student
+ * with reduced motion, who gets no ring at all, is not left with nothing. */
+.btn.urge { border-color: var(--ice-primary); animation: btn-urge 1.9s ease-out infinite; }
+.btn.urge.soft { animation: btn-urge-soft 2.6s ease-out infinite; }
+@keyframes btn-urge {
+  0%        { box-shadow: 0 0 0 0 var(--ice-primary-soft); }
+  55%       { box-shadow: 0 0 0 7px transparent; }
+  56%, 100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes btn-urge-soft {
+  0%        { box-shadow: 0 0 0 0 var(--ice-primary-soft); }
+  40%       { box-shadow: 0 0 0 4px transparent; }
+  41%, 100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn.urge, .btn.urge.soft { animation: none; }
+}
+
 .link {
   background: none; border: 0; padding: 0; cursor: pointer; font-size: 12px;
   color: var(--ice-primary-strong); text-decoration: underline; text-underline-offset: 3px;

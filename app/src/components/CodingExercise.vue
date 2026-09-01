@@ -9,7 +9,11 @@ import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 import Icon from './Icon.vue';
 
-const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
+const props = defineProps({
+  courseId: String, exercise: Object, done: Boolean,
+  /** What solved this exercise last time, keyed by step index. Absent until it has been. */
+  saved: Object,
+});
 const emit = defineEmits(['solved']);
 
 // Figures and embedded apps are named bare in the markdown - a filename, an app
@@ -21,6 +25,10 @@ const mdx = text => md(text, {
 
 const stepIndex = ref(0);
 const code = ref('');
+/* What solved each step, this time round: filled as steps pass and handed up whole when the
+ * exercise completes, because that is the moment there is an answer worth keeping. A step
+ * solved in a session that was abandoned half way is not a solution to anything. */
+const passed = ref({});
 const result = ref(null);
 const error = ref('');
 const verdict = ref(null);
@@ -31,6 +39,19 @@ const picked = ref(null);
 const tutor = ref(null);        // { text } once a nudge comes back
 const tutorError = ref('');
 const tutorBusy = ref(false);
+/* Their code broke rather than being wrong, so the way out is on offer: Ask AI pulses until
+ * they either take it or start typing.
+ *
+ * THE FIRST KEYSTROKE CANCELS IT. A student who is already editing has decided what to try
+ * next, and a button still asking to be pressed is then nagging them about a problem they
+ * are in the middle of solving. Watching `code` covers every route in - typing, pasting,
+ * Show answer - and the step-change reset below covers moving on.
+ *
+ * An error, not a wrong answer. Being marked incorrect is ordinary progress and needs no
+ * button waving at it; a query that would not run is the case where a student can be stuck
+ * without knowing why. */
+const urgeHelp = ref(false);
+watch(code, () => { urgeHelp.value = false; });
 
 const steps = computed(() => props.exercise.steps || []);
 const step = computed(() => steps.value[stepIndex.value] || {});
@@ -41,18 +62,23 @@ const isMcqStep = computed(() => step.value.kind === 'mcq');
 watch(() => [props.exercise.id, stepIndex.value], () => {
   // A multiple-choice step with no sample leaves the editor alone: the student is often
   // part-way through exploring the tables that the question is about.
-  if (!isMcqStep.value || step.value.sample) code.value = step.value.sample || '';
+  //
+  // THEIR OWN ANSWER WINS OVER THE SAMPLE on an exercise they have already solved: coming
+  // back to finished work and finding the starter code in the editor reads as the work
+  // having been thrown away.
+  if (!isMcqStep.value || step.value.sample)
+    code.value = props.saved?.[stepIndex.value] ?? step.value.sample ?? '';
   result.value = null; error.value = ''; verdict.value = null;
   showHint.value = false; showSolution.value = false; picked.value = null;
-  tutor.value = null; tutorError.value = '';
+  tutor.value = null; tutorError.value = ''; urgeHelp.value = false;
 }, { immediate: true });
 
-watch(() => props.exercise.id, () => { stepIndex.value = 0; });
+watch(() => props.exercise.id, () => { stepIndex.value = 0; passed.value = {}; });
 
 async function doRun() {
   busy.value = true; error.value = ''; verdict.value = null;
   try { result.value = await run(props.courseId, props.exercise.dataset, code.value, props.exercise.setup); }
-  catch (e) { error.value = e.message; result.value = null; }
+  catch (e) { error.value = e.message; result.value = null; urgeHelp.value = true; }
   finally { busy.value = false; }
 }
 
@@ -61,9 +87,12 @@ async function doCheck() {
   try {
     const v = isMcqStep.value ? checkChoice() : await gradeQuery();
     verdict.value = v;
+    if (v.error) urgeHelp.value = true;
     if (v.pass) {
+      // An MCQ step has no editor and so nothing to keep - the choice is not a solution.
+      if (!isMcqStep.value) passed.value[stepIndex.value] = code.value;
       if (stepIndex.value < steps.value.length - 1) setTimeout(() => stepIndex.value++, 900);
-      else emit('solved', props.exercise.id);
+      else emit('solved', props.exercise.id, { ...passed.value });
     }
   } finally { busy.value = false; }
 }
@@ -83,6 +112,8 @@ async function gradeQuery() {
 }
 
 async function askForHelp() {
+  // Offer taken.
+  urgeHelp.value = false;
   tutorBusy.value = true; tutorError.value = ''; tutor.value = null;
   try {
     const r = await askTutor({
@@ -159,6 +190,7 @@ async function doReset() {
             <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
           </button>
           <button v-if="tutorAvailable() && !isMcqStep" class="btn ghost"
+                  :class="{ urge: urgeHelp, soft: urgeHelp }"
                   @click="askForHelp" :disabled="tutorBusy">
             <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
           </button>

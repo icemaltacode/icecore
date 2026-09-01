@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
-import { load as loadProgress, mark as markProgress, remember } from './progress.js';
+import { load as loadProgress, mark as markProgress, remember, earnedToday, progressId } from './progress.js';
 import CodingExercise from './components/CodingExercise.vue';
 import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
@@ -50,22 +50,26 @@ const showContents = ref(false);
  *
  *   pinned  the permanent answer, written to storage, owned entirely by the pin. Pinned,
  *           the sidebar is a column of the layout like it always was.
- *   peek    open for now. Hovering the edge, or the rail's arrow, or a click that has not
- *           landed outside yet. Unpinned it floats over the exercise rather than taking a
- *           column, so a hover never reflows the page under the pointer.
+ *   peek    open for now. Hovering the edge, or a click that has not landed outside yet.
+ *           Unpinned it floats over the exercise rather than taking a column, so a hover
+ *           never reflows the page under the pointer.
  *
  * The delays are what make hover-to-open usable rather than a twitch: the pointer crosses
  * this edge constantly on the way to the editor, and without them the sidebar flickers
  * every time it does. Long enough to mean it, short enough not to feel stuck. */
 const SIDEBAR_KEY = 'ice-sidebar-pinned';
 const OPEN_AFTER = 180, CLOSE_AFTER = 250;
+/* Wide enough that a 272px column costs the exercise nothing it needs. Below it the rail
+ * is the right default, and above it a sidebar you have to go and find is one most people
+ * never find. */
+const WIDE = 1000;
 
-const pinned = ref(localStorage.getItem(SIDEBAR_KEY) === 'yes');
+/* NO STORED PREFERENCE IS NOT THE SAME AS UNPINNED, which is why this reads the raw value
+ * rather than comparing it: `=== 'yes'` makes a first visit and a deliberate unpin the same
+ * answer, and the screen width may then override something the student actually chose. */
+const remembered = localStorage.getItem(SIDEBAR_KEY);
+const pinned = ref(remembered === null ? innerWidth >= WIDE : remembered === 'yes');
 const peek = ref(false);
-/* Set by an explicit collapse, so the pointer sitting on the rail it just uncovered does
- * not immediately open it again. Cleared by leaving the edge - the next approach is a new
- * intention. */
-const dismissed = ref(false);
 const sidebarOpen = computed(() => pinned.value || peek.value);
 
 watch(pinned, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
@@ -73,16 +77,14 @@ watch(pinned, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
 let enterT, leaveT;
 const hoverIn = () => {
   clearTimeout(leaveT);
-  if (pinned.value || dismissed.value) return;
+  if (pinned.value) return;
   enterT = setTimeout(() => { peek.value = true; }, OPEN_AFTER);
 };
 const hoverOut = () => {
   clearTimeout(enterT);
-  dismissed.value = false;
   if (pinned.value) return;
   leaveT = setTimeout(() => { peek.value = false; }, CLOSE_AFTER);
 };
-const collapse = () => { clearTimeout(enterT); peek.value = false; dismissed.value = true; };
 /* Unpinning does not slam it shut under the cursor - it just stops being permanent, and
  * the ordinary peek rules take it from there. */
 const togglePin = () => {
@@ -115,7 +117,7 @@ const slidesUrl = computed(() => {
   return s ? (/^https?:\/\//.test(s) ? s : `${import.meta.env.BASE_URL}${s}`) : null;
 });
 const allCourses = ref([]);   // unfiltered - an admin enrols people onto courses they aren't on
-const courseProgress = ref({});   // course id -> solved count, for the cards on the grid
+const courseProgress = ref({});   // course id -> { done, xp }, for the cards on the grid
 const isAdmin = computed(() => session.admin);
 
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
@@ -135,7 +137,33 @@ const total = computed(() => flat.value.length);
 const exercises = computed(() => gradable(flat.value));
 
 const solved = ref(new Set());
-const doneCount = computed(() => exercises.value.filter(e => solved.value.has(e.id)).length);
+/* Always through `solvedId`: the set holds strings and an exercise id is a number - see
+ * progress.js. Comparing them raw reports a finished course as untouched. */
+const isSolved = id => solved.value.has(progressId(id));
+const doneCount = computed(() => exercises.value.filter(e => isSolved(e.id)).length);
+
+/* XP, in the two spans a student is actually asking about: what this course has earned them
+ * altogether, and what today has. Both are RECORDED rather than summed from the content -
+ * see progress.js - so they arrive with the progress they belong to rather than being
+ * recomputed here, and this side only keeps them moving as exercises are solved.
+ *
+ * The daily one is deliberately not per course: it is a fact about the student, and it is
+ * fetched once a session rather than re-asked on every solve. */
+const earned = ref(0);
+const xpToday = ref(0);
+/* What solved each exercise last time, by exercise then by step. Arrives with the course's
+ * progress and is kept up to date here as things are solved, so leaving an exercise and
+ * coming back inside one session shows the answer without asking the server again. */
+const savedCode = ref({});
+
+/* Solved: the way on is Next, and it says so until they take it.
+ *
+ * Cleared by the move itself rather than by a timer - a nudge that gives up after two
+ * seconds is one a student who looked away has never seen. Held on the App rather than
+ * inside an exercise because Next is the footer's button, and the exercise that earned it
+ * is no longer on screen by the time it is pressed. */
+const urgeNext = ref(false);
+const xp = n => (n || 0).toLocaleString();
 
 async function open(id) {
   loading.value = true; loadError.value = ''; playground.value = null;
@@ -151,13 +179,18 @@ async function open(id) {
       history.replaceState({}, '', url);
       return;
     }
-    const { solved: done, last } = await loadProgress(id);
+    const { solved: done, last, xp: earnedHere, code } = await loadProgress(id);
     solved.value = done;
-    courseProgress.value = { ...courseProgress.value, [id]: done.size };
-    // Where they left off, if that exercise still exists - content gets renumbered, and a
-    // bookmark pointing at something that has been deleted should send them to the start
-    // rather than nowhere.
-    currentId.value = flat.value.find(e => e.id === last)?.id ?? flat.value[0]?.id ?? null;
+    earned.value = earnedHere;
+    savedCode.value = code || {};
+    courseProgress.value = { ...courseProgress.value, [id]: { done: done.size, xp: earnedHere } };
+    /* Where they left off, if that exercise still exists - content gets renumbered, and a
+     * bookmark pointing at something that has been deleted should send them to the start
+     * rather than nowhere. Matched through `progressId`, because the bookmark comes back
+     * from storage as a string and an exercise id is a number: compared raw it never
+     * matches, and every visit silently starts from the top of the course. */
+    currentId.value = flat.value.find(e => progressId(e.id) === progressId(last))?.id
+      ?? flat.value[0]?.id ?? null;
     const url = new URL(location.href);
     url.searchParams.set('course', id);
     history.replaceState({}, '', url);
@@ -204,8 +237,13 @@ async function loadCourses() {
     // not awaited, though: the grid is worth showing before the numbers land on it.
     for (const c of manifest.value.filter(c => !c.playground))
       loadProgress(c.id)
-        .then(({ solved: s }) => { courseProgress.value = { ...courseProgress.value, [c.id]: s.size }; })
+        .then(({ solved: s, xp: n }) => {
+          courseProgress.value = { ...courseProgress.value, [c.id]: { done: s.size, xp: n } };
+        })
         .catch(() => {});
+    // One question about the student rather than about any course, so it is asked here and
+    // then kept up to date by markSolved rather than re-fetched.
+    earnedToday().then(n => { xpToday.value = n; }).catch(() => {});
     // A course named in the URL opens straight away. That is what makes returning to the
     // tab resume where they were, rather than sending them back through the grid.
     const wanted = new URLSearchParams(location.search).get('course');
@@ -253,17 +291,45 @@ async function onAuthenticated(token) {
   await loadCourses();
 }
 
-const markSolved = id => {
-  if (solved.value.has(id)) return;
-  solved.value = new Set([...solved.value, id]);
-  courseProgress.value = { ...courseProgress.value, [course.value.id]: solved.value.size };
-  markProgress(course.value.id, id);
+/* A solve carries the code that did it, so an exercise a student comes back to shows their
+ * own answer rather than the starter.
+ *
+ * RE-SOLVING IS NOT EARNING AGAIN, but it is still worth keeping: someone who returns to a
+ * finished exercise and improves their answer should keep the better one. So the code is
+ * always recorded and the amount only on the first pass - `mark` sends no `xp` at all in
+ * the second case, and the row keeps the number it already had. */
+const markSolved = (id, code) => {
+  const first = !isSolved(id);
+  urgeNext.value = true;
+  if (code) savedCode.value = { ...savedCode.value, [id]: code };
+
+  if (!first) { markProgress(course.value.id, id, { code }); return; }
+
+  // What the exercise is worth travels with the solve, because that is what gets recorded.
+  // Read off the row rather than looked up again: the walk carries the exercise's own
+  // fields, and a second lookup is a second chance to disagree about which exercise it is.
+  const worth = Number(flat.value.find(r => r.id === id)?.xp) || 0;
+  solved.value = new Set([...solved.value, progressId(id)]);
+  earned.value += worth;
+  xpToday.value += worth;
+  courseProgress.value = {
+    ...courseProgress.value,
+    [course.value.id]: { done: solved.value.size, xp: earned.value },
+  };
+  markProgress(course.value.id, id, { xp: worth, code });
 };
 const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value = n.id; };
 
 /* Every move is a bookmark. Guarded on `course` because currentId is also cleared on the
- * way back to the grid, and "nowhere" is not a place to resume. */
-watch(currentId, id => { if (course.value && id) remember(course.value.id, id); });
+ * way back to the grid, and "nowhere" is not a place to resume.
+ *
+ * A move is also the answer to Next's nudge, whichever way it went and however it was made
+ * - the footer, the sidebar, Contents. Having gone somewhere, the student does not need to
+ * be told where to go. */
+watch(currentId, id => {
+  urgeNext.value = false;
+  if (course.value && id) remember(course.value.id, id);
+});
 </script>
 
 <template>
@@ -272,6 +338,7 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
   <div v-else class="app">
     <TopBar
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
+      :xp-today="xpToday"
       @home="backToCourses" @admin="showAdmin = true" @signout="signOut" />
 
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
@@ -299,11 +366,12 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
       <div class="dock" @pointerenter="hoverIn" @pointerleave="hoverOut">
         <!-- Unpinned, the sidebar leaves a rail rather than nothing: an edge you can only
              find by hovering it is one most people never find, and Contents is worth
-             reaching without opening anything. -->
+             reaching without opening anything.
+
+             There is no arrow to open it and none to close it. Hovering the rail does the
+             first and leaving does the second, so a button for either was a control whose
+             job had already been done by the time anyone could press it. -->
         <aside v-if="!pinned" class="rail">
-          <button class="railbtn" title="Open the sidebar" @click="peek = true">
-            <Icon name="expand" :size="16" />
-          </button>
           <button class="railbtn" title="Contents" @click="showContents = true">
             <Icon name="contents" :size="16" />
           </button>
@@ -315,16 +383,19 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
           <button class="pin" :class="{ on: pinned }" :aria-pressed="pinned"
                   :title="pinned ? 'Unpin the sidebar' : 'Keep the sidebar open'"
                   @click="togglePin"><Icon name="pin" :size="16" /></button>
-          <button class="collapse" title="Collapse the sidebar" @click="collapse">
-            <Icon name="collapse" :size="16" />
-          </button>
         </div>
 
         <button class="courses" @click="backToCourses">&larr; All courses</button>
 
         <div class="progress" v-if="exercises.length">
           <div class="bar"><i :style="{ width: (doneCount / exercises.length * 100) + '%' }"></i></div>
-          <small>{{ doneCount }} of {{ exercises.length }} complete</small>
+          <!-- The bar counts exercises and the figure beside it counts XP: two ways of
+               saying how far in they are, and the one on the right is the one the exercises
+               themselves promise. -->
+          <div class="tally">
+            <small>{{ doneCount }} of {{ exercises.length }} complete</small>
+            <small class="xp">{{ xp(earned) }} XP</small>
+          </div>
         </div>
 
         <!-- Where they are, and the two moves either side of it. The whole structure is one
@@ -355,10 +426,10 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
           <button
             v-for="r in topicRows" :key="r.id"
             class="navitem"
-            :class="{ active: r.id === currentId, done: r.kind !== 'slides' && solved.has(r.id),
+            :class="{ active: r.id === currentId, done: r.kind !== 'slides' && isSolved(r.id),
                       section: r.kind === 'slides' }"
             @click="currentId = r.id">
-            <Badge :row="r" :done="solved.has(r.id)" />
+            <Badge :row="r" :done="isSolved(r.id)" />
             <span class="label">{{ r.title }}</span>
           </button>
         </nav>
@@ -388,7 +459,8 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
           :key="current.id"
           :course-id="course.id"
           :exercise="current"
-          :done="solved.has(current.id)"
+          :done="isSolved(current.id)"
+          :saved="savedCode[current.id]"
           @solved="markSolved" />
 
         <footer v-if="total">
@@ -401,7 +473,10 @@ watch(currentId, id => { if (course.value && id) remember(course.value.id, id); 
                   :class="{ on: showSlides }" @click="showSlides = !showSlides">
             {{ showSlides ? 'Hide slides' : 'Slides' }}
           </button>
-          <button class="btn ghost" :disabled="index >= total - 1" @click="go(1)">Next</button>
+          <!-- Urging only while there is somewhere to go: a disabled button that pulses is
+               asking for something it will not accept. -->
+          <button class="btn ghost" :class="{ urge: urgeNext && index < total - 1 }"
+                  :disabled="index >= total - 1" @click="go(1)">Next</button>
         </footer>
       </main>
 
@@ -441,12 +516,10 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .brand strong { min-width: 0; font-size: 13px; line-height: 1.35;
                 overflow: hidden; text-overflow: ellipsis; }
 /* Pin upright and in the accent when it is holding the sidebar open, tilted and grey when
-   it is not - it says which state it is in, not which state pressing it would reach. The
-   collapse beside it only affects now, so it stays plain. */
-.pin, .collapse { flex: none; background: none; border: 0; cursor: pointer; line-height: 0;
-                  padding: 3px; border-radius: 6px; color: var(--ice-fg-muted); }
-.pin { margin-left: auto; }
-.pin:hover, .collapse:hover { background: var(--ice-raise-strong); color: var(--ice-fg); }
+   it is not - it says which state it is in, not which state pressing it would reach. */
+.pin { flex: none; margin-left: auto; background: none; border: 0; cursor: pointer;
+       line-height: 0; padding: 3px; border-radius: 6px; color: var(--ice-fg-muted); }
+.pin:hover { background: var(--ice-raise-strong); color: var(--ice-fg); }
 .pin :deep(.icon) { transform: rotate(45deg); transition: transform .12s; }
 .pin.on { color: var(--ice-primary); }
 .pin.on :deep(.icon) { transform: none; }
@@ -485,7 +558,10 @@ aside { background: var(--ice-bg-soft); border-right: 1px solid var(--ice-border
 .progress { padding: 0 18px 14px; }
 .bar { height: 4px; border-radius: 999px; background: var(--ice-bg); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--ice-primary); transition: width .3s; }
-.progress small { color: var(--ice-fg-muted); font-size: 11px; display: block; margin-top: 6px; }
+.progress .tally { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; }
+.progress small { color: var(--ice-fg-muted); font-size: 11px; }
+.progress .xp { margin-left: auto; font-family: var(--ice-font-mono);
+                color: var(--ice-primary-strong); font-weight: 600; }
 nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
 .navitem { display: flex; gap: 9px; align-items: center; width: 100%; text-align: left;
            padding: 7px 8px; border-radius: 8px; border: 0; background: none; cursor: pointer;

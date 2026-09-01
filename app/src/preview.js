@@ -15,6 +15,9 @@
  * app - so a stray VITE_ICECORE_PREVIEW in a build environment does nothing.
  */
 import { loadManifest } from './content.js';
+/* The same localStorage record `progress.js` keeps, through the same module: this
+ * stands in for the API, so it writes what the offline backing writes. */
+import * as store from './progress-store.js';
 
 const ROLES = ['student', 'admin', 'signin'];
 
@@ -61,9 +64,6 @@ async function seed() {
 }
 const find = sub => people.find(p => p.sub === sub);
 
-const progressKey = course => `ice-platform-progress:${course}`;
-const placeKey = course => `ice-platform-place:${course}`;
-
 /**
  * Stands in for `api()`. Same contract: resolves to the parsed body, throws an Error
  * carrying the message the real service would have put in `error`.
@@ -87,15 +87,30 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
   }
 
   if (route === 'progress') {
+    /* XP earned today, over every course. The stub keeps a counter where the real handler
+     * filters the rows' own `at`, because localStorage cannot be asked a question - so
+     * `since` is honoured only in the sense that the counter is already today's. */
+    if (method === 'GET' && !q.get('course') && q.get('since')) return { xp: store.dayXp() };
+
     const course = method === 'GET' ? q.get('course') : body.course;
-    const solved = new Set(JSON.parse(localStorage.getItem(progressKey(course)) || '[]'));
+    const rec = store.earned(course);
+    const codeRec = store.code(course);
     if (method === 'GET')
-      return { solved: [...solved], last: localStorage.getItem(placeKey(course)) || null };
+      return { solved: Object.keys(rec), last: store.place(course), xp: store.xpIn(rec), code: codeRec };
     // The place-marker and a solved exercise are separate PUT shapes, told apart the same
     // way the real handler tells them apart.
-    if (body.last) { localStorage.setItem(placeKey(course), body.last); return { ok: true }; }
-    body.solved ? solved.add(body.exercise) : solved.delete(body.exercise);
-    localStorage.setItem(progressKey(course), JSON.stringify([...solved]));
+    if (body.last) { store.setPlace(course, body.last); return { ok: true }; }
+    const first = body.solved && !(body.exercise in rec);
+    // Only what the call carries, exactly as the real handler does: a re-solve sends the
+    // code without an amount and must not restate what was earned.
+    if (!body.solved) delete rec[body.exercise];
+    else if (body.xp != null) rec[body.exercise] = Number(body.xp) || 0;
+    else rec[body.exercise] = rec[body.exercise] ?? 0;
+    store.saveEarned(course, rec);
+    if (first) store.addDayXp(body.xp);
+    if (!body.solved) delete codeRec[body.exercise];
+    else if (body.code) codeRec[body.exercise] = body.code;
+    store.saveCode(course, codeRec);
     return { ok: true };
   }
 

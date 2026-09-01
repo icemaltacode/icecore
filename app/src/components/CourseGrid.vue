@@ -10,15 +10,19 @@ import { courseImage } from '../content.js';
 
 const props = defineProps({
   courses: Array,
-  /** id -> number solved. Absent while it is still being fetched. */
+  /** id -> { done, xp }. Absent while it is still being fetched. */
   progress: Object,
   loading: Boolean,
   error: String,
 });
 defineEmits(['open']);
 
-const done = c => props.progress?.[c.id] ?? 0;
+const done = c => props.progress?.[c.id]?.done ?? 0;
 const pct = c => (c.exercises ? done(c) / c.exercises * 100 : 0);
+/* What this course has earned them, which is recorded rather than summed from the content -
+ * see progress.js. Nothing on a card knows what a course is worth in total, and it does not
+ * need to: the bar beside it already says how far through they are. */
+const xp = c => props.progress?.[c.id]?.xp ?? 0;
 
 /* A course with nothing gradable in it is announced, not broken. That is what a course
  * repo looks like before its material is written: a course.json and a cover image, which
@@ -72,7 +76,12 @@ const monogram = title => (title || '?').trim()[0].toUpperCase();
             </template>
             <template v-else>
               <span class="bar"><i :style="{ width: pct(c) + '%' }"></i></span>
-              <small class="tally">{{ done(c) }} of {{ c.exercises }} complete</small>
+              <span class="tallies">
+                <small class="tally">{{ done(c) }} of {{ c.exercises }} complete</small>
+                <!-- Hidden at zero: on a course nobody has started it is a label for a
+                     thing that has not happened yet, and the bar already says that. -->
+                <small v-if="xp(c)" class="tally earned">{{ xp(c).toLocaleString() }} XP</small>
+              </span>
             </template>
           </span>
         </button>
@@ -111,7 +120,11 @@ h1 { margin: 0 0 24px; font-size: 22px; }
 .bar { display: block; height: 4px; margin-top: 4px; border-radius: 999px;
        background: var(--ice-bg); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--ice-primary); transition: width .3s; }
+.tallies { display: flex; align-items: baseline; gap: 8px; }
 .tally { font-family: var(--ice-font-mono); font-size: 10px; }
+/* `.body small` above is more specific than a bare class, so the accent has to be at
+   least as specific or the XP comes out the same grey as the tally beside it. */
+.body .earned { margin-left: auto; color: var(--ice-primary-strong); font-weight: 600; }
 
 /* Announced, not disabled-looking: the card is still the most interesting thing on the
    page and the art is the point of it. Only the affordances go - no lift, no pointer -

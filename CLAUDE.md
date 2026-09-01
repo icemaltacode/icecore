@@ -353,6 +353,79 @@ is on course X" and could only invite and unenrol.
   is the only way to look at this screen without a pool behind it, and a disabled control
   whose message cannot be reached locally is a message nobody reads before shipping.
 
+## Progress and XP
+
+`progress.js`, `progress-store.js` and `infra/lambda/progress/` - which exercises are solved,
+where the student left off, and what it earned them.
+
+- **XP is recorded when it is earned, not summed from the content.** The amount rides the
+  solve and is written beside it: `xp` on the `PROG#` row, an entry in the local record. It
+  could not work the other way round - the catalogue lives in the content bucket, so that
+  function does not know which courses exist or what an exercise is worth, the same reason
+  the admin listing queries per user. Recording it is also what keeps a per-course XP figure
+  one query away for the admin panel's later pages, and what stops a re-tuned `xp:` quietly
+  restating what everyone earned before the change.
+- **The client says how much, and that is not a hole.** It already says *whether* the
+  exercise was solved, the reference solution ships to the browser, and every one of these
+  assessments is formative. The Lambda's cap is against a bug writing a nonsense total, not
+  against a student.
+- **`at` is written once** - `if_not_exists` - so re-solving something finished last week does
+  not move the earn into today. That is load-bearing, because the daily total is derived from
+  these rows rather than kept as a second counter beside them.
+- **The day is the STUDENT'S day.** The browser computes its own local midnight and asks for
+  XP earned `since` that instant; nothing on the other side names a day at all. A UTC day
+  rolls the counter over at 2am in Malta in summer, and a student watching their total vanish
+  while they are still working will not read that as a timezone.
+- **Today's XP is across every course**, because it is a fact about the student rather than
+  about whatever course is open. Asked once a session and then kept moving by `markSolved`,
+  not re-fetched on every solve.
+- **`progress-store.js` is the one definition of the local record's shape.** `progress.js`
+  (the open/offline backing) and `preview.js` (the API stand-in) write the *same* localStorage
+  keys, so a disagreement between them reads to a student as progress having been lost. The
+  record is `{ exerciseId: xp }`; the bare array it used to be reads as solved-for-nothing,
+  because no amount was ever stored to recover.
+- Three places show it, and each says something different: the exercise says what it is
+  worth, the sidebar and the course card say what that course has earned, the top bar says
+  what today has.
+- **An exercise id is a NUMBER, and storage only ever hands one back as a STRING.** A DynamoDB
+  sort key is text, `localStorage.getItem` returns text, and so is every JavaScript object key.
+  `progressId()` in `progress.js` is the one spelling and every comparison goes through it -
+  the solved set *and* the place-marker. Both failures this caused were live and silent: a
+  finished course read as untouched after a reload, and "resume where you left off" fell
+  through to the first row of the course every time. The second is the nastier one, because
+  the fallback looks like the feature working - and it genuinely does work on the one row
+  whose id this side makes up, a slides row, which is a string meeting a string.
+- **The code that solved an exercise is recorded with the solve**, keyed by step, so coming
+  back to finished work shows the student's own answer rather than the starter. Kept in its own
+  localStorage key rather than folded into the XP record: two facts with different shapes, and
+  merging them would mean migrating a record that already exists. Capped in the Lambda and
+  dropped rather than truncated - half a query restored into an editor looks like work that was
+  lost, where an empty one only looks like work that was never kept.
+- **Re-solving is not earning again.** The PUT writes only the fields it carries, so a return
+  visit sends the code with no amount and the row keeps the number it already had. A default in
+  the handler would be a number nobody meant overwriting one somebody earned.
+
+## Nudges
+
+Two buttons ask to be pressed: **Next** once an exercise is solved, and **Ask AI** once a
+student's code has failed to run. One gesture, `.btn.urge` in `styles.css` - a halo that pulses
+on a loop, with `soft` as the same shape at lower amplitude.
+
+- **One definition, because two of them would be a twitch rather than a vocabulary.** Three
+  buttons across two components use it; a second halo written slightly differently is how a
+  product ends up with a tic.
+- **It loops until it is answered**, rather than playing a few times and stopping. The signal
+  is "there is a thing to do here", not "something just happened", and a nudge that gives up
+  after two seconds is one a student who looked away never saw. Whoever sets it owns clearing
+  it: Next on the next move, Ask AI on the next keystroke in the editor - a student who is
+  already typing has decided what to try, and a button still waving is nagging them.
+- **An error, not a wrong answer.** Being marked incorrect is ordinary progress. `grade.js`
+  marks the verdict from a query that *failed to run* with `error: true`, because both are
+  `pass: false` and only it can tell them apart.
+- **The accented border is not part of the animation.** It holds for as long as the urge does,
+  so the button still reads as the one to press between pulses - and so a student with
+  `prefers-reduced-motion`, who gets no ring at all, is not left with nothing.
+
 ## The Playground
 
 A sandbox that appears as a course: an editor, no syllabus, no marking, and datasets a

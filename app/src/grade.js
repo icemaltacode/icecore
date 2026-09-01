@@ -19,7 +19,10 @@ export async function grade(course, exercise, step, submission) {
   try {
     actual = db ? await runOn(db, submission) : await run(course, dataset, submission, setup);
   } catch (e) {
-    return { pass: false, reason: cleanError(e.message) };
+    /* `error` marks this as the query having FAILED rather than having been wrong, which
+     * is a distinction the player makes: a wrong answer is ordinary progress, a broken one
+     * is where Ask AI offers itself. Both are `pass: false` and only this knows which. */
+    return { pass: false, error: true, reason: cleanError(e.message) };
   } finally {
     await db?.close().catch(() => {});
   }
