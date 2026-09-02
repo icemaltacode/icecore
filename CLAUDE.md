@@ -424,6 +424,34 @@ against data that exists and cannot be built at all against data nobody recorded
   `hint.js` has always sent `course` and `exercise.id`, and the Lambda had always ignored
   them.
 
+## The account screen
+
+What a student may see and change about themselves. [`ACCOUNT.md`](ACCOUNT.md) is the plan -
+five sections, a danger zone, and a full Article 15 export. **Only password recovery is
+built**; it came first because it was not a feature but a lockout.
+
+- **Recovery lives on the SIGN-IN screen, not in the account area** - which is behind the
+  thing the student has lost. `forgotPassword` and `confirmPassword` in `auth.js`, two extra
+  stages on `SignIn.vue`'s existing `stage` machine.
+- **`NotAuthorizedException` means two unrelated things and Cognito gives them no separate
+  codes.** From a sign-in it is a wrong password; from a reset it is a user still in
+  `FORCE_CHANGE_PASSWORD` - an invitation nobody opened, which has no password to reset.
+  That is the *likely* case, not an edge one: the temporary password expires after seven
+  days and the site then reads as broken, so Forgot password is what they reach for. So
+  `friendly()` takes a `context` and matches on the message TEXT, with a safe fallback -
+  the string is all there is, and a reworded one must degrade to "ask your tutor". The
+  message names resending the invitation, because that is the thing that fixes it.
+- **The copy is conditional because the client is.** `preventUserExistenceErrors: true`
+  makes Cognito answer an unknown address exactly like a known one, so this screen cannot be
+  used to test who has an account - and the notice must say "if that address has an account"
+  rather than promise a code to somebody who mistyped.
+- **A notice is not an error.** They share the line under the fields and were one ref at
+  first, which put "a code is on its way" on screen in red.
+- **`--as signin` reaches all of it**, by the rule the admin panel already follows.
+  `password === 'temp'` raises the first-login challenge, `unopened@…` raises the
+  unopened-invitation refusal, and code `000000` is a mismatch. A refusal that cannot be
+  reached locally is a message nobody reads before shipping.
+
 ## Progress and XP
 
 `progress.js`, `progress-store.js` and `infra/lambda/progress/` - which exercises are solved,

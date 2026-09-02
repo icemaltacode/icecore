@@ -112,6 +112,58 @@ export function signIn(email, password) {
   });
 }
 
+/**
+ * Start a password reset: Cognito emails a six-digit code to the address, if it has an
+ * account. Resolves when the code is on its way; the caller then collects it and calls
+ * `confirmPassword`.
+ *
+ * NOTHING HERE MAY REVEAL WHETHER THE ADDRESS EXISTS, and it does not have to try:
+ * `preventUserExistenceErrors: true` is set on the web client, so Cognito answers an
+ * unknown address with a plausible delivery result rather than UserNotFoundException. What
+ * this side has to get right is the copy - see SignIn.vue, which promises a code only
+ * conditionally. A screen that says "check your inbox" outright is a promise to a student
+ * who mistyped their address, and they will sit waiting for mail nobody sent.
+ */
+export function forgotPassword(email) {
+  if (PREVIEW) {
+    /* The refusal below is the whole reason this is interesting, and it is unreachable
+     * locally without a sentinel - the same trick `password === 'temp'` plays for the
+     * first-login challenge. An address whose local part is `unopened` is treated as an
+     * invitation nobody has opened. */
+    if (email.split('@')[0] === 'unopened')
+      return Promise.reject(new Error(UNOPENED));
+    return Promise.resolve({ sent: true });
+  }
+  const user = new CognitoUser({ Username: email, Pool: pool });
+  return new Promise((resolve, reject) => {
+    /* Two callbacks for one outcome: this library calls `inputVerificationCode` when a code
+     * was delivered and `onSuccess` when the flow needed none. Either means "go and collect
+     * the code", so both resolve the same way rather than the caller learning which. */
+    const done = () => resolve({ sent: true });
+    user.forgotPassword({
+      inputVerificationCode: done,
+      onSuccess: done,
+      onFailure: err => reject(new Error(friendly(err, 'recover'))),
+    });
+  });
+}
+
+/** Finish a reset: the emailed code plus the password to set. */
+export function confirmPassword(email, code, password) {
+  if (PREVIEW) {
+    // A wrong code has to be reachable too, or its message ships unread.
+    if (code === '000000') return Promise.reject(new Error('That code is not right. Check the email again, or send yourself another.'));
+    return Promise.resolve();
+  }
+  const user = new CognitoUser({ Username: email, Pool: pool });
+  return new Promise((resolve, reject) => {
+    user.confirmPassword(code, password, {
+      onSuccess: () => resolve(),
+      onFailure: err => reject(new Error(friendly(err, 'recover'))),
+    });
+  });
+}
+
 export function completeNewPassword(password) {
   if (PREVIEW) return Promise.resolve(PREVIEW_TOKEN);
   return new Promise((resolve, reject) => {
@@ -167,11 +219,39 @@ export function signOut() {
   location.reload();   // drops in-memory state and the stale cookies with it
 }
 
-function friendly(err) {
+/* The message a student gets when they try to reset a password they never set.
+ *
+ * This is the confusing case rather than an edge case: an invitation's temporary password
+ * expires after seven days, the site then reads as broken, and Forgot password is exactly
+ * what they reach for. Cognito refuses because there is no password to reset - which is
+ * correct and says nothing a student can act on. The fix is an admin resending the
+ * invitation, so the message names it. */
+const UNOPENED = 'Your invitation has not been opened yet, so there is no password to reset.'
+  + ' Ask your tutor to send the invitation again.';
+
+function friendly(err, context = 'signin') {
   const code = err?.code || err?.name;
+  const message = err?.message || '';
+
+  /* NotAuthorizedException means two entirely different things depending on where it came
+   * from, and only the message text tells them apart. Matched loosely and with a safe
+   * fallback: Cognito does not give these distinct codes, so the string is all there is,
+   * and a reworded one should degrade to "ask your tutor" rather than to nonsense. */
+  if (code === 'NotAuthorizedException' && context === 'recover') {
+    if (/cannot be reset/i.test(message)) return UNOPENED;
+    if (/disabled/i.test(message)) return 'That account is suspended. Ask your tutor.';
+    return 'That account cannot be reset here. Ask your tutor.';
+  }
+  if (code === 'CodeMismatchException')
+    return 'That code is not right. Check the email again, or send yourself another.';
+  if (code === 'ExpiredCodeException')
+    return 'That code has expired. Send yourself another one.';
+  if (code === 'LimitExceededException')
+    return 'Too many attempts. Wait a few minutes and try again.';
+
   if (code === 'NotAuthorizedException') return 'That email and password combination was not recognised.';
   if (code === 'UserNotFoundException') return 'That email and password combination was not recognised.';
   if (code === 'PasswordResetRequiredException') return 'Your password needs resetting - ask your tutor.';
-  if (code === 'InvalidPasswordException') return err.message.replace(/^.*: /, '');
-  return err?.message || 'Sign-in failed.';
+  if (code === 'InvalidPasswordException') return message.replace(/^.*: /, '');
+  return message || (context === 'recover' ? 'That did not work.' : 'Sign-in failed.');
 }
