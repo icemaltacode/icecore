@@ -457,7 +457,7 @@ watch(currentId, id => {
          mode, not a pane. Ordered so that a student who is somehow both cannot be, rather
          than relying on the two conditions never overlapping. -->
     <AccountPanel v-else-if="showAccount" :name="session.name" :email="session.email"
-                  @close="leaveArea()" />
+                  :courses="allCourses" @close="leaveArea()" />
 
     <CourseGrid
       v-else-if="!course"

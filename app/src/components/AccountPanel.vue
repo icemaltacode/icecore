@@ -17,12 +17,16 @@
  * earned, then what we hold, then what they can destroy. Danger last and separated, because
  * everything above it is safe.
  */
-import { ref, onMounted, nextTick } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import { api, changePassword, signOutEverywhere, session } from '../auth.js';
 
 const props = defineProps({
   name: String,
   email: String,
+  /** Every published course, for titles. The API cannot supply them: the catalogue lives in
+   *  the content bucket, so that function knows which courses somebody is ON and not what
+   *  any of them is called - the same reason the admin listing queries per user. */
+  courses: { type: Array, default: () => [] },
 });
 const emit = defineEmits(['close']);
 
@@ -43,6 +47,34 @@ onMounted(async () => {
     loadError.value = e.message;
   }
 });
+
+/* What each course of theirs has earned.
+ *
+ * THE UNION OF ENROLMENT AND PROGRESS, not either alone. A course they are on with nothing
+ * done yet belongs here, or a new student's Learning section is empty and reads as broken.
+ * And a course with XP but no enrolment row is a real state twice over - an admin, who sees
+ * every course without being enrolled on any, and a student who has been unenrolled since -
+ * so the work is shown rather than silently dropped along with the row that named it.
+ *
+ * Sorted by what they have earned, because the course somebody is furthest through is the
+ * one they came here about. Ties go alphabetical rather than to whatever order the ids
+ * arrived in, which is a partition's and means nothing to a reader. */
+const learning = computed(() => {
+  if (!me.value) return [];
+  const titles = new Map(props.courses.map(c => [c.id, c.title]));
+  const earned = me.value.xp?.byCourse || {};
+  const on = me.value.courses || [];
+  const ids = [...new Set([...on, ...Object.keys(earned)])];
+  return ids.map(id => ({
+    id,
+    title: titles.get(id) || id,
+    enrolled: on.includes(id),
+    solved: earned[id]?.solved || 0,
+    xp: earned[id]?.xp || 0,
+  })).sort((a, b) => b.xp - a.xp || a.title.localeCompare(b.title));
+});
+
+const num = n => Number(n || 0).toLocaleString();
 
 /* The name. Same shape as the password form below it: collapsed until asked for, because
  * this page is mostly things to read. */
@@ -153,7 +185,7 @@ const SECTIONS = [
     blurb: 'Change your password, or sign out everywhere you are signed in.' },
   { id: 'learning', title: 'Learning',
     blurb: 'What you have earned, the hints you have left today, and which courses and '
-         + 'class you are on.', soon: true },
+         + 'class you are on.' },
   { id: 'data', title: 'Your data',
     blurb: 'Everything we hold about you, what it is for, and how to have it erased.',
     soon: true },
@@ -261,6 +293,65 @@ const SECTIONS = [
           </div>
         </template>
 
+        <template v-else-if="s.id === 'learning'">
+          <p v-if="!me" class="soon">Loading…</p>
+          <template v-else>
+            <!-- The two facts that are about the PERSON rather than about a course, so they
+                 sit above the per-course list rather than inside it. -->
+            <div class="tallies">
+              <div class="tally">
+                <strong>{{ num(me.xp?.total) }}</strong>
+                <span>XP earned, all time</span>
+              </div>
+              <div class="tally">
+                <strong>{{ num(me.hints?.left) }}</strong>
+                <!-- Says the limit, not just what is left. A student otherwise meets it for
+                     the first time as a refusal mid-exercise. -->
+                <span>hints left today, of {{ num(me.hints?.limit) }}</span>
+              </div>
+            </div>
+
+            <ul v-if="learning.length" class="courses">
+              <li v-for="c in learning" :key="c.id">
+                <span class="cname">
+                  {{ c.title }}
+                  <!-- NOT for an admin, for whom it is true of every row and therefore
+                       says nothing: they see every course without being enrolled on any.
+                       For a student it is the one case worth marking - work on a course
+                       they have since been taken off, which is kept on the page rather
+                       than dropped along with the row that named it. -->
+                  <em v-if="!c.enrolled && !me.admin">not enrolled</em>
+                </span>
+                <span class="cnum">{{ num(c.solved) }} solved</span>
+                <span class="cnum">{{ num(c.xp) }} XP</span>
+              </li>
+            </ul>
+            <p v-else-if="me.admin" class="hint">Nothing solved yet.</p>
+            <p v-else class="hint">You are not on any courses yet.</p>
+            <!-- Said once under the list rather than once per row: for an admin it is a
+                 property of being an admin, not of any particular course. -->
+            <p v-if="me.admin" class="hint">You are an admin, so every course is open to you
+              whether or not you are enrolled on it.</p>
+
+            <dl class="facts">
+              <dt>Class</dt>
+              <dd>
+                <span v-if="me.cohorts?.length" class="value">
+                  <template v-for="(c, i) in me.cohorts" :key="c.id">{{ i ? ', ' : ''
+                    }}{{ c.title }}<em v-if="c.archived"> (finished)</em></template>
+                </span>
+                <span v-else class="value muted-value">Not in a class.</span>
+                <!-- The read-only rule, said rather than implied by an absence of buttons.
+                     Enrolment and class are an admin's to set: a student who could take
+                     themselves off a course would lose one they were put on, and it would
+                     look from the admin panel exactly like an administrative mistake. -->
+                <p class="hint">Your courses and class are set by your tutor. Ask them if
+                  something here is wrong.</p>
+              </dd>
+            </dl>
+          </template>
+        </template>
+
         <p v-else class="soon">Not built yet.</p>
       </section>
 
@@ -328,6 +419,34 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 /* Both were shaped to sit under an input, where the field's own bottom margin is the gap.
    Here they sit under a value and need one of their own. */
 .facts .hint { margin: 6px 0 0; }
+
+/* The two person-level numbers, side by side and reading as figures rather than as prose -
+   they are the answer somebody opened this section for. */
+.tallies { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 0; }
+.tally { flex: 1 1 180px; border: 1px solid var(--ice-border); border-radius: 10px;
+         padding: 12px 14px; background: var(--ice-raise-soft); }
+.tally strong { display: block; font-family: var(--ice-font-mono);
+                font-variant-numeric: tabular-nums; font-size: 22px; line-height: 1.1; }
+.tally span { display: block; margin-top: 4px; font-size: 12px; color: var(--ice-fg-muted); }
+
+.courses { list-style: none; margin: 14px 0 0; padding: 0;
+           border: 1px solid var(--ice-border); border-radius: var(--ice-radius);
+           overflow: hidden; }
+.courses li { display: flex; align-items: baseline; gap: 14px; padding: 11px 14px;
+              border-bottom: 1px solid var(--ice-border); font-size: 13px; }
+.courses li:last-child { border-bottom: 0; }
+.cname { flex: 1; min-width: 0; font-weight: 500; }
+.cname em { font-style: normal; font-size: 11px; color: var(--ice-fg-muted);
+            margin-left: 6px; }
+/* Tabular, and a fixed column, so two rows of numbers line up rather than wandering with
+   the width of the figure beside them. */
+.cnum { flex: none; min-width: 74px; text-align: right; font-family: var(--ice-font-mono);
+        font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ice-fg-muted); }
+.muted-value { color: var(--ice-fg-muted); }
+/* The cohort's "(finished)" marker, matching the list's own aside rather than arriving as
+   the browser's default italic. */
+.value em { font-style: normal; color: var(--ice-fg-muted); }
+.facts + .facts, .courses + .facts { margin-top: 18px; }
 .facts .err { margin: 8px 0 0; }
 hr { border: 0; border-top: 1px solid var(--ice-border); margin: 20px 0 16px; }
 
