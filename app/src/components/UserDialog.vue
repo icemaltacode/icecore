@@ -17,6 +17,7 @@ const props = defineProps({
   /** null to invite somebody new; otherwise the row from the listing. */
   user: Object,
   courses: Array,
+  cohorts: Array,
 });
 const emit = defineEmits(['done', 'close']);
 
@@ -31,6 +32,12 @@ const email = ref(props.user?.email || '');
 const name = ref(props.user?.name || '');
 const admin = ref(!!props.user?.admin);
 const picked = ref(new Set(props.user?.courses || []));
+/* Ids for cohorts that exist, and the RAW NAME for one being invented here. The API
+ * resolves both the same way - id, then title, then create - so this screen does not have
+ * to make a cohort before it can put somebody in one, and two admins inventing the same
+ * intake at once still land in one cohort rather than two. */
+const inCohorts = ref(new Set(props.user?.cohorts || []));
+const newCohort = ref('');
 
 const busy = ref('');
 const error = ref('');
@@ -45,6 +52,38 @@ const toggle = id => {
   next.has(id) ? next.delete(id) : next.add(id);
   picked.value = next;
 };
+
+const toggleCohort = id => {
+  const next = new Set(inCohorts.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  inCohorts.value = next;
+};
+
+/* An archived cohort is off the list, EXCEPT for somebody already in it: dropping it
+ * silently would take them out of a finished intake the moment anyone saved this form. */
+const cohortList = computed(() => {
+  const known = props.cohorts || [];
+  const shown = known.filter(c => !c.archived || inCohorts.value.has(c.id));
+  const invented = [...inCohorts.value].filter(id => !known.some(c => c.id === id));
+  return [
+    ...shown.map(c => ({ id: c.id, title: c.title, archived: c.archived })),
+    ...invented.map(id => ({ id, title: id, fresh: true })),
+  ].sort((a, b) => {
+    const on = c => (inCohorts.value.has(c.id) ? 0 : 1);
+    return on(a) - on(b) || a.title.localeCompare(b.title);
+  });
+});
+
+function addCohort() {
+  const title = newCohort.value.trim();
+  if (!title) return;
+  // Matched against what exists before it becomes a new one, so typing the name of a
+  // cohort that is already in the list ticks it rather than making a second one.
+  const hit = (props.cohorts || []).find(c =>
+    c.id === title || c.title.trim().toLowerCase() === title.toLowerCase());
+  toggleCohort(hit ? hit.id : title);
+  newCohort.value = '';
+}
 
 const invited = computed(() => props.user?.status === 'FORCE_CHANGE_PASSWORD');
 
@@ -71,6 +110,7 @@ const save = () => run('save', async () => {
         sub: props.user.sub,
         name: name.value.trim(),
         courses: [...picked.value],
+        cohorts: [...inCohorts.value],
         ...(isSelf.value ? {} : { admin: admin.value }),
       },
     });
@@ -83,6 +123,7 @@ const save = () => run('save', async () => {
       email: address,
       name: name.value.trim() || undefined,
       courses: [...picked.value],
+      cohorts: [...inCohorts.value],
       admin: admin.value,
     },
   });
@@ -152,6 +193,30 @@ watch(confirming, v => { if (!v) typed.value = ''; });
           </li>
           <li v-if="!listed.length" class="none">No courses are published yet.</li>
         </ul>
+        <!-- Kept and still editable, because these rows are what they are left on if their
+             rights are ever removed. But an admin already sees the whole catalogue, so
+             ticks that look like a limit have to say that they are not one. -->
+        <p v-if="admin" class="hint above">An admin sees every course. These only decide
+          what they are on if their rights are removed.</p>
+
+        <label>Cohorts <span class="opt">optional</span></label>
+        <ul v-if="cohortList.length" class="courses short">
+          <li v-for="c in cohortList" :key="c.id">
+            <label class="tick">
+              <input type="checkbox" :checked="inCohorts.has(c.id)" @change="toggleCohort(c.id)">
+              <span class="title">{{ c.title }}</span>
+              <span v-if="c.fresh" class="tag new">new</span>
+              <span v-else-if="c.archived" class="tag">archived</span>
+            </label>
+          </li>
+        </ul>
+        <div class="pair tight newco">
+          <input v-model="newCohort" type="text" placeholder="Or name a new one - Sept 2026 evening"
+                 @keydown.enter.prevent="addCohort">
+          <button class="btn" type="button" :disabled="!newCohort.trim()" @click="addCohort">Add</button>
+        </div>
+        <p class="hint above">A cohort is a class or an intake. It groups people, and it is
+          not tied to a course.</p>
 
         <label class="tick admin" :class="{ off: isSelf }">
           <input type="checkbox" v-model="admin" :disabled="isSelf">
@@ -238,6 +303,11 @@ input:disabled { opacity: .6; }
 .pair.tight { grid-template-columns: 1fr auto; gap: 8px; margin: 0; align-items: center; }
 .hint { margin: 5px 0 0; font-size: 11.5px; color: var(--ice-fg-muted); line-height: 1.45; }
 .hint.self { margin: -6px 0 14px; }
+.hint.above { margin: -12px 0 16px; }
+.courses.short { max-height: 132px; margin-bottom: 10px; }
+.newco { margin-bottom: 6px; }
+.newco input { width: 100%; }
+.tag.new { color: var(--ice-primary-strong); border-color: var(--ice-primary-soft); }
 .hint code { font-family: var(--ice-font-mono); font-size: .9em; }
 
 .courses { list-style: none; margin: 0 0 18px; padding: 8px; display: grid; gap: 2px;

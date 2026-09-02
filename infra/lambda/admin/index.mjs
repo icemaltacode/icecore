@@ -1,9 +1,22 @@
 /* User management.
  *
- *   GET    /api/admin/users            everyone in the pool, with their courses
- *   POST   /api/admin/users            { email, name?, courses?, admin?, resend? }
- *   PUT    /api/admin/users            { sub, name?, courses?, admin?, enabled? }
+ *   GET    /api/admin/users            everyone in the pool, with their courses and cohorts
+ *   POST   /api/admin/users            { email, name?, courses?, cohorts?, admin?, resend? }
+ *   PUT    /api/admin/users            { sub, name?, courses?, cohorts?, admin?, enabled? }
  *   DELETE /api/admin/users?sub=       delete the account and everything it owns
+ *
+ *   POST   /api/admin/cohorts          { title }              create an empty one
+ *   PUT    /api/admin/cohorts          { id, title?, archived? }
+ *   DELETE /api/admin/cohorts?id=      the grouping, and none of the people
+ *
+ * THERE IS NO GET ON /cohorts. The catalogue rides back with the user listing, because the
+ * screen that draws cohorts is the screen that draws people and asking twice for two halves
+ * of one table is two round trips to show one thing. Member counts are then a tally of what
+ * the listing already carried rather than a number this side has to compute.
+ *
+ * A COHORT IS A GROUP OF PEOPLE, not of enrolments and not a property of a course - an
+ * intake may take two courses, and a cohort that named one would be a second, worse
+ * spelling of enrolment. See ADMIN.md.
  *
  * COGNITO OWNS IDENTITY; THIS TABLE OWNS ENROLMENT. Name, email, sign-in status, whether
  * the account is enabled and whether it is in `admins` are all read back from the pool
@@ -15,7 +28,7 @@
  * PUT rewrites it on a rename for the reason the original comment here gave: one fact in
  * two places diverges unless something keeps them together.
  *
- * There is deliberately no progress reporting here - see backlog.md.
+ * There is deliberately no progress reporting here - see ADMIN.md.
  */
 import {
   CognitoIdentityProviderClient,
@@ -26,7 +39,7 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
-  DynamoDBDocumentClient, QueryCommand, PutCommand, DeleteCommand, BatchWriteCommand,
+  DynamoDBDocumentClient, QueryCommand, PutCommand, UpdateCommand, DeleteCommand, BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 
 const cognito = new CognitoIdentityProviderClient({});
@@ -34,6 +47,11 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE;
 const POOL = process.env.USER_POOL_ID;
 const GROUP = 'admins';
+
+/* Every cohort lives in one partition, so listing them is one query rather than a scan.
+ * Tens of rows on a table billed per request - the thing a single partition is bad at is
+ * throughput, and this one is read once per admin screen. */
+const COHORTS = 'COHORTS';
 
 /* A listing is bounded so that a pool nobody expected to grow cannot time the function
  * out silently and hand back a half-list that reads as "those are all the users". Past
@@ -75,16 +93,123 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-/** The course ids somebody is enrolled on. */
-async function enrolments(sub) {
+/* What somebody is on: their cohorts and their courses, in ONE query.
+ *
+ * `COHORT#` and `ENROL#` are adjacent in sort order, so a range across them picks up
+ * exactly those two prefixes and nothing else - where two `begins_with` queries would
+ * double the fan-out on the slowest screen in the app. `$` is one codepoint above `#`, so
+ * the upper bound sits after every `ENROL#...` and before anything else.
+ *
+ * THE FRAGILITY IS THE POINT OF THIS COMMENT: a sort-key prefix added later that begins
+ * with D or E falls inside this range, and would arrive in the listing as an enrolment
+ * nobody wrote. The prefixes today are COHORT#, ENROL#, LAST#, PROG#, RATE# and SPEND#.
+ */
+async function belongings(sub) {
   const r = await ddb.send(new QueryCommand({
     TableName: TABLE,
-    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
-    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'ENROL#' },
+    KeyConditionExpression: 'pk = :pk AND sk BETWEEN :from AND :to',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':from': 'COHORT#', ':to': 'ENROL$' },
     ProjectionExpression: 'sk',
   }));
-  return (r.Items || []).map(i => i.sk.slice('ENROL#'.length));
+  const cohorts = [];
+  const courses = [];
+  for (const i of r.Items || []) {
+    if (i.sk.startsWith('COHORT#')) cohorts.push(i.sk.slice('COHORT#'.length));
+    else if (i.sk.startsWith('ENROL#')) courses.push(i.sk.slice('ENROL#'.length));
+  }
+  return { cohorts, courses };
 }
+
+/** Every page of a query, because a cohort's roster is not something to cut short. */
+async function queryAll(params) {
+  const items = [];
+  let start;
+  do {
+    const r = await ddb.send(new QueryCommand({ ...params, ExclusiveStartKey: start }));
+    items.push(...(r.Items || []));
+    start = r.LastEvaluatedKey;
+  } while (start);
+  return items;
+}
+
+/** Every cohort. One query, because they all share a partition. */
+async function listCohorts() {
+  const items = await queryAll({
+    TableName: TABLE,
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': COHORTS, ':sk': 'COHORT#' },
+  });
+  return items.map(i => {
+    const id = i.sk.slice('COHORT#'.length);
+    return { id, title: i.title || id, created: i.created, archived: !!i.archived };
+  });
+}
+
+/* The id is a SLUG OF THE TITLE, taken once and never moved again.
+ *
+ * A tutor types it into the cohort column of a CSV, so it has to be `sept-2026-evening`
+ * rather than an opaque key. And because it never moves, renaming a cohort rewrites one row
+ * instead of every membership row - the title drifting from its original slug is the
+ * ordinary, harmless outcome of that, not a bug to chase. */
+const slug = title => String(title).trim().toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+
+/** Create one, disambiguating a slug that is already taken. `known` is a Map by id. */
+async function createCohort(title, known) {
+  const base = slug(title) || 'cohort';
+  let id = base;
+  for (let n = 2; known.has(id); n++) id = `${base}-${n}`;
+  const item = {
+    pk: COHORTS, sk: `COHORT#${id}`, cohort: id,
+    title: String(title).trim(), created: new Date().toISOString(), archived: false,
+  };
+  try {
+    await ddb.send(new PutCommand({
+      TableName: TABLE, Item: item,
+      // Two imports racing on the same new cohort name: the first one wins and the second
+      // joins it, rather than overwriting a title somebody else just set.
+      ConditionExpression: 'attribute_not_exists(sk)',
+    }));
+  } catch (e) {
+    if (e.name !== 'ConditionalCheckFailedException') throw e;
+  }
+  return { id, title: item.title, created: item.created, archived: false };
+}
+
+/* Names to cohort ids, creating what does not exist yet.
+ *
+ * Matched on the id first and then the title, case-insensitively, because the name arrives
+ * from a CSV column a tutor typed and both are things they would reasonably write. THE
+ * RESOLUTION IS AUTHORITATIVE HERE, not on the client: the import previews what it thinks
+ * will be created, but two tutors importing two class lists at once can only agree if one
+ * side decides. */
+async function resolveCohorts(names, known) {
+  const byId = new Map(known.map(c => [c.id, c]));
+  const byTitle = new Map(known.map(c => [c.title.trim().toLowerCase(), c]));
+  const ids = [];
+  const made = [];
+  for (const raw of names) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+    const hit = byId.get(name) || byTitle.get(name.toLowerCase());
+    const cohort = hit || await createCohort(name, byId);
+    if (!hit) {
+      byId.set(cohort.id, cohort);
+      byTitle.set(cohort.title.toLowerCase(), cohort);
+      made.push(cohort);
+    }
+    if (!ids.includes(cohort.id)) ids.push(cohort.id);
+  }
+  return { ids, made };
+}
+
+/** Who is in a cohort. One query on `byCourse`, which inverts the key - see the stack. */
+const cohortMembers = id => queryAll({
+  TableName: TABLE, IndexName: 'byCourse',
+  KeyConditionExpression: 'sk = :sk',
+  ExpressionAttributeValues: { ':sk': `COHORT#${id}` },
+  ProjectionExpression: 'pk, sk',
+});
 
 /** Everyone in the pool. `truncated` when the cap above cut the listing short. */
 async function listUsers() {
@@ -194,18 +319,28 @@ async function resendInvite(email, name) {
   }));
 }
 
-/** Write the enrolment rows for `add`, drop those in `remove`. The name is the cache. */
-async function setEnrolments(sub, email, name, add, remove) {
+/* Write the rows in `add`, drop those in `remove`. The name is the cache.
+ *
+ * One writer for both prefixes because they are the same kind of fact - this person belongs
+ * to that thing - and the name is echoed onto both for the same reason: `byCourse` answers
+ * "who is in X" without a call to the pool, and it can only do that if the name is on the
+ * row. PUT rewrites it on a rename, for both. */
+async function setMembership(prefix, key, sub, email, name, add, remove) {
   await Promise.all([
-    ...add.map(course => ddb.send(new PutCommand({
+    ...add.map(id => ddb.send(new PutCommand({
       TableName: TABLE,
-      Item: { pk: `USER#${sub}`, sk: `ENROL#${course}`, course, email, name },
+      Item: { pk: `USER#${sub}`, sk: `${prefix}${id}`, [key]: id, email, name },
     }))),
-    ...remove.map(course => ddb.send(new DeleteCommand({
-      TableName: TABLE, Key: { pk: `USER#${sub}`, sk: `ENROL#${course}` },
+    ...remove.map(id => ddb.send(new DeleteCommand({
+      TableName: TABLE, Key: { pk: `USER#${sub}`, sk: `${prefix}${id}` },
     }))),
   ]);
 }
+
+const setEnrolments = (sub, email, name, add, remove) =>
+  setMembership('ENROL#', 'course', sub, email, name, add, remove);
+const setCohorts = (sub, email, name, add, remove) =>
+  setMembership('COHORT#', 'cohort', sub, email, name, add, remove);
 
 /** Everything the table holds about one person, gone. Returns how many rows that was. */
 async function forget(sub) {
@@ -249,8 +384,15 @@ export async function handler(event) {
   const me = claims.sub;
   const method = event.requestContext.http.method;
   const q = event.queryStringParameters || {};
+  const cohorts = (event.requestContext.http.path || '').endsWith('/cohorts');
 
   try {
+    if (cohorts) {
+      if (method === 'POST') return await postCohort(JSON.parse(event.body || '{}'));
+      if (method === 'PUT') return await putCohort(JSON.parse(event.body || '{}'));
+      if (method === 'DELETE') return await deleteCohort(q.id);
+      return json(405, { error: `${method} not allowed` });
+    }
     if (method === 'GET') return await getUsers();
     if (method === 'POST') return await postUser(JSON.parse(event.body || '{}'));
     if (method === 'PUT') return await putUser(JSON.parse(event.body || '{}'), me);
@@ -263,32 +405,51 @@ export async function handler(event) {
 }
 
 async function getUsers() {
-  const [{ users, truncated }, admins] = await Promise.all([listUsers(), adminSubs()]);
+  const [{ users, truncated }, admins, cohorts] = await Promise.all([
+    listUsers(), adminSubs(), listCohorts(),
+  ]);
   /* One query per user rather than one per course, because only the first is authoritative:
    * the catalogue of courses lives in the content bucket and is assembled from every
    * card.json in it, so this function does not know - and should not have to learn - which
    * courses exist. A user enrolled on a course that has since been withdrawn is still
-   * enrolled, and this is what shows it. */
-  const courses = await mapLimit(users, FANOUT, u => enrolments(u.sub));
+   * enrolled, and this is what shows it.
+   *
+   * Cohorts come back from the SAME query - see `belongings` - so adding them cost no extra
+   * round trip per person. */
+  const on = await mapLimit(users, FANOUT, u => belongings(u.sub));
   return json(200, {
-    users: users.map((u, i) => ({ ...u, admin: admins.has(u.sub), courses: courses[i] })),
+    users: users.map((u, i) => ({
+      ...u, admin: admins.has(u.sub), courses: on[i].courses, cohorts: on[i].cohorts,
+    })),
+    cohorts,
     truncated,
   });
 }
 
-async function postUser({ email, name, courses, admin, resend }) {
+async function postUser({ email, name, courses, cohorts, admin, resend }) {
   const address = clean(email);
   if (!address) return json(400, { error: 'email is required' });
   const wanted = courseList(courses);
+  const wantedCohorts = courseList(cohorts);
 
   const { sub, invited } = await findOrInvite(address, name);
+  const label = displayName(name, address);
+
+  /* An unknown cohort here is CREATED rather than refused, because naming an intake at the
+   * moment you import it is the whole point of the field - and the import previews what it
+   * is about to create, which is what makes that safe. */
+  const { ids: cohortIds, made } = wantedCohorts.length
+    ? await resolveCohorts(wantedCohorts, await listCohorts())
+    : { ids: [], made: [] };
 
   // Only ever additive: POST is "put this person on these courses", and the CSV import
   // runs it once per row. Taking courses away is PUT's job, where the whole desired set
   // is stated rather than implied by what one row happened to mention.
-  const already = new Set(await enrolments(sub));
-  await setEnrolments(sub, address, displayName(name, address),
-    wanted.filter(c => !already.has(c)), []);
+  const on = await belongings(sub);
+  const already = new Set(on.courses);
+  const inAlready = new Set(on.cohorts);
+  await setEnrolments(sub, address, label, wanted.filter(c => !already.has(c)), []);
+  await setCohorts(sub, address, label, cohortIds.filter(c => !inAlready.has(c)), []);
 
   if (admin) await cognito.send(new AdminAddUserToGroupCommand({
     UserPoolId: POOL, Username: address, GroupName: GROUP,
@@ -297,10 +458,10 @@ async function postUser({ email, name, courses, admin, resend }) {
   let resent = false;
   if (resend && !invited) { await resendInvite(address, name); resent = true; }
 
-  return json(200, { sub, invited, resent, enrolled: wanted });
+  return json(200, { sub, invited, resent, enrolled: wanted, cohorts: cohortIds, created: made });
 }
 
-async function putUser({ sub, name, courses, admin, enabled }, me) {
+async function putUser({ sub, name, courses, cohorts, admin, enabled }, me) {
   if (!sub) return json(400, { error: 'sub is required' });
 
   /* THE ONE THING AN ADMIN MAY NOT DO IS UNMAKE THEMSELVES.
@@ -329,22 +490,113 @@ async function putUser({ sub, name, courses, admin, enabled }, me) {
     ? new AdminAddUserToGroupCommand({ UserPoolId: POOL, Username: username, GroupName: GROUP })
     : new AdminRemoveUserFromGroupCommand({ UserPoolId: POOL, Username: username, GroupName: GROUP }));
 
-  const already = await enrolments(sub);
+  const on = await belongings(sub);
   if (courses !== undefined) {
     // The whole desired set, so a course left off it is a course taken away. The diff is
     // against what the table actually holds, not against what the screen was showing when
     // it was drawn.
     const wanted = new Set(courseList(courses));
     await setEnrolments(sub, email, next,
-      [...wanted].filter(c => !already.includes(c)),
-      already.filter(c => !wanted.has(c)));
+      [...wanted].filter(c => !on.courses.includes(c)),
+      on.courses.filter(c => !wanted.has(c)));
   } else if (next !== current) {
     // A rename has to reach the cached copy on every enrolment row, or the byCourse index
     // keeps answering with the old name.
-    await setEnrolments(sub, email, next, already, []);
+    await setEnrolments(sub, email, next, on.courses, []);
   }
 
-  return json(200, { ok: true, sub });
+  let made = [];
+  if (cohorts !== undefined) {
+    // Whole set here too, and for the same reason - this is the screen where taking
+    // somebody out of a class is stated rather than implied.
+    const resolved = await resolveCohorts(courseList(cohorts), await listCohorts());
+    made = resolved.made;
+    const wanted = new Set(resolved.ids);
+    await setCohorts(sub, email, next,
+      [...wanted].filter(c => !on.cohorts.includes(c)),
+      on.cohorts.filter(c => !wanted.has(c)));
+  } else if (next !== current) {
+    await setCohorts(sub, email, next, on.cohorts, []);
+  }
+
+  return json(200, { ok: true, sub, created: made });
+}
+
+/* ---- cohorts -----------------------------------------------------------------------
+ *
+ * Three verbs and no listing: the catalogue rides back with the users, above. */
+
+async function postCohort({ title }) {
+  const wanted = String(title || '').trim();
+  if (!wanted) return json(400, { error: 'a cohort needs a name' });
+  const known = await listCohorts();
+  const hit = known.find(c => c.title.trim().toLowerCase() === wanted.toLowerCase());
+  // Naming one that exists is not an error - it is somebody arriving at the same intake
+  // from the other screen. Hand back the one that is already there.
+  if (hit) return json(200, { cohort: hit, created: false });
+  const made = await createCohort(wanted, new Map(known.map(c => [c.id, c])));
+  return json(200, { cohort: made, created: true });
+}
+
+async function putCohort({ id, title, archived }) {
+  if (!id) return json(400, { error: 'id is required' });
+  const sets = [];
+  const names = {};
+  const values = {};
+  if (title !== undefined) {
+    const wanted = String(title).trim();
+    if (!wanted) return json(400, { error: 'a cohort needs a name' });
+    sets.push('#title = :title'); names['#title'] = 'title'; values[':title'] = wanted;
+  }
+  /* ARCHIVED, NOT DELETED, is how an intake finishes. A training company accumulates
+   * them, and a picker holding forty dead classes is a picker nobody reads - but the
+   * statistics of a finished intake are exactly the ones worth keeping. */
+  if (archived !== undefined) {
+    sets.push('#archived = :archived');
+    names['#archived'] = 'archived';
+    values[':archived'] = !!archived;
+  }
+  if (!sets.length) return json(400, { error: 'nothing to change' });
+
+  /* The title is NOT echoed onto the membership rows, unlike the person's name. That cache
+   * exists so `byCourse` can answer "who is in X" without a call to the pool; anything
+   * reading a cohort has already read the cohort row, so a second copy here would be a
+   * rename to propagate for no reader. */
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: { pk: COHORTS, sk: `COHORT#${id}` },
+    UpdateExpression: 'SET ' + sets.join(', '),
+    ExpressionAttributeNames: names,
+    ExpressionAttributeValues: values,
+    ConditionExpression: 'attribute_exists(sk)',
+  })).catch(e => {
+    if (e.name === 'ConditionalCheckFailedException') throw new Error('no such cohort');
+    throw e;
+  });
+  return json(200, { ok: true, id });
+}
+
+/* Deleting a cohort deletes the GROUPING AND NONE OF THE PEOPLE - no account, no
+ * enrolment, no progress. Worth saying twice, because "delete" beside a list of students
+ * reads as deleting students, and this is the one destructive verb here that is not. */
+async function deleteCohort(id) {
+  if (!id) return json(400, { error: 'id is required' });
+  const members = await cohortMembers(id);
+  for (let i = 0; i < members.length; i += 25) {
+    let unprocessed = {
+      [TABLE]: members.slice(i, i + 25)
+        .map(m => ({ DeleteRequest: { Key: { pk: m.pk, sk: m.sk } } })),
+    };
+    for (let attempt = 0; unprocessed[TABLE]?.length && attempt < 5; attempt++) {
+      const w = await ddb.send(new BatchWriteCommand({ RequestItems: unprocessed }));
+      unprocessed = w.UnprocessedItems || {};
+    }
+    if (unprocessed[TABLE]?.length) throw new Error('could not remove every member of that cohort');
+  }
+  // The catalogue row last: a half-deleted cohort that still lists is one somebody can
+  // press delete on again, where members left under a cohort nobody can see are not.
+  await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: COHORTS, sk: `COHORT#${id}` } }));
+  return json(200, { ok: true, removed: members.length });
 }
 
 async function deleteUser(sub, me) {

@@ -15,17 +15,31 @@ import { ref, computed } from 'vue';
 import { api } from '../auth.js';
 import { parseUsers, templateCsv } from '../csv.js';
 
-const props = defineProps({ courses: Array });
+const props = defineProps({ courses: Array, cohorts: Array });
 const emit = defineEmits(['done', 'close']);
 
 const rows = ref([]);
 const parseError = ref('');
 const filename = ref('');
 const assign = ref(new Set());        // courses everyone in the file goes on
+const cohort = ref('');              // the cohort everyone in the file joins
 const running = ref(false);
 const results = ref(null);           // [{ email, ok, message }] once it has run
 
 const known = computed(() => new Set((props.courses || []).map(c => c.id)));
+
+/* A cohort name resolves to an existing cohort by id or by title, case-insensitively, and
+ * anything else is a NEW cohort. That resolution is advisory: the API does it again and its
+ * answer is the one that counts, because two tutors importing two class lists at the same
+ * moment can only land in one cohort if one side decides. What this copy is for is the
+ * preview - naming what is about to be created is what makes creating it safe. */
+const resolve = name => {
+  const wanted = String(name || '').trim();
+  if (!wanted) return null;
+  const hit = (props.cohorts || []).find(c =>
+    c.id === wanted || c.title.trim().toLowerCase() === wanted.toLowerCase());
+  return hit ? { id: hit.id, title: hit.title, fresh: false } : { id: wanted, title: wanted, fresh: true };
+};
 
 /* A row's problem is either its own - a bad address - or one only this screen can see: a
  * course id that is not published. Resolved here rather than in csv.js, which is pure and
@@ -41,10 +55,27 @@ const known = computed(() => new Set((props.courses || []).map(c => c.id)));
 const decorated = computed(() => rows.value.map(r => {
   const unknown = r.courses.filter(c => !known.value.has(c));
   const enrol = [...new Set([...assign.value, ...r.courses.filter(c => known.value.has(c))])];
-  return { ...r, unknown, enrol, blocked: !!r.problem || !!unknown.length };
+  /* The typed cohort is added to every row, the same rule the ticked courses follow and for
+   * the same reason: the common case is a plain class list with no cohort column at all. */
+  const joins = [cohort.value, ...r.cohorts].map(resolve).filter(Boolean);
+  const seen = new Set();
+  const cohortsOn = joins.filter(c => !seen.has(c.id.toLowerCase()) && seen.add(c.id.toLowerCase()));
+  return { ...r, unknown, enrol, cohortsOn, blocked: !!r.problem || !!unknown.length };
 }));
 const usable = computed(() => decorated.value.filter(r => !r.blocked));
 const blocked = computed(() => decorated.value.filter(r => r.blocked));
+
+/* An UNKNOWN COURSE blocks a row and an unknown cohort does not: a course id that is not
+ * published means somebody typed it wrong and the student would land on nothing, where a
+ * cohort that does not exist yet is the ordinary way of naming this intake. What it gets
+ * instead is a sentence before anything is sent, because the failure it can cause - a class
+ * quietly split in two by a typo - is invisible afterwards. */
+const creating = computed(() => {
+  const fresh = new Map();
+  for (const r of usable.value)
+    for (const c of r.cohortsOn) if (c.fresh) fresh.set(c.id.toLowerCase(), c.title);
+  return [...fresh.values()];
+});
 
 function pick(event) {
   const file = event.target.files?.[0];
@@ -61,7 +92,8 @@ function pick(event) {
 }
 
 function download() {
-  const blob = new Blob([templateCsv(props.courses || [])], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([templateCsv(props.courses || [], props.cohorts || [])],
+    { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'icecore-users.csv';
@@ -90,6 +122,7 @@ async function run() {
           email: row.email,
           name: row.name || undefined,
           courses: row.enrol,
+          cohorts: row.cohortsOn.map(c => c.id),
           admin: row.admin,
         },
       });
@@ -126,8 +159,9 @@ const summary = computed(() => {
       </header>
 
       <p class="lead">A CSV with an <code>email</code> column, and optionally
-        <code>name</code>, <code>courses</code> and <code>admin</code>. Everyone in it is
-        invited by email and enrolled, exactly as if they had been added one at a time.</p>
+        <code>name</code>, <code>courses</code>, <code>cohort</code> and <code>admin</code>.
+        Everyone in it is invited by email and enrolled, exactly as if they had been added
+        one at a time.</p>
 
       <div class="pickrow">
         <label class="file btn">
@@ -157,12 +191,31 @@ const summary = computed(() => {
         <p class="note">Added to whatever a row's own <code>courses</code> column names.</p>
       </div>
 
+      <div v-if="!results" class="assignbox">
+        <label for="ui-cohort">Put everyone in this file in the cohort</label>
+        <input id="ui-cohort" v-model="cohort" type="text" list="ui-cohorts"
+               placeholder="Sept 2026 evening">
+        <datalist id="ui-cohorts">
+          <option v-for="c in (cohorts || []).filter(c => !c.archived)" :key="c.id" :value="c.title" />
+        </datalist>
+        <p class="note">Added to whatever a row's own <code>cohort</code> column names. A
+          name that is not already a cohort creates one.</p>
+      </div>
+
+      <!-- Named before anything is sent, because a cohort created by a typo splits a class
+           in two and looks like nothing at all afterwards. -->
+      <p v-if="creating.length && !results" class="creating">
+        This will create {{ creating.length === 1 ? 'a new cohort' : creating.length + ' new cohorts' }}:
+        <strong>{{ creating.join(', ') }}</strong>. Check the spelling — an existing cohort
+        would have been matched by name.
+      </p>
+
       <template v-if="rows.length && !results">
         <h3>{{ rows.length }} row{{ rows.length === 1 ? '' : 's' }}<span
           v-if="blocked.length" class="warn"> — {{ blocked.length }} will be skipped</span></h3>
         <div class="tablewrap">
           <table>
-            <thead><tr><th>Line</th><th>Email</th><th>Name</th><th>Courses</th><th>Admin</th></tr></thead>
+            <thead><tr><th>Line</th><th>Email</th><th>Name</th><th>Courses</th><th>Cohort</th><th>Admin</th></tr></thead>
             <tbody>
               <tr v-for="r in decorated" :key="r.line" :class="{ bad: r.blocked }">
                 <td class="num">{{ r.line }}</td>
@@ -173,6 +226,9 @@ const summary = computed(() => {
                 </td>
                 <td>{{ r.name || '—' }}</td>
                 <td><span v-if="!r.enrol.length" class="dim">none</span>{{ r.enrol.join(', ') }}</td>
+                <td><span v-if="!r.cohortsOn.length" class="dim">—</span>
+                  <span v-for="c in r.cohortsOn" :key="c.id" :class="{ fresh: c.fresh }">{{ c.title }}</span>
+                </td>
                 <td>{{ r.admin ? 'yes' : '' }}</td>
               </tr>
             </tbody>
@@ -225,6 +281,18 @@ h2 { margin: 0; font-size: 18px; }
 .assignbox { border: 1px solid var(--ice-border); border-radius: 8px;
              background: var(--ice-bg-soft); padding: 12px 14px; margin-bottom: 16px; }
 .note { margin: 10px 0 0; font-size: 11.5px; color: var(--ice-fg-muted); }
+.assignbox input[type=text] { width: 100%; font: inherit; font-size: 14px; padding: 8px 11px;
+  background: var(--ice-bg); color: var(--ice-fg);
+  border: 1px solid var(--ice-border); border-radius: 8px; }
+.assignbox input[type=text]:focus { outline: none; border-color: var(--ice-primary); }
+/* Amber rather than red: creating a cohort is the ordinary path, and this is the one
+   sentence that makes a typo visible before it happens rather than a refusal. */
+.creating { margin: -6px 0 16px; font-size: 12.5px; line-height: 1.55;
+            color: var(--ice-fg); background: var(--ice-bg-soft);
+            border: 1px solid var(--ice-border); border-left: 3px solid var(--ice-primary);
+            border-radius: 8px; padding: 10px 12px; }
+td .fresh { color: var(--ice-primary-strong); }
+td span + span::before { content: ', '; color: var(--ice-fg-muted); }
 .note code { font-family: var(--ice-font-mono); font-size: .92em; }
 label { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
         color: var(--ice-fg-muted); margin-bottom: 8px; }

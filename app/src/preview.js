@@ -40,16 +40,44 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 let nextSub = 100;
 const people = [
   { sub: 'preview-1', email: 'ada@example.com', name: 'Ada Lovelace',
-    status: 'CONFIRMED', enabled: true, admin: true, courses: [] },
+    status: 'CONFIRMED', enabled: true, admin: true, courses: [], cohorts: [] },
   { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [] },
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening'] },
   { sub: 'preview-3', email: 'katherine@example.com', name: 'Katherine Johnson',
-    status: 'CONFIRMED', enabled: true, admin: false, courses: [] },
+    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening'] },
   { sub: 'preview-4', email: 'margaret@example.com', name: 'Margaret Hamilton',
-    status: 'CONFIRMED', enabled: false, admin: false, courses: [] },
+    status: 'CONFIRMED', enabled: false, admin: false, courses: [], cohorts: ['jan-2026'] },
   { sub: 'preview-5', email: 'joan@example.com', name: '',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [] },
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: [] },
 ];
+/* One of each state the cohort screens draw differently: a live intake with people in it, a
+ * finished one that is archived, and an empty one - which exists because a cohort is named
+ * before it is filled, and is the case a list derived from membership could not show at
+ * all. */
+const classes = [
+  { id: 'sept-2026-evening', title: 'Sept 2026 evening', created: '2026-09-01T09:00:00Z', archived: false },
+  { id: 'jan-2026', title: 'Jan 2026', created: '2026-01-08T09:00:00Z', archived: true },
+  { id: 'data-team', title: 'Data team', created: '2026-08-20T09:00:00Z', archived: false },
+];
+
+/* Resolve as the real API does - id, then title, then create - so that inventing a cohort
+ * from the dialog or the import behaves here the way it will on the stack. */
+const slug = t => String(t).trim().toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+function resolveCohorts(names) {
+  const ids = [];
+  for (const raw of names || []) {
+    const name = String(raw ?? '').trim();
+    if (!name) continue;
+    const hit = classes.find(c =>
+      c.id === name || c.title.trim().toLowerCase() === name.toLowerCase());
+    if (hit) { if (!ids.includes(hit.id)) ids.push(hit.id); continue; }
+    const made = { id: slug(name) || 'cohort', title: name, created: new Date().toISOString(), archived: false };
+    classes.push(made);
+    if (!ids.includes(made.id)) ids.push(made.id);
+  }
+  return ids;
+}
 /* The seeded enrolments cannot be written above: they are course ids, and which courses
  * exist depends on what `icecore dev` was pointed at. Done once, on the first listing. */
 let seeded = false;
@@ -127,9 +155,42 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     };
   }
 
+  if (route === 'admin/cohorts') {
+    if (method === 'POST') {
+      const title = String(body.title || '').trim();
+      const hit = classes.find(c => c.title.trim().toLowerCase() === title.toLowerCase());
+      if (hit) return { cohort: hit, created: false };
+      const made = { id: slug(title) || 'cohort', title, created: new Date().toISOString(), archived: false };
+      classes.push(made);
+      return { cohort: made, created: true };
+    }
+    if (method === 'PUT') {
+      const c = classes.find(x => x.id === body.id);
+      if (!c) throw new Error('no such cohort');
+      if (body.title !== undefined) c.title = String(body.title).trim();
+      if (body.archived !== undefined) c.archived = !!body.archived;
+      return { ok: true, id: c.id };
+    }
+    if (method === 'DELETE') {
+      const id = q.get('id');
+      const i = classes.findIndex(c => c.id === id);
+      if (i === -1) throw new Error('no such cohort');
+      classes.splice(i, 1);
+      // The grouping and none of the people, exactly as the real handler does it.
+      let removed = 0;
+      for (const p of people) {
+        const was = p.cohorts.length;
+        p.cohorts = p.cohorts.filter(c => c !== id);
+        removed += was - p.cohorts.length;
+      }
+      return { ok: true, removed };
+    }
+  }
+
   if (route === 'admin/users') {
     const users = await seed();
-    if (method === 'GET') return { users: users.map(u => ({ ...u })), truncated: false };
+    if (method === 'GET')
+      return { users: users.map(u => ({ ...u })), cohorts: classes.map(c => ({ ...c })), truncated: false };
 
     if (method === 'POST') {
       const email = String(body.email || '').trim().toLowerCase();
@@ -139,6 +200,7 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
           throw new Error('That person has already chosen a password - there is nothing to reissue.');
         // Additive, exactly as the real POST is: a course left out is not a course removed.
         known.courses = [...new Set([...known.courses, ...(body.courses || [])])];
+        known.cohorts = [...new Set([...known.cohorts, ...resolveCohorts(body.cohorts)])];
         if (body.admin) known.admin = true;
         return { sub: known.sub, invited: false, resent: !!body.resend };
       }
@@ -146,6 +208,7 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
         sub: `preview-${nextSub++}`, email, name: body.name || '',
         status: 'FORCE_CHANGE_PASSWORD', enabled: true,
         admin: !!body.admin, courses: [...(body.courses || [])],
+        cohorts: resolveCohorts(body.cohorts),
       };
       users.push(made);
       return { sub: made.sub, invited: true, resent: false };
@@ -162,6 +225,7 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
         throw new Error('you cannot disable your own account');
       if (body.name !== undefined) who.name = body.name;
       if (body.courses !== undefined) who.courses = [...body.courses];
+      if (body.cohorts !== undefined) who.cohorts = resolveCohorts(body.cohorts);
       if (body.admin !== undefined) who.admin = body.admin;
       if (body.enabled !== undefined) who.enabled = body.enabled;
       return { ok: true, sub: who.sub };

@@ -66,6 +66,7 @@ const HEADINGS = {
   email: 'email', 'e-mail': 'email', 'email address': 'email', address: 'email',
   name: 'name', 'full name': 'name', fullname: 'name', student: 'name',
   courses: 'courses', course: 'courses', 'course ids': 'courses', enrol: 'courses', enroll: 'courses',
+  cohort: 'cohorts', cohorts: 'cohorts', class: 'cohorts', group: 'cohorts', intake: 'cohorts',
   admin: 'admin', 'is admin': 'admin', administrator: 'admin',
 };
 
@@ -77,6 +78,11 @@ const normalise = h => h.trim().toLowerCase().replace(/\s+/g, ' ').replace(/^﻿
  * comma-delimited, so a course list that used one is already two fields by the time it gets
  * here - which is exactly why the template uses a semicolon. */
 const splitCourses = v => String(v || '').split(/[;|\s]+/).map(s => s.trim()).filter(Boolean);
+
+/* Cohorts split on the separators ONLY, never on whitespace. A course id cannot contain a
+ * space and a cohort name almost always does - "Sept 2026 evening" through `splitCourses`
+ * is three cohorts, two of which get created on the spot. */
+const splitCohorts = v => String(v || '').split(/[;|]+/).map(s => s.trim()).filter(Boolean);
 
 /**
  * Parse an import file into `{ rows, error }`.
@@ -123,6 +129,7 @@ export function parseUsers(text) {
       email,
       name: at(cells, 'name'),
       courses: splitCourses(at(cells, 'courses')),
+      cohorts: splitCohorts(at(cells, 'cohorts')),
       admin: TRUE.has(at(cells, 'admin').toLowerCase()),
       problem: '',
     };
@@ -146,21 +153,32 @@ export function parseUsers(text) {
  * commented out for exactly that reason - a template that imports two fictional students
  * on its first use is worse than one that imports nothing.
  */
-export function templateCsv(courses) {
+export function templateCsv(courses, cohorts = []) {
   const ids = courses.map(c => c.id);
+  const example = cohorts[0]?.id || 'sept-2026-evening';
   const rows = [
-    ['email', 'name', 'courses', 'admin'],
-    ['# jane.borg@example.com', 'Jane Borg', ids.slice(0, 2).join(';'), 'no'],
-    ['# sam.grech@example.com', 'Sam Grech', ids[0] || '', 'no'],
+    ['email', 'name', 'courses', 'cohort', 'admin'],
+    ['# jane.borg@example.com', 'Jane Borg', ids.slice(0, 2).join(';'), example, 'no'],
+    ['# sam.grech@example.com', 'Sam Grech', ids[0] || '', example, 'no'],
   ];
   const legend = courses.length
     ? courses.map(c => `# ${c.id}  -  ${c.title}`).join('\r\n')
     : '# (no courses published yet)';
+  /* Cohorts are listed the same way and for a stronger reason: a course id at least exists
+   * to be got wrong, where a cohort typed slightly differently is CREATED - so a class
+   * splits quietly in two rather than failing loudly. The import previews that, and this is
+   * the copy that stops it happening in the first place. */
+  const classes = cohorts.length
+    ? cohorts.map(c => `# ${c.id}  -  ${c.title}`).join('\r\n')
+    : '# (none yet - whatever you type here is created)';
   /* The legend goes UNDER the data, not above it: a comment line before the header makes
    * the header row the second line, and every spreadsheet then imports the file with the
    * comment as its column names. */
   return toCsv(rows)
     + '\r\n# The two rows above start with a # and are ignored - they show the shape.\r\n'
     + '# Separate several courses with a semicolon. The course ids are:\r\n'
-    + legend + '\r\n';
+    + legend + '\r\n'
+    + '#\r\n# The cohort column takes one name, or several separated by a semicolon.\r\n'
+    + '# A name that is not one of these creates a new cohort:\r\n'
+    + classes + '\r\n';
 }

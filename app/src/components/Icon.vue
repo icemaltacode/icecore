@@ -35,6 +35,10 @@ const PATHS = {
   // a grid with a heavier first row: a table, distinguishable from `rows` at 13px because
   // this one has a header and that one is two panes
   table: 'M4 5h16v14H4zM4 9.5h16M10 9.5V19M16 9.5V19',
+  // a pencil, tip down-left, with the ferrule drawn as its own stroke. The ferrule is what
+  // makes it a pencil rather than an arrow at 15px - without it the body is just a
+  // diagonal, which is why the plain "slash" edit glyphs read as a share or a link.
+  edit: 'M4 20l1-5L16 4a2.83 2.83 0 0 1 4 4L9 19l-5 1Z M13.5 6.5l4 4',
 };
 </script>
 

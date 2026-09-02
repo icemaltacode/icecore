@@ -146,7 +146,14 @@ export class IcecoreStack extends Stack {
     });
 
     // Single-table. Cognito owns accounts; this owns everything about them.
-    //   PK = USER#<sub>   SK = PROFILE | ENROL#<course> | PROG#<course>#<unit>
+    //   PK = USER#<sub>   SK = PROFILE | COHORT#<id> | ENROL#<course> | PROG#<course>#<exercise>
+    //                          | LAST#<course> | RATE#hint#<day> | SPEND#hint#<day>#<course>
+    //   PK = COHORTS       SK = COHORT#<id>              every cohort, one partition
+    //   PK = HINTS#<course> SK = <exercise>              hint pressure, nobody's in particular
+    //
+    // COHORT# AND ENROL# ARE READ AS ONE RANGE by the admin listing - `sk BETWEEN 'COHORT#'
+    // AND 'ENROL$'` - so a prefix added here beginning with D or E would arrive there as an
+    // enrolment nobody wrote. See `belongings` in infra/lambda/admin.
     // byCourse inverts the key so "who is on course X" is one query. NOTHING READS IT YET -
     // the users page lists the pool and asks for each person's own enrolments, because the
     // catalogue of courses lives in the content bucket and this side of the wire does not
@@ -406,6 +413,14 @@ export class IcecoreStack extends Stack {
     api.addRoutes({
       path: '/api/admin/users',
       methods: [HttpMethod.GET, HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('AdminIntegration', admin),
+    });
+    /* The same function, told apart by its path. No GET: the cohort catalogue rides back
+     * with the user listing, because the screen that draws cohorts is the screen that draws
+     * people and two round trips for one table is one too many. */
+    api.addRoutes({
+      path: '/api/admin/cohorts',
+      methods: [HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('AdminIntegration', admin),
     });
 
