@@ -36,6 +36,66 @@ async function key() {
   return apiKey;
 }
 
+/* ---- what a hint costs, and which exercise cost it ----------------------------------
+ *
+ * Two writes, neither of which the student waits on and neither of which may fail their
+ * hint: the answer has already been paid for by the time these run, so losing the
+ * accounting is a worse outcome to cause than to suffer.
+ *
+ * THE LEDGER LIVES IN THE STUDENT'S OWN PARTITION. `forget()` in the admin function deletes
+ * everything under `USER#<sub>`, so this is deleted with the person. A row keyed on the day
+ * instead would survive deleting somebody and still name their sub - a ledger that outlives
+ * the person it is about is a data-protection problem, not a feature.
+ *
+ * IT IS A SEPARATE ROW FROM THE RATE COUNTER, which carries a three-day TTL. That one is a
+ * limit and wants to be forgotten; this one is history and must not be. Widening the TTL to
+ * serve both would give the limit a memory it has no use for.
+ *
+ * TOKENS AND THE MODEL, NOT MONEY. A cost computed here bakes in a rate nobody can check
+ * afterwards. The admin screen prices it at read time from one constant - which does mean
+ * changing that constant re-prices history, and for an internal cost view that is the
+ * honest trade.
+ *
+ * The per-exercise counter is the other one, and it is deliberately NOT about a student:
+ * hint pressure per exercise is the difficulty signal this platform otherwise has no way to
+ * see, since a `PROG#` row is only ever written when somebody succeeds. Being aggregate, it
+ * is also the one row here that is not deleted with a person - which is correct, and is
+ * written down so nobody later "fixes" it.
+ *
+ * Both `course` and `exercise` are already in the request body - hint.js has always sent
+ * them and this function has always ignored them. */
+async function record(sub, body, usage) {
+  const day = new Date().toISOString().slice(0, 10);
+  const course = String(body.course || 'unknown').slice(0, 80);
+  const exercise = String(body.exercise ?? 'unknown').slice(0, 80);
+  await Promise.all([
+    ddb.send(new UpdateCommand({
+      TableName: process.env.TABLE,
+      Key: { pk: `USER#${sub}`, sk: `SPEND#hint#${day}#${course}` },
+      UpdateExpression:
+        'ADD #n :one, #in :in, #out :out SET #model = :model, #course = :course, #day = :day',
+      ExpressionAttributeNames: {
+        '#n': 'n', '#in': 'in', '#out': 'out', '#model': 'model', '#course': 'course', '#day': 'day',
+      },
+      ExpressionAttributeValues: {
+        ':one': 1,
+        ':in': Number(usage?.prompt_tokens) || 0,
+        ':out': Number(usage?.completion_tokens) || 0,
+        ':model': MODEL,
+        ':course': course,
+        ':day': day,
+      },
+    })),
+    ddb.send(new UpdateCommand({
+      TableName: process.env.TABLE,
+      Key: { pk: `HINTS#${course}`, sk: exercise },
+      UpdateExpression: 'ADD #n :one',
+      ExpressionAttributeNames: { '#n': 'n' },
+      ExpressionAttributeValues: { ':one': 1 },
+    })),
+  ]);
+}
+
 /** One atomic counter per student per day, swept by the table's TTL. */
 async function spend(sub) {
   const day = new Date().toISOString().slice(0, 10);
@@ -115,5 +175,8 @@ export async function handler(event) {
   const data = await r.json();
   const hint = data.choices?.[0]?.message?.content?.trim();
   if (!hint) return json(502, { error: 'No hint came back. Try again in a moment.' });
+  // Logged and swallowed: the hint is already paid for and already good, and there is
+  // nothing a student could do about a failed write to a table they cannot see.
+  await record(sub, body, data.usage).catch(e => console.error('spend not recorded', e));
   return json(200, { hint, remaining: Math.max(0, DAILY_LIMIT - used) });
 }
