@@ -8,8 +8,9 @@ This plan gives it three sections, and argues that the second of them — a cour
 page — is where nearly all the remaining value is, because it is the only one that can tell
 a tutor something they cannot already see by asking the student.
 
-Status: **steps 1 to 5 are built and deployed.** Cohorts, the spend ledger, the route and
-shell, the person page, and the course page. Nothing reads the ledger yet, which is the ordering rather than
+Status: **steps 1 to 6 are built and deployed.** Cohorts, the spend ledger, the route and
+shell, the person page, the course page, and the stall view - which is the first thing to
+read the ledger, and the reason it was written before anything could. Nothing reads the ledger yet, which is the ordering rather than
 an oversight. What is done is listed under [Already done](#already-done); everything else
 is proposed. The backlog line this replaces is "track student progress in admin"; remote
 control is still on it, pointed back here.
@@ -395,7 +396,7 @@ without them is a day of students untagged and hints uncounted.
 3. ~~**The route and the shell.**~~ — done, see below.
 4. ~~**The person page, with their submitted code.**~~ — done, see below.
 5. ~~**The course page: roster, position, completion.**~~ — done, see below.
-6. **Where the class stalls**, from solves, bookmark bunching and hint counts.
+6. ~~**Where the class stalls.**~~ — done, see below.
 7. **View-as**, read-only, under the five constraints above.
 8. **The platform page**: publication state, spend four ways, the ceiling.
 9. **Only then** decide whether attempts need recording.
@@ -490,6 +491,32 @@ they carry, the idiom the progress function already uses, so this needed no new 
 - **The response carries a per-exercise solve tally that nothing reads yet.** Unlike the
   index, this could have been added later at no cost; it rides along because it is three
   lines of a loop that was already running, and it makes the stall view a client change.
+
+**Step 6, the stall view.** `CourseStalls.vue`, a second view on the course page, plus one
+query on `HINTS#<course>` in `getCourse`.
+
+- **A low solve count is not a stall.** Counts fall away through a course because people
+  work in order, so the last exercise is always the least solved and that says nothing. The
+  signal is a *drop* relative to the exercise before, and the threshold scales with the class
+  so two people moving on is not a cliff.
+- **Hints are ranked per solve, not outright**, or the answer is always whichever exercise
+  the most people reached. This is the only signal here independent of position, and the
+  only thing that separates "hard" from "not reached" - because nothing records a failed
+  attempt.
+- **Slides are in the list**, because a bookmark on a topic's slides is where most topics
+  start: leaving them out made a class sitting on a video read as sitting nowhere. They
+  carry a position and no solve count, and `prev` carries across them - a zero between two
+  exercises would read as everybody falling off a cliff and climbing back up it. Built
+  through `walkTopic`, the one definition of that order.
+- **THE STEP 5 TALLY WAS THE WRONG SHAPE AND IS GONE.** It counted solves per exercise
+  across the whole roster, so the moment the screen filtered to a cohort it answered a
+  different question from the rows beside it - silently. The API now sends *which* exercises
+  each student solved, so every tally is of exactly the students being shown and the count
+  is `.length`. No extra query; about 90KB for a class of thirty on a 376-exercise course,
+  which is the right trade at this scale and would not be at ten thousand.
+
+  Worth keeping as the argument against shipping data before something reads it: the field
+  cost nothing to add and was wrong in a way only a reader could have found.
 
 **And two corrections out of this plan, applied while writing it:**
 

@@ -14,7 +14,8 @@
  * import.meta.env.DEV, which is false in `icecore bundle` - the only thing that ships the
  * app - so a stray VITE_ICECORE_PREVIEW in a build environment does nothing.
  */
-import { loadManifest } from './content.js';
+import { loadManifest, loadCourse } from './content.js';
+import { walkCourse, gradable } from './walk.js';
 /* The same localStorage record `progress.js` keeps, through the same module: this
  * stands in for the API, so it writes what the offline backing writes. */
 import * as store from './progress-store.js';
@@ -211,18 +212,22 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
           })),
         };
       }
-      const solved = [1, 2, 3, 4, 5].map(n => ({
-        exercise: String(n),
+      // Real ids here too, for the same reason as the course stub below: an invented id
+      // resolves to no title, and the screen quietly reads "Exercise 3" for everything.
+      const walk = gradable(walkCourse(await loadCourse(course).catch(() => null)))
+        .map(r => String(r.id));
+      const solved = walk.slice(0, 5).map((id, i) => ({
+        exercise: id,
         xp: 20,
-        at: `2026-08-0${n}T10:00:00Z`,
-        code: n === 3 ? undefined : {
+        at: `2026-08-0${i + 1}T10:00:00Z`,
+        code: i === 2 ? undefined : {
           0: `-- Preview stub: not a real submission.\nSELECT title, release_year\nFROM films\nWHERE release_year > 2000;`,
         },
       }));
       return {
         sub: who.sub, email: who.email, name: who.name, course,
         solved, xp: solved.reduce((n, e) => n + e.xp, 0),
-        place: { exercise: '3', at: '2026-08-03T10:00:00Z' },
+        place: { exercise: walk[2] || '', at: '2026-08-03T10:00:00Z' },
         clipped: false,
       };
     }
@@ -233,18 +238,35 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     if (method === 'GET' && q.get('course')) {
       const course = q.get('course');
       const on = users.filter(u => u.courses.includes(course));
-      const exercises = {};
+      /* THE REAL EXERCISE IDS, read out of the course being previewed.
+       *
+       * Invented ones do not work here and the failure is silent: an id is a DataCamp
+       * integer like 1418943, so a stub numbering its exercises 1, 2, 3 matches nothing on
+       * the screen it exists to fill and every tally draws a truthful zero. The rule the
+       * rest of the app follows applies to the stand-in too - one spelling of an id. */
+      const rows = walkCourse(await loadCourse(course).catch(() => null));
+      const walk = gradable(rows).map(r => String(r.id));
+      // Somebody parked on a topic's slides, because that is where most topics start and
+      // it is the state the roster and the stall list both draw differently.
+      const decks = rows.filter(r => r.kind === 'slides').map(r => String(r.id));
       const students = on.map((u, i) => {
-        const solved = [14, 0, 31, 6][i % 4];
-        for (let n = 1; n <= solved; n++) exercises[n] = (exercises[n] || 0) + 1;
+        const n = Math.min([14, 0, 31, 6][i % 4], walk.length);
+        const solved = walk.slice(0, n);
         return {
           sub: u.sub, name: u.name, email: u.email,
-          solved, xp: solved * 20,
-          last: solved ? `2026-08-${String(10 + (i % 18)).padStart(2, '0')}T10:00:00Z` : null,
-          place: solved ? { exercise: String(solved), at: '2026-08-20T10:00:00Z' } : null,
+          solved, xp: n * 20,
+          last: n ? `2026-08-${String(10 + (i % 18)).padStart(2, '0')}T10:00:00Z` : null,
+          place: n
+            ? { exercise: (i % 2 ? decks[i % decks.length] : null) || walk[n - 1],
+                at: '2026-08-20T10:00:00Z' }
+            : null,
         };
       });
-      return { course, students, exercises };
+      // A few exercises that drew help, so that panel is not permanently empty locally.
+      const hints = {};
+      for (const [k, n] of [[6, 5], [11, 9], [14, 2], [30, 7]])
+        if (walk[k]) hints[walk[k]] = n;
+      return { course, students, hints };
     }
     if (method === 'GET')
       return { users: users.map(u => ({ ...u })), cohorts: classes.map(c => ({ ...c })), truncated: false };

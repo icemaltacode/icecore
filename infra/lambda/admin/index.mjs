@@ -664,11 +664,20 @@ const byCourse = (sk, projection) => queryAll({
 const subOf = pk => pk.slice('USER#'.length);
 
 async function getCourse(course) {
-  const [roster, places] = await Promise.all([
+  const [roster, places, hints] = await Promise.all([
     byCourse(`ENROL#${course}`),
     byCourse(`LAST#${course}`, {
       ProjectionExpression: 'pk, exercise, #a',
       ExpressionAttributeNames: { '#a': 'at' },
+    }),
+    /* Hint pressure per exercise, one query on its own partition. It is the only signal
+     * here that is not a function of how far down the course somebody got: an exercise
+     * everybody eventually solves but nobody solves unaided is hard, and solve counts alone
+     * cannot say so. Aggregate and nobody's in particular - see the hint function. */
+    queryAll({
+      TableName: TABLE,
+      KeyConditionExpression: 'pk = :pk',
+      ExpressionAttributeValues: { ':pk': `HINTS#${course}` },
     }),
   ]);
 
@@ -682,26 +691,32 @@ async function getCourse(course) {
     ExpressionAttributeNames: { '#a': 'at' },
   }));
 
-  /* Solve counts per exercise, tallied out of the same rows. NOTHING READS THIS YET - it is
-   * what "where does the class stall" is made of, and unlike the index it could have been
-   * added later at no cost. It rides along because it is three lines of the loop that was
-   * already running, and it makes that screen a client change rather than another deploy. */
-  const exercises = {};
-
+  /* WHICH exercises, not how many.
+   *
+   * This shipped as a count plus a server-side tally per exercise, and the tally was the
+   * wrong shape: it was over the whole roster, so the moment the screen filtered to one
+   * cohort it answered a different question from the rows beside it - silently, which is
+   * the worst way for a number to be wrong. Sent as ids, every tally the client draws is a
+   * tally of exactly the students it is showing.
+   *
+   * The rows were already fetched, so this costs no query and the count is `.length`. What
+   * it does cost is payload: a class of thirty on a 376-exercise course is around 90KB,
+   * which is the right trade at the scale this platform is built for - a training company's
+   * classes - and would not be at ten thousand. */
   const students = roster.map((r, i) => {
     const rows = progress[i];
     let xp = 0;
     let last = null;
+    const solved = [];
     for (const row of rows) {
       xp += Number(row.xp) || 0;
       if (row.at && (!last || row.at > last)) last = row.at;
-      const id = exerciseOf(row.sk, course);
-      exercises[id] = (exercises[id] || 0) + 1;
+      solved.push(exerciseOf(row.sk, course));
     }
     const sub = subOf(r.pk);
     return {
       sub, name: r.name || '', email: r.email || '',
-      solved: rows.length, xp, last,
+      solved, xp, last,
       /* Where they are and how much they have done, together. A bookmark is not a
        * completion flag: somebody who finished last month is parked on the final exercise,
        * which reads identically to somebody stuck on it. Only the count tells them apart,
@@ -710,7 +725,11 @@ async function getCourse(course) {
     };
   });
 
-  return json(200, { course, students, exercises });
+  return json(200, {
+    course,
+    students,
+    hints: Object.fromEntries(hints.map(h => [h.sk, Number(h.n) || 0])),
+  });
 }
 
 /* ---- cohorts -----------------------------------------------------------------------

@@ -21,6 +21,7 @@ import { ref, computed, watch } from 'vue';
 import { api } from '../auth.js';
 import { loadCourse } from '../content.js';
 import { walkCourse, gradable } from '../walk.js';
+import CourseStalls from './CourseStalls.vue';
 
 const props = defineProps({
   course: Object,          // the card from the catalogue
@@ -36,6 +37,11 @@ const loading = ref(true);
 const error = ref('');
 const cohort = ref('');
 const sort = ref('name');
+const view = ref('students');
+/* The course's own index.json, kept because the stall view needs its order and its titles -
+ * the API sends which exercises were solved and knows nothing about what they are called or
+ * what order they come in. */
+const full = ref(null);
 
 /* The denominator comes from the catalogue, which the client has and the API does not.
  * `card.json` counts exercises; the walk is what a student actually moves through, so the
@@ -43,16 +49,17 @@ const sort = ref('name');
 const total = ref(0);
 
 async function load() {
-  loading.value = true; error.value = ''; data.value = null; titles.value = {};
+  loading.value = true; error.value = ''; data.value = null; titles.value = {}; full.value = null;
   total.value = props.course?.exercises || 0;
   try {
-    const [d, full] = await Promise.all([
+    const [d, course] = await Promise.all([
       api(`admin/users?course=${encodeURIComponent(props.course.id)}`),
       loadCourse(props.course.id).catch(() => null),
     ]);
     data.value = d;
-    if (full) {
-      const rows = walkCourse(full);
+    full.value = course;
+    if (course) {
+      const rows = walkCourse(course);
       titles.value = Object.fromEntries(rows.map(r => [String(r.id), r.title]));
       total.value = gradable(rows).length;
     }
@@ -69,6 +76,10 @@ const when = iso => (iso ? new Date(iso).toLocaleDateString(undefined,
   { day: 'numeric', month: 'short' }) : '—');
 
 const label = s => s.name || s.email;
+/* WHICH exercises, not how many: the API sends the ids so that every tally on this screen
+ * is a tally of the students actually being shown. A count could not be filtered to a
+ * cohort without asking the server a second, differently-shaped question. */
+const done = s => (s.solved || []).length;
 
 const shown = computed(() => {
   const list = (data.value?.students || [])
@@ -77,7 +88,7 @@ const shown = computed(() => {
     name: (a, b) => label(a).localeCompare(label(b)),
     // Furthest first: the question this order answers is "who is behind", and the answer
     // is at the bottom where it can be read against the ones who are not.
-    progress: (a, b) => b.solved - a.solved || label(a).localeCompare(label(b)),
+    progress: (a, b) => done(b) - done(a) || label(a).localeCompare(label(b)),
     // Longest ago first, and never-started before that: this is the "who has stopped"
     // order, so an empty `last` is the most interesting value rather than the least.
     last: (a, b) => (a.last || '').localeCompare(b.last || '') || label(a).localeCompare(label(b)),
@@ -90,18 +101,16 @@ const shown = computed(() => {
 const stats = computed(() => {
   const list = shown.value;
   if (!list.length) return null;
-  const done = list.filter(s => total.value && s.solved >= total.value).length;
-  const started = list.filter(s => s.solved > 0).length;
   return {
     people: list.length,
-    started,
-    done,
-    median: [...list].map(s => s.solved).sort((a, b) => a - b)[Math.floor(list.length / 2)],
+    started: list.filter(s => done(s) > 0).length,
+    finished: list.filter(s => total.value && done(s) >= total.value).length,
+    median: list.map(done).sort((a, b) => a - b)[Math.floor(list.length / 2)],
   };
 });
 
-const pct = s => (total.value ? Math.min(100, Math.round((s.solved / total.value) * 100)) : 0);
-const finished = s => total.value > 0 && s.solved >= total.value;
+const pct = s => (total.value ? Math.min(100, Math.round((done(s) / total.value) * 100)) : 0);
+const finished = s => total.value > 0 && done(s) >= total.value;
 </script>
 
 <template>
@@ -112,19 +121,23 @@ const finished = s => total.value > 0 && s.solved >= total.value;
       <div>
         <h2>{{ course.title }}</h2>
         <p v-if="stats" class="muted">{{ stats.people }} enrolled ·
-          {{ stats.started }} started · {{ stats.done }} finished ·
+          {{ stats.started }} started · {{ stats.finished }} finished ·
           median {{ stats.median }}<template v-if="total"> of {{ total }}</template> solved</p>
       </div>
     </header>
 
     <div class="tools">
+      <div class="views">
+        <button class="view" :class="{ on: view === 'students' }" @click="view = 'students'">Students</button>
+        <button class="view" :class="{ on: view === 'stalls' }" @click="view = 'stalls'">Where they stall</button>
+      </div>
       <select v-model="cohort" aria-label="Cohort">
         <option value="">Everyone on the course</option>
         <option v-for="c in cohorts" :key="c.id" :value="c.id">
           {{ c.title }}<template v-if="c.archived"> (archived)</template>
         </option>
       </select>
-      <select v-model="sort" aria-label="Sort">
+      <select v-if="view === 'students'" v-model="sort" aria-label="Sort">
         <option value="name">By name</option>
         <option value="progress">By progress</option>
         <option value="last">By least recently active</option>
@@ -133,6 +146,11 @@ const finished = s => total.value > 0 && s.solved >= total.value;
 
     <p v-if="error" class="err">{{ error }}</p>
     <p v-if="loading" class="muted">Loading…</p>
+
+    <!-- The same students the roster is showing, so the tallies and the rows beside them
+         cannot answer two different questions. -->
+    <CourseStalls v-else-if="view === 'stalls'" :course="full" :students="shown"
+                  :hints="data?.hints || {}" />
 
     <div v-else-if="shown.length" class="tablewrap">
       <table>
@@ -154,7 +172,7 @@ const finished = s => total.value > 0 && s.solved >= total.value;
               <div class="bar">
                 <span class="track"><span class="fill" :class="{ done: finished(s) }"
                                          :style="{ width: pct(s) + '%' }"></span></span>
-                <span class="num">{{ s.solved }}<template v-if="total"> / {{ total }}</template></span>
+                <span class="num">{{ done(s) }}<template v-if="total"> / {{ total }}</template></span>
               </div>
             </td>
             <td class="num">{{ s.xp }}</td>
@@ -163,9 +181,13 @@ const finished = s => total.value > 0 && s.solved >= total.value;
                    a course leaves behind, and it is indistinguishable from being stuck on
                    it unless the count is allowed to speak first. -->
               <span v-if="finished(s)" class="fin">Finished</span>
-              <span v-else-if="!s.solved && !s.place" class="dim">Not started</span>
-              <span v-else-if="s.place" class="where">{{ titleOf(s.place.exercise)
-                || 'Exercise ' + s.place.exercise }}</span>
+              <span v-else-if="!done(s) && !s.place" class="dim">Not started</span>
+              <!-- A slides bookmark resolves to its topic's title, which on its own reads
+                   as an exercise they are stuck on. Slides open most topics, so this is a
+                   common and entirely ordinary place to be. -->
+              <span v-else-if="s.place" class="where">
+                <em v-if="String(s.place.exercise).startsWith('slides:')">Slides — </em>{{
+                  titleOf(s.place.exercise) || 'Exercise ' + s.place.exercise }}</span>
               <span v-else class="dim">—</span>
             </td>
             <td class="num">{{ when(s.last || s.place?.at) }}</td>
@@ -189,7 +211,12 @@ h2 { margin: 0 0 6px; font-size: 22px; font-weight: 500; }
 .muted { color: var(--ice-fg-muted); font-size: 13px; line-height: 1.6; margin: 0; }
 .err { color: var(--ice-bad); font-size: 13px; }
 
-.tools { display: flex; gap: 10px; margin-bottom: 14px; }
+.tools { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; }
+.views { display: flex; border: 1px solid var(--ice-border); border-radius: 8px; overflow: hidden; }
+.view { font: inherit; font-size: 13px; padding: 8px 12px; background: none; border: 0;
+        color: var(--ice-fg-muted); cursor: pointer; }
+.view:hover { color: var(--ice-fg); }
+.view.on { background: var(--ice-bg-soft); color: var(--ice-fg); }
 select { font: inherit; font-size: 14px; padding: 8px 11px;
          background: var(--ice-bg); color: var(--ice-fg);
          border: 1px solid var(--ice-border); border-radius: 8px; }
@@ -219,4 +246,5 @@ td strong { font-weight: 500; }
 .fill.done { background: var(--ice-good); }
 .fin { color: var(--ice-good); font-size: 13px; }
 .where { font-size: 13px; }
+.where em { font-style: normal; color: var(--ice-fg-muted); }
 </style>
