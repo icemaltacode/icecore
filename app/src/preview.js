@@ -130,6 +130,17 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
    * reload the real one causes and reads as having worked. Session-scoped on purpose - it
    * is preview state, and it should not outlive the tab any more than the fake sign-out
    * does. */
+  /* The reset, which in preview is the local half doing ALL the work - there being no
+   * DynamoDB behind it. That makes it the honest stand-in: the thing this stub clears is
+   * exactly the thing the real one has to remember to clear as well as its rows. */
+  if (route === 'account/progress' && method === 'DELETE') {
+    const course = q.get('course');
+    if (!course) throw new Error('course is required');
+    const removed = Object.keys(store.earned(course)).length;
+    store.forget(course);
+    return { ok: true, course, removed };
+  }
+
   if (route === 'account') {
     const courses = (await loadManifest()).map(c => c.id);
     const mine = role === 'admin' ? [] : courses;

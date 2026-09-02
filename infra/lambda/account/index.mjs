@@ -1,7 +1,8 @@
 /* A person's own account.
  *
- *   GET /api/account          everything this platform holds about the caller, summarised
- *   PUT /api/account          { name }
+ *   GET    /api/account            everything this platform holds about the caller, summarised
+ *   PUT    /api/account            { name }
+ *   DELETE /api/account/progress?course=   start that course again from nothing
  *
  * THE MIRROR OF THE ADMIN FUNCTION, AND ITS OPPOSITE. That one answers questions about
  * anybody and is reachable only by admins; this one answers questions about exactly one
@@ -23,7 +24,9 @@ import {
   CognitoIdentityProviderClient, ListUsersCommand, AdminUpdateUserAttributesCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand, PutCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient, QueryCommand, PutCommand, GetCommand, DeleteCommand, BatchWriteCommand,
+} from '@aws-sdk/lib-dynamodb';
 
 const cognito = new CognitoIdentityProviderClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -235,15 +238,84 @@ async function put(sub, body) {
   return json(200, { ok: true, name: next });
 }
 
+/* Start one course again from nothing.
+ *
+ * PER COURSE, NEVER GLOBAL. "Start Data Analyst SQL again" is a real intention; "erase
+ * everything I have ever done here" is not one anybody has, and offering it as one button
+ * makes the smaller act feel like the larger one. There is deliberately no way to ask for
+ * all of them at once.
+ *
+ * WHAT GOES, AND WHAT DELIBERATELY DOES NOT:
+ *
+ *   PROG#<course>#*   goes - every solve, its XP, and the code that solved it
+ *   LAST#<course>     goes - the place marker
+ *   ENROL#<course>    STAYS. Resetting progress is not leaving the course.
+ *   COHORT#*          STAYS. A cohort is a group of people; this is not about who they are.
+ *   SPEND#hint#*      STAYS. It is a financial record, and history is not the student's to
+ *                     revise.
+ *   HINTS#<course>    STAYS, and is not in this partition anyway. The per-exercise counter
+ *                     is not about a student at all - it is the difficulty signal the
+ *                     platform otherwise lacks entirely, which is why forget() spares it too.
+ *
+ * The bound is the sort key, not a filter: `begins_with(PROG#<course>#)` cannot reach
+ * another course's rows even if the caller asks it to. Belt and braces against the one
+ * mistake here that would be unrecoverable.
+ */
+async function reset(sub, course) {
+  if (!course) return json(400, { error: 'course is required' });
+  const pk = `USER#${sub}`;
+  let removed = 0;
+  let start;
+  do {
+    const r = await ddb.send(new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+      ExpressionAttributeValues: { ':pk': pk, ':sk': `PROG#${course}#` },
+      ProjectionExpression: 'pk, sk',
+      ExclusiveStartKey: start,
+    }));
+    const items = r.Items || [];
+    for (let i = 0; i < items.length; i += 25) {
+      /* BatchWrite declines part of a batch under throttling and REPORTS it rather than
+       * failing, so an unchecked call leaves rows behind and says it did not. Same loop as
+       * forget() in the admin function, for the same reason. */
+      let unprocessed = {
+        [TABLE]: items.slice(i, i + 25).map(k => ({ DeleteRequest: { Key: { pk: k.pk, sk: k.sk } } })),
+      };
+      for (let attempt = 0; unprocessed[TABLE]?.length && attempt < 5; attempt++) {
+        const w = await ddb.send(new BatchWriteCommand({ RequestItems: unprocessed }));
+        unprocessed = w.UnprocessedItems || {};
+      }
+      if (unprocessed[TABLE]?.length) throw new Error('could not clear every row - nothing else was touched');
+    }
+    removed += items.length;
+    start = r.LastEvaluatedKey;
+  } while (start);
+
+  /* Last, and on its own. It sits outside the PROG# prefix on purpose - so that a query for
+   * solved exercises cannot count it as one - which means the loop above never sees it. A
+   * place marker left pointing into a course with no progress is harmless, where a solve
+   * left behind is not, so it goes after rather than before. */
+  await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk, sk: `LAST#${course}` } }));
+
+  return json(200, { ok: true, course, removed });
+}
+
 export async function handler(event) {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const sub = claims?.sub;
   if (!sub) return json(401, { error: 'not signed in' });
 
   const method = event.requestContext.http.method;
+  /* Told apart by path as well as by method, the way the admin function tells its two
+   * resources apart. `rawPath` rather than a route key, so a stage prefix cannot change the
+   * answer. */
+  const progress = /\/progress\/?$/.test(event.rawPath || '');
   try {
-    if (method === 'GET') return await get(sub, claims);
-    if (method === 'PUT') return await put(sub, JSON.parse(event.body || '{}'));
+    if (method === 'DELETE' && progress)
+      return await reset(sub, event.queryStringParameters?.course);
+    if (method === 'GET' && !progress) return await get(sub, claims);
+    if (method === 'PUT' && !progress) return await put(sub, JSON.parse(event.body || '{}'));
     return json(405, { error: `${method} not allowed` });
   } catch (e) {
     console.error(e);

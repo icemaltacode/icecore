@@ -9,8 +9,11 @@ It is the mirror of [ADMIN.md](ADMIN.md) and inherits its boundary from the othe
 admin area may read content and never write it, and the account screen may read the
 student's own rows and never reach past them.
 
-Status: **nothing here is built.** One item is not a feature at all but a live lockout, and
-it is first for that reason.
+Status: **steps 1 to 6 are built.** Password recovery, the route and shell, Security, the
+account function behind the You section, Learning, and the danger zone. What is left is the
+Article 15 response and the avatar - the two that need the most writing and the most
+infrastructure respectively, which is why they are last. Recovery came first because it was
+not a feature at all but a live lockout.
 
 ## Decisions taken
 
@@ -447,19 +450,23 @@ a course without changing the course or their relationship to it.
 
 ## Order I would build it
 
-1. **Forgot password**, on the sign-in screen, with the unopened-invitation message. It is a
-   live lockout and it is independent of everything below.
-2. **The route, the top-bar menu, and the shell** — `#/account`, five empty sections. Nothing
-   to look at, but it is what the rest lands in.
-3. **Change password, and sign out everywhere.** No new infrastructure at all; both are
-   `amazon-cognito-identity-js` calls through `auth.js`.
-4. **The account Lambda and `GET /api/account`**, plus the name rename with its cached-copy
-   rewrite. The first thing here that touches the stack.
-5. **Learning** — XP, hints, courses, cohort. Read-only, and mostly assembly of what step 4
-   already returns.
-6. **The danger zone.** Reset needs step 4's counts to write an honest confirmation, so it
-   comes after it rather than before.
-7. **The access request.** Not one query and one download any more: the copy is one query,
+1. ~~**Forgot password**, on the sign-in screen, with the unopened-invitation message. It is a
+   live lockout and it is independent of everything below.~~ **Done.**
+2. ~~**The route, the top-bar menu, and the shell** — `#/account`, five empty sections.~~
+   **Done.** The way in is the person in the top bar, which was inert markup and is now a
+   menu; Sign out moved into it. Finding that the theme dropdown beside it had never been
+   styled at all was a side effect.
+3. ~~**Change password, and sign out everywhere.**~~ **Done**, with no new infrastructure -
+   both are `amazon-cognito-identity-js` calls through `auth.js`.
+4. ~~**The account Lambda and `GET /api/account`**, plus the name rename with its cached-copy
+   rewrite.~~ **Done.** A separate function from the admin one, for blast radius rather than
+   for code - see [The boundary](#the-boundary-from-this-side).
+5. ~~**Learning** — XP, hints, courses, cohort.~~ **Done.** The course list is the union of
+   enrolment and progress, which is what makes it right for an admin and for somebody
+   unenrolled since.
+6. ~~**The danger zone.** Reset needs step 4's counts to write an honest confirmation.~~
+   **Done**, and it needed a route of its own: `DELETE /api/account/progress?course=`.
+7. **The access request.** *(next)* Not one query and one download any more: the copy is one query,
    and the supplementary statement is prose that has to be written once and then rendered in
    two places. Budget for the writing rather than the code — the recipients line, which says
    that a hint sends a student's code to OpenAI, is the part that needs to be *right* rather

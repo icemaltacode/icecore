@@ -426,9 +426,69 @@ against data that exists and cannot be built at all against data nobody recorded
 
 ## The account screen
 
-What a student may see and change about themselves. [`ACCOUNT.md`](ACCOUNT.md) is the plan -
-five sections, a danger zone, and a full Article 15 export. **Only password recovery is
-built**; it came first because it was not a feature but a lockout.
+What a student may see and change about themselves. `AccountPanel.vue`, `route.js` and
+`infra/lambda/account/`. [`ACCOUNT.md`](ACCOUNT.md) is the plan - five sections, a danger
+zone, and a full Article 15 export; **steps 1 to 6 of it are built**, leaving the export and
+the avatar. Recovery came first because it was not a feature but a lockout.
+
+- **A STUDENT MAY CHANGE FACTS ABOUT THEMSELVES AND NEVER FACTS ABOUT THEIR COURSE.** The
+  mirror of the admin area's rule and easier to break, because every violation looks like a
+  convenience. Name and avatar are theirs; enrolment, cohort, XP amounts and what an
+  exercise is worth are set by an admin or by the course repo. The one bounded exception is
+  resetting progress, which destroys their own record of a course without changing the
+  course or their relationship to it. The read-only half is *stated on screen* rather than
+  implied by an absence of buttons - "your courses and class are set by your tutor" - because
+  a student who could unenrol themselves would lose a course they were put on, and from the
+  admin panel that looks exactly like an administrative mistake.
+- **The account function is separate from the admin one for BLAST RADIUS, not for code.**
+  That one may act on any sub and only admins reach it; this one acts on exactly the
+  caller's and everybody reaches it. Folded together, the thing between a student and every
+  other student's rows would be an `if` - and the day somebody adds a `?sub=` here for a good
+  reason, it is gone. There is no sub parameter in the file: the only key it can build comes
+  from the claims. Its IAM policy is two Cognito actions, and that is the whole of it.
+- **A rename's cached copies are the whole job.** `ENROL#` and `COHORT#` rows each carry the
+  name so `byCourse` answers "who is in X" without a pool call. The signed-in client could
+  have written the attribute alone, which is exactly the version that would have been wrong:
+  every admin list would go on showing the old name. The top bar is written directly too -
+  `session.name` came out of an id token minted before the rename, and that token is not
+  going to catch up.
+- **The reset is TWO-SIDED.** `progress.js` falls back to the local record whenever a call
+  fails, so clearing the rows alone leaves a browser that re-asserts the deleted progress the
+  next time anything goes offline. `forget()` in `progress-store.js` is the local half,
+  living where the keys are defined. The day counter is deliberately spared: it is across
+  every course, so clearing it would take away XP earned this morning on something that was
+  not reset. And `App.vue`'s grid tally is recomputed on a `reset` event, or a student resets
+  a course, presses Done, and sees the card still claiming the XP they just cleared.
+- **The danger zone's second gate is the COURSE TITLE, never the word DELETE.** A generic
+  token is typed by muscle memory and confirms only that a human is present. The failure
+  being guarded is not an accidental click but resetting the wrong course, and only a
+  course-specific phrase catches that. A course with nothing solved is not offered at all - a
+  no-op dressed as a destructive act is how a danger zone becomes a place people click
+  through.
+- **The reset's bound is the sort key, not a filter.** `begins_with('PROG#<course>#')` cannot
+  reach another course's rows even if the caller asks it to. `ENROL#`, `COHORT#`,
+  `SPEND#hint#` and the aggregate `HINTS#` counter all stay - the last because it is not
+  about the student at all, which is why `forget()` spares it too.
+- **Hints are read from `RATE#`, in UTC; XP is the student's own day.** They look like the
+  same kind of number and are not. The rate row is the counter the hint function actually
+  enforces against, so the screen quotes it in the hint function's own day - reporting it in
+  local time would print "3 of 40" beside a refusal. The XP counter is the opposite case on
+  purpose.
+- **The course list is the union of enrolment and progress.** Enrolment alone shows an admin
+  nothing, since an admin has no enrolment rows by design; progress alone shows a new student
+  nothing. The union also keeps the work of somebody unenrolled since, rather than dropping
+  it with the row that named it.
+- **Signing out everywhere is not instant anywhere else, and the screen says so.**
+  `globalSignOut` revokes refresh tokens; tokens already issued stay valid for their full 12
+  hours, and `restore()` validates a cached one locally, so another device does not notice
+  even on a reload. A successful password change says the same thing from the other side -
+  whoever changes one because they think it is compromised will otherwise read "changed" as
+  "they are out".
+- **`.who` in the top bar is a menu, and both dropdowns share one click-away listener.** Two
+  listeners would each have to know not to close the other's click, which produces a menu
+  that will not open because the gesture that opened it also closed it. "Your account" is
+  *hidden* while watching a student rather than disabled: from inside their session it would
+  offer the admin's own account under the student's name.
 
 - **Recovery lives on the SIGN-IN screen, not in the account area** - which is behind the
   thing the student has lost. `forgotPassword` and `confirmPassword` in `auth.js`, two extra

@@ -28,6 +28,22 @@ const read = k => {
   try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; }
 };
 
+/* Forget one course entirely - the account screen's reset.
+ *
+ * IT LIVES HERE BECAUSE THE KEYS DO. A reset that cleared DynamoDB alone would leave a
+ * browser holding the record it had just deleted, and progress.js falls back to the local
+ * copy whenever a call fails - so the work would reappear the next time anything went
+ * offline, which reads to a student as the reset not having worked.
+ *
+ * The day counter is deliberately left alone. It is across every course and is a fact about
+ * the student's day rather than about this one, so clearing it would take away XP earned
+ * this morning on something they did not reset. It starts again at midnight either way. */
+export function forget(course) {
+  localStorage.removeItem(key(course));
+  localStorage.removeItem(placeKey(course));
+  localStorage.removeItem(codeKey(course));
+}
+
 /** What a course has earned so far, as `{ exerciseId: xp }`. */
 export function earned(course) {
   const raw = read(key(course));

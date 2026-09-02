@@ -19,6 +19,7 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { api, changePassword, signOutEverywhere, session } from '../auth.js';
+import * as store from '../progress-store.js';
 
 const props = defineProps({
   name: String,
@@ -28,7 +29,7 @@ const props = defineProps({
    *  any of them is called - the same reason the admin listing queries per user. */
   courses: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['close']);
+const emit = defineEmits(['close', 'reset']);
 
 /* Everything the platform holds about this person, in one call.
  *
@@ -75,6 +76,69 @@ const learning = computed(() => {
 });
 
 const num = n => Number(n || 0).toLocaleString();
+
+/* ---- the danger zone -------------------------------------------------------------
+ *
+ * TWO GATES, and they guard different mistakes. The first is "did you mean to do this at
+ * all", answered with numbers rather than adjectives - "47 solved exercises and 2,350 XP"
+ * is a different decision from "this cannot be undone". The second is "did you mean THIS
+ * course", and only it can catch the real failure here, which is not an accidental click
+ * but resetting the wrong course.
+ *
+ * The phrase is the COURSE TITLE, never the word DELETE. A generic token is typed by muscle
+ * memory and confirms only that a human is present; the title confirms which course. */
+const resetting = ref(null);      // the course being reset, once the first gate is passed
+const typed = ref('');
+const resetError = ref('');
+const resetBusy = ref(false);
+const resetDone = ref('');
+
+/* Only courses with something to lose. Resetting one that has nothing on it is a no-op
+ * dressed as a destructive act, and offering it is how a danger zone becomes a place people
+ * learn to click through. */
+const resettable = computed(() => learning.value.filter(c => c.solved > 0));
+
+function askReset(course) {
+  resetting.value = course;
+  typed.value = '';
+  resetError.value = '';
+  resetDone.value = '';
+}
+
+/* Case-insensitive and trimmed, because this is a confirmation and not a password: somebody
+ * who has typed the title of the course in front of them has confirmed which course they
+ * mean, whatever they did with the shift key. */
+const matches = computed(() =>
+  typed.value.trim().toLowerCase() === (resetting.value?.title || '').trim().toLowerCase());
+
+async function doReset() {
+  if (!matches.value) return;
+  const course = resetting.value;
+  resetBusy.value = true;
+  resetError.value = '';
+  try {
+    await api(`account/progress?course=${encodeURIComponent(course.id)}`, { method: 'DELETE' });
+    /* THE RESET IS TWO-SIDED. progress.js falls back to the local record whenever a call
+     * fails, so clearing the rows alone leaves a browser that re-asserts the progress that
+     * was just deleted the next time anything goes offline. */
+    store.forget(course.id);
+    /* Re-read rather than patched in place: the reset changes the total, the course's row
+     * and what is resettable at all, and three edits by hand is three chances for this
+     * screen to disagree with the rows it just changed. */
+    me.value = await api('account');
+    resetting.value = null;
+    resetDone.value = `${course.title} is back to nothing. Your enrolment is untouched.`;
+    /* The grid behind this screen is drawn from a tally App.vue took when the courses
+     * loaded, and nothing about closing the account screen recomputes it - so without this
+     * a student resets a course, presses Done, and sees the card still claiming the XP they
+     * just cleared. */
+    emit('reset');
+  } catch (e) {
+    resetError.value = e.message;
+  } finally {
+    resetBusy.value = false;
+  }
+}
 
 /* The name. Same shape as the password form below it: collapsed until asked for, because
  * this page is mostly things to read. */
@@ -363,9 +427,47 @@ const SECTIONS = [
            looking like a danger zone at all. -->
       <section class="block danger">
         <h3>Danger zone</h3>
-        <p class="blurb">Start a course again from nothing. Your enrolment stays; the record
-          of what you have done on it does not.</p>
-        <p class="soon">Not built yet.</p>
+        <p class="blurb">Start a course again from nothing. Your enrolment stays and so does
+          your class; the record of what you have done on the course does not.</p>
+
+        <p v-if="!me" class="soon">Loading…</p>
+
+        <!-- The second gate. Replaces the list rather than sitting under it, so there is
+             nothing else to press while it is open. -->
+        <div v-else-if="resetting" class="gate">
+          <p class="blurb">
+            This clears <strong>{{ num(resetting.solved) }}</strong>
+            solved {{ resetting.solved === 1 ? 'exercise' : 'exercises' }} and
+            <strong>{{ num(resetting.xp) }} XP</strong> on
+            <strong>{{ resetting.title }}</strong>, along with the answers you wrote. It
+            cannot be undone.
+          </p>
+          <label for="confirm-title">Type <strong>{{ resetting.title }}</strong> to confirm</label>
+          <input id="confirm-title" v-model="typed" autocomplete="off" autocapitalize="off"
+                 spellcheck="false">
+          <p v-if="resetError" class="err">{{ resetError }}</p>
+          <div class="acts">
+            <button class="btn danger" :disabled="!matches || resetBusy" @click="doReset">
+              {{ resetBusy ? 'Clearing…' : 'Reset this course' }}
+            </button>
+            <button class="btn ghost" :disabled="resetBusy" @click="resetting = null">Cancel</button>
+          </div>
+        </div>
+
+        <template v-else>
+          <ul v-if="resettable.length" class="courses">
+            <li v-for="c in resettable" :key="c.id">
+              <span class="cname">{{ c.title }}</span>
+              <span class="cnum">{{ num(c.solved) }} solved</span>
+              <span class="cnum">{{ num(c.xp) }} XP</span>
+              <button class="btn small danger" @click="askReset(c)">Reset…</button>
+            </li>
+          </ul>
+          <!-- A course with nothing on it is not offered: a no-op dressed as a destructive
+               act is how a danger zone becomes a place people learn to click through. -->
+          <p v-else class="hint">Nothing to reset — you have not solved anything yet.</p>
+          <p v-if="resetDone" class="ok">{{ resetDone }}</p>
+        </template>
       </section>
     </div>
   </div>
@@ -446,6 +548,16 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 /* The cohort's "(finished)" marker, matching the list's own aside rather than arriving as
    the browser's default italic. */
 .value em { font-style: normal; color: var(--ice-fg-muted); }
+
+.gate { margin-top: 16px; }
+.gate label { display: block; margin: 16px 0 6px; text-transform: none; letter-spacing: 0;
+              font-size: 13px; color: var(--ice-fg); }
+.gate input { max-width: 320px; margin-bottom: 0; }
+.gate .blurb strong { color: var(--ice-fg); }
+/* The list in the danger zone carries a button, which the Learning one does not - so the
+   numbers get less room here and must not wrap. */
+.danger .courses li { gap: 10px; }
+.danger .cnum { min-width: 64px; }
 .facts + .facts, .courses + .facts { margin-top: 18px; }
 .facts .err { margin: 8px 0 0; }
 hr { border: 0; border-top: 1px solid var(--ice-border); margin: 20px 0 16px; }

@@ -448,6 +448,15 @@ export class IcecoreStack extends Stack {
       methods: [HttpMethod.GET, HttpMethod.PUT],
       integration: new HttpLambdaIntegration('AccountIntegration', account),
     });
+    /* Its own route rather than a `?reset=` on the one above, because it is a DELETE and
+     * the resource being deleted is a course's progress rather than the account. One
+     * function still serves both - it tells them apart by path, exactly as the admin
+     * function tells users from cohorts. */
+    api.addRoutes({
+      path: '/api/account/progress',
+      methods: [HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('AccountProgressIntegration', account),
+    });
     api.addRoutes({
       path: '/api/admin/cohorts',
       methods: [HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
