@@ -268,7 +268,12 @@ const ranQuietly = computed(() =>
 .brief { overflow: auto; padding: 24px 28px; border-right: 1px solid var(--ice-border); }
 .brief header { display: flex; align-items: baseline; gap: 12px; }
 .brief h2 { margin: 0 0 4px; font-size: 19px; }
-.xp { margin-left: auto; font-family: var(--ice-font-mono); font-size: 11px; color: var(--ice-fg-muted); }
+/* The same badge the other three exercise types draw. This was muted grey 11px mono - a
+   different vocabulary for the same fact, and the one an entire course of Python exercises
+   would be read in. `margin-left: auto` stays: this header has no justification of its own,
+   unlike CodingExercise's. */
+.xp { margin-left: auto; color: var(--ice-primary-strong); font-size: 12px;
+      font-weight: 600; white-space: nowrap; }
 .instructions { margin-top: 20px; }
 .instructions h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
                    color: var(--ice-fg-muted); display: flex; gap: 8px; align-items: baseline; }

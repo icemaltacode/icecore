@@ -4,8 +4,27 @@
 
 const BASE = `${import.meta.env.BASE_URL}content/`;
 
+/* `no-cache` MEANS REVALIDATE, NOT "DO NOT CACHE" - the browser keeps its copy and asks
+ * whether it is still good, so the usual answer is a 304 with no body.
+ *
+ * IT IS HERE RATHER THAN LEFT TO THE SERVER because the server cannot be relied on for
+ * this. These objects shipped for a long time with no Cache-Control at all, which makes a
+ * browser invent its own freshness - roughly a tenth of the file's age - and an already
+ * loaded tab then goes on using a manifest that has been replaced. A CloudFront
+ * invalidation does not help: it clears the edge, not a reader. Nor does a hard reload,
+ * reliably, because that forces revalidation of the document and the subresources the
+ * parser finds, and this is a `fetch()` made later by script.
+ *
+ * That failure is invisible in exactly the wrong way. index.json carries every exercise's
+ * XP, expected results and reference solution, so a stale one is not a missing course - it
+ * is a course that renders perfectly and is quietly out of date. It cost an afternoon
+ * once: exercises awarded no XP and showed no amount, with correct data in the bucket, a
+ * green pipeline and a cleared edge.
+ *
+ * `auth.json` already does this, for the same reason and with the stronger `no-store`.
+ * Content is bigger and revalidates well, so it gets the cheaper one. */
 async function json(url) {
-  const r = await fetch(url);
+  const r = await fetch(url, { cache: 'no-cache' });
   if (!r.ok) throw new Error(`${url} - HTTP ${r.status}`);
   return r.json();
 }

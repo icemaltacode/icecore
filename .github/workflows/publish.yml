@@ -334,10 +334,31 @@ jobs:
           # only this repo's course, so --delete against the whole content prefix removes
           # every other course on the site. --delete is still right *within* a course - an
           # exercise that has been removed should stop being served.
+          # AN INVALIDATION CLEARS THE EDGE, NOT ANYBODY'S BROWSER, and until this these
+          # objects carried no Cache-Control at all - so a browser applied heuristic
+          # freshness (roughly a tenth of the file's age) and an open tab went on using the
+          # manifest it already had for hours after a publish. That is the general shape of
+          # "I published a fix and cannot see it": the pipeline is green, the bucket is
+          # right, the edge is clear, and the reader is the only stale copy left.
+          #
+          # index.json is the one file that must never be stale - it is the manifest naming
+          # every exercise, its XP and its expected results, and everything else is reached
+          # THROUGH it. `no-cache` is not "do not cache": it means revalidate before use, so
+          # with an ETag the usual answer is a 304 with no body. One conditional request to
+          # be certain the course is current.
+          #
+          # Everything else - figures, embedded apps, datasets - is large, changes rarely
+          # and is named by a path that changes when it does, so an hour is generous and
+          # costs nothing.
           for dir in dist/content/*/; do
             course=$(basename "$dir")
             echo "publishing content/$course"
-            aws s3 sync "$dir" "s3://$BUCKET/content/$course/" --delete
+            aws s3 sync "$dir" "s3://$BUCKET/content/$course/" --delete \
+              --cache-control 'public, max-age=3600'
+            aws s3 cp "s3://$BUCKET/content/$course/index.json" \
+                      "s3://$BUCKET/content/$course/index.json" \
+              --metadata-directive REPLACE --content-type application/json \
+              --cache-control 'no-cache' >/dev/null
             paths+=("/content/$course/*")
           done
 
@@ -357,7 +378,10 @@ jobs:
           done
           jq -s '.' "$cards"/*.json > courses.json
           echo "catalogue: $(jq -r 'map(.id) | join(", ")' courses.json)"
-          aws s3 cp courses.json "s3://$BUCKET/content/courses.json"
+          # `no-cache` for the reason index.json has it: this is the catalogue the grid is
+          # drawn from, so a stale copy is a course that has been published and cannot be
+          # seen - and the reader is the only stale copy an invalidation does not reach.
+          aws s3 cp courses.json "s3://$BUCKET/content/courses.json" --cache-control 'no-cache'
           paths+=('/content/courses.json')
 
           manifest=content/slides/.built.json
