@@ -8,12 +8,11 @@ This plan gives it three sections, and argues that the second of them — a cour
 page — is where nearly all the remaining value is, because it is the only one that can tell
 a tutor something they cannot already see by asking the student.
 
-Status: **steps 1 to 3 are built.** 1 and 2 are deployed - cohorts end to end, and the
-hint Lambda writing the spend ledger and the per-exercise counter, which nothing reads yet
-and that is the ordering rather than an oversight. Step 3, the route and the shell, is
-built and not yet deployed. What is done is listed under [Already
-done](#already-done); everything else is proposed. The backlog line this replaces is
-"track student progress in admin"; remote control is still on it, pointed back here.
+Status: **steps 1 to 4 are built and deployed.** Cohorts, the spend ledger, the route and
+shell, and the person page. Nothing reads the ledger yet, which is the ordering rather than
+an oversight. What is done is listed under [Already done](#already-done); everything else
+is proposed. The backlog line this replaces is "track student progress in admin"; remote
+control is still on it, pointed back here.
 
 ## Decisions taken
 
@@ -394,8 +393,7 @@ without them is a day of students untagged and hints uncounted.
 1. ~~**Cohorts**~~ — done, see below.
 2. ~~**The spend ledger and the per-exercise hint counter.**~~ — done, see below.
 3. ~~**The route and the shell.**~~ — done, see below.
-4. **The person page, with their submitted code.** Highest value per line in the plan, and
-   no new data at all.
+4. ~~**The person page, with their submitted code.**~~ — done, see below.
 5. **The course page: roster, position, completion**, pivotable by cohort. Gives `byCourse`
    its first reader — three of its four partitions at once.
 6. **Where the class stalls**, from solves, bookmark bunching and hint counts.
@@ -447,6 +445,29 @@ a place you can *be*, which a dialog cannot hold and a URL cannot name.
 - **`#/admin/people/<sub>` is real today**, opening that person's dialog - so step 4 changes
   what is drawn rather than how it is addressed. Watched rather than read once, because on a
   deep link the route arrives before the listing does.
+
+**Step 4, the person page.** `PersonPage.vue`, and `getPerson` behind
+`GET /api/admin/users?sub=` and `?sub=&course=` - three GETs on one path told apart by what
+they carry, the idiom the progress function already uses, so this needed no new route.
+
+- **No new writes at all.** The student's own source has been on every `PROG#` row since
+  progress was recorded; the only thing missing was a reader other than that student.
+- **Summarised across every course they have TOUCHED, not every course they are on.**
+  Somebody unenrolled keeps their progress, and a page listing current enrolments would
+  report a student who had done nothing.
+- **The `BETWEEN` range trick was deliberately not reused.** `LAST#` and `PROG#` are
+  adjacent too and it would work. It buys one query per person across the whole pool on the
+  slowest screen in the app; this is one person on demand, so the fragility would be paid
+  for nothing. Two `begins_with` queries, and a comment saying why.
+- **Titles come from the course's own `index.json`**, fetched once per course opened, so an
+  exercise is called here what it is called in the player. A withdrawn course still draws
+  its list, without them.
+- **Code is capped per course and says `clipped`.** A row holds up to 60KB and a course
+  hundreds of rows; half a picture returned silently would read as exercises solved with
+  nothing saved beside them, which is a real state and must stay distinguishable.
+- **The dialog kept adding and editing**, opened from the page rather than by the URL - so
+  it is state beside the route rather than part of it, and Back from a dialog does not mean
+  something different from Back anywhere else.
 
 **And two corrections out of this plan, applied while writing it:**
 

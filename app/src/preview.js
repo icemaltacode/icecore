@@ -189,6 +189,43 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
 
   if (route === 'admin/users') {
     const users = await seed();
+    /* One person, and one of their courses. Invented rather than read: nothing local holds
+     * another student's progress, and the screen is about the shape of an answer - a
+     * course with work in it, a course barely started, and an exercise solved with nothing
+     * saved beside it, because that is what an exercise finished before any of this
+     * existed looks like. The code says out loud that it is a stand-in, the way the tutor
+     * reply does. */
+    if (method === 'GET' && q.get('sub')) {
+      const who = find(q.get('sub'));
+      if (!who) throw new Error('no such user');
+      const ids = (await loadManifest()).map(c => c.id);
+      const mine = who.courses.length ? who.courses : ids.slice(0, 1);
+      const course = q.get('course');
+      if (!course) {
+        return {
+          sub: who.sub, email: who.email, name: who.name,
+          courses: mine.map((id, i) => ({
+            course: id, solved: 12 - i * 7, xp: 240 - i * 140,
+            first: '2026-08-04T09:12:00Z', last: i ? '2026-08-19T16:02:00Z' : '2026-09-01T11:40:00Z',
+            place: { exercise: '2.3.1', at: '2026-09-01T11:40:00Z' },
+          })),
+        };
+      }
+      const solved = [1, 2, 3, 4, 5].map(n => ({
+        exercise: String(n),
+        xp: 20,
+        at: `2026-08-0${n}T10:00:00Z`,
+        code: n === 3 ? undefined : {
+          0: `-- Preview stub: not a real submission.\nSELECT title, release_year\nFROM films\nWHERE release_year > 2000;`,
+        },
+      }));
+      return {
+        sub: who.sub, email: who.email, name: who.name, course,
+        solved, xp: solved.reduce((n, e) => n + e.xp, 0),
+        place: { exercise: '3', at: '2026-08-03T10:00:00Z' },
+        clipped: false,
+      };
+    }
     if (method === 'GET')
       return { users: users.map(u => ({ ...u })), cohorts: classes.map(c => ({ ...c })), truncated: false };
 

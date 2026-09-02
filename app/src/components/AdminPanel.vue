@@ -23,11 +23,12 @@
  * thousands, and the API says `truncated` when it has stopped rather than letting a partial
  * list read as the whole pool.
  */
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { api } from '../auth.js';
 import UserDialog from './UserDialog.vue';
 import UserImport from './UserImport.vue';
 import CohortList from './CohortList.vue';
+import PersonPage from './PersonPage.vue';
 import Icon from './Icon.vue';
 import { route, go, leave } from '../route.js';
 
@@ -78,32 +79,25 @@ async function refresh() {
 }
 onMounted(refresh);
 
-/* `#/admin/people/<sub>` opens that person. It is the same route the person page will
- * answer when there is one - so the URL is real today rather than reserved, and step 4
- * changes what is drawn rather than how it is addressed.
+/* `#/admin/people/<sub>` is one person, and the page is what it draws. The listing arrives
+ * after the route does on a deep link, so `viewing` is the sub and the row is looked up
+ * whenever it turns up - the page draws what it has and fills in the rest.
  *
- * Watched rather than read once, because the listing arrives after the route does: a
- * deep link lands here with `users` still empty. */
-watch([() => route.value?.id, users], ([sub]) => {
-  if (section.value !== 'people') return;
-  if (!sub) { if (editing.value) editing.value = undefined; return; }
-  const who = users.value.find(u => u.sub === sub);
-  if (who) editing.value = who;
-});
-
-/* Closing the dialog is a step back out of that person, not a state change beside the URL
- * - otherwise Back would re-open it. */
-const closeEditing = () => {
-  if (route.value?.id) go('people');
-  else editing.value = undefined;
-};
+ * The dialog kept its job: adding somebody, and editing one. It is opened from the page
+ * rather than by the URL, so it is state beside the route rather than part of it - Back
+ * from a dialog would otherwise mean something different from Back anywhere else. */
+const viewing = computed(() => (section.value === 'people' ? route.value?.id || '' : ''));
+const person = computed(() => users.value.find(u => u.sub === viewing.value));
 
 async function done(message) {
-  if (route.value?.id) go('people');
   editing.value = undefined;
   importing.value = false;
   notice.value = message || '';
   await refresh();
+  /* Deleting somebody is the one edit that makes the page you are on meaningless. Rather
+   * than the dialog reporting which action it was, this asks the only question that
+   * matters afterwards: is that person still there? */
+  if (viewing.value && !users.value.some(u => u.sub === viewing.value)) go('people');
 }
 
 const cohortTitles = computed(() => Object.fromEntries(cohorts.value.map(c => [c.id, c.title])));
@@ -150,7 +144,7 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
         <button class="btn ghost done" @click="emit('close')">Done</button>
       </nav>
 
-      <header v-if="section === 'people'">
+      <header v-if="section === 'people' && !viewing">
         <div>
           <h2>People</h2>
           <p class="muted">Everyone who can sign in. Adding somebody creates their account
@@ -165,7 +159,16 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
         <div><h2>Cohorts</h2></div>
       </header>
 
-      <CohortList v-if="section === 'cohorts'" :cohorts="cohorts" :users="users"
+      <!-- Above the sections rather than inside the list: editing somebody from their own
+           page has to be able to say that it worked, and the list is not on screen. -->
+      <p v-if="error" class="err">{{ error }}</p>
+      <p v-if="notice" class="ok">{{ notice }}</p>
+
+      <PersonPage v-if="viewing" :sub="viewing" :user="person"
+                  :courses="courses" :cohorts="cohorts"
+                  @edit="editing = person" @back="go('people')" />
+
+      <CohortList v-else-if="section === 'cohorts'" :cohorts="cohorts" :users="users"
                   @done="m => { notice = m || ''; refresh(); }" />
 
       <template v-else>
@@ -192,8 +195,6 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
           <span class="count">{{ shown.length }}<template v-if="shown.length !== users.length"> of {{ users.length }}</template></span>
         </div>
 
-        <p v-if="error" class="err">{{ error }}</p>
-        <p v-if="notice" class="ok">{{ notice }}</p>
         <p v-if="truncated" class="err">There are more accounts than this screen lists. Search
           narrows what is drawn, not what was fetched - so somebody may be missing from it.</p>
 
@@ -246,7 +247,7 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
     <UserDialog
       v-if="editing !== undefined"
       :user="editing" :courses="courses" :cohorts="cohorts"
-      @done="done" @close="closeEditing" />
+      @done="done" @close="editing = undefined" />
 
     <!-- Closed rather than finished - escape, or the scrim - still refreshes: an import
          that was interrupted has already invited everyone it got to. -->

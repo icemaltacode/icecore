@@ -1,6 +1,8 @@
 /* User management.
  *
  *   GET    /api/admin/users            everyone in the pool, with their courses and cohorts
+ *   GET    /api/admin/users?sub=        one person, summarised across every course
+ *   GET    /api/admin/users?sub=&course= one course of theirs, with what they wrote
  *   POST   /api/admin/users            { email, name?, courses?, cohorts?, admin?, resend? }
  *   PUT    /api/admin/users            { sub, name?, courses?, cohorts?, admin?, enabled? }
  *   DELETE /api/admin/users?sub=       delete the account and everything it owns
@@ -393,6 +395,10 @@ export async function handler(event) {
       if (method === 'DELETE') return await deleteCohort(q.id);
       return json(405, { error: `${method} not allowed` });
     }
+    /* Three GETs on one path, told apart by what they carry rather than by a mode flag -
+     * the same idiom the progress function uses, where one call names a course and the
+     * other an instant. Everyone, one person, or one person on one course. */
+    if (method === 'GET' && q.sub) return await getPerson(q.sub, q.course);
     if (method === 'GET') return await getUsers();
     if (method === 'POST') return await postUser(JSON.parse(event.body || '{}'));
     if (method === 'PUT') return await putUser(JSON.parse(event.body || '{}'), me);
@@ -520,6 +526,110 @@ async function putUser({ sub, name, courses, cohorts, admin, enabled }, me) {
   }
 
   return json(200, { ok: true, sub, created: made });
+}
+
+/* ---- one person -------------------------------------------------------------------
+ *
+ * What a tutor asks when somebody says they are stuck, and the answer is already in the
+ * table: `progress/index.mjs` writes the student's own source onto every PROG# row, keyed
+ * by step, and until now nothing but that student ever read it back.
+ *
+ * TWO QUERIES RATHER THAN THE ONE RANGE the listing uses. `LAST#` and `PROG#` are adjacent
+ * too, so the same trick would work - and it should not be used here. That trick buys one
+ * query per person across the whole pool, on the slowest screen in the app; this is one
+ * person, on demand, and the range's fragility is a real cost paid for nothing. Reach for
+ * it where the fan-out is, not everywhere it would function.
+ */
+
+/** Every solve and every bookmark this person has, in two queries. */
+async function history(sub) {
+  const pk = `USER#${sub}`;
+  const [progress, places] = await Promise.all([
+    queryAll({
+      TableName: TABLE,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+      ExpressionAttributeValues: { ':pk': pk, ':sk': 'PROG#' },
+    }),
+    queryAll({
+      TableName: TABLE,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+      ExpressionAttributeValues: { ':pk': pk, ':sk': 'LAST#' },
+      ProjectionExpression: '#c, exercise, #a',
+      ExpressionAttributeNames: { '#c': 'course', '#a': 'at' },
+    }),
+  ]);
+  return { progress, places };
+}
+
+/* The exercise id out of a sort key. `PROG#<course>#<exercise>`, and an exercise id may
+ * itself contain a `#` - a slides row's id is made up on the client - so the course is
+ * taken off the front rather than the id split off the back. */
+const exerciseOf = (sk, course) => sk.slice(`PROG#${course}#`.length);
+const courseOf = sk => sk.slice('PROG#'.length).split('#')[0];
+
+/* How much of the student's own code to send back at once.
+ *
+ * A course's rows are the whole answer to "what did they write", and returning them one
+ * exercise at a time would be a request per click on a screen made of clicks. But a row's
+ * code is capped at 60KB and a course can hold hundreds, so the honest version has a
+ * budget and says when it stopped rather than quietly returning half a picture. */
+const CODE_BUDGET = 400_000;
+
+async function getPerson(sub, course) {
+  const [who, { progress, places }] = await Promise.all([
+    lookup(sub).catch(() => null),
+    history(sub),
+  ]);
+  if (!who) return json(404, { error: 'no such user' });
+
+  const place = Object.fromEntries(places.map(p => [p.course, { exercise: p.exercise, at: p.at }]));
+
+  /* Summarised across every course they have touched - which is not the same as every
+   * course they are ON. Somebody unenrolled keeps their progress, and a page that showed
+   * only current enrolments would report a student who had done nothing. */
+  if (!course) {
+    const by = {};
+    for (const row of progress) {
+      const id = courseOf(row.sk);
+      const c = by[id] || (by[id] = { course: id, solved: 0, xp: 0, first: null, last: null });
+      c.solved++;
+      c.xp += Number(row.xp) || 0;
+      if (row.at && (!c.first || row.at < c.first)) c.first = row.at;
+      if (row.at && (!c.last || row.at > c.last)) c.last = row.at;
+    }
+    for (const [id, p] of Object.entries(place))
+      (by[id] || (by[id] = { course: id, solved: 0, xp: 0, first: null, last: null })).place = p;
+    return json(200, {
+      sub, email: who.email, name: who.name,
+      courses: Object.values(by).sort((a, b) => (b.last || '').localeCompare(a.last || '')),
+    });
+  }
+
+  const rows = progress.filter(r => courseOf(r.sk) === course);
+  let spent = 0;
+  let clipped = false;
+  const solved = rows.map(r => {
+    const entry = {
+      exercise: exerciseOf(r.sk, course),
+      xp: Number(r.xp) || 0,
+      at: r.at || null,
+    };
+    if (r.code) {
+      const size = JSON.stringify(r.code).length;
+      if (spent + size <= CODE_BUDGET) { entry.code = r.code; spent += size; }
+      else clipped = true;
+    }
+    return entry;
+  });
+  return json(200, {
+    sub, email: who.email, name: who.name, course,
+    solved: solved.sort((a, b) => (a.at || '').localeCompare(b.at || '')),
+    xp: solved.reduce((n, e) => n + e.xp, 0),
+    place: place[course] || null,
+    // Said rather than silently dropped: a missing answer must not read as an exercise
+    // solved without one.
+    clipped,
+  });
 }
 
 /* ---- cohorts -----------------------------------------------------------------------
