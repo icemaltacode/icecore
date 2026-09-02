@@ -9,10 +9,14 @@ import Wordmark from './Wordmark.vue';
  */
 import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 import { theme, resolved, CHOICES } from '../theme.js';
+import { avatarSrc } from '../avatar.js';
 
 const props = defineProps({
   name: String,
   email: String,
+  /** The avatar's key in the content bucket, or empty. Served behind the same signed cookie
+   *  as everything else under this origin. */
+  avatar: String,
   admin: Boolean,
   authed: Boolean,
   /** XP earned today, across every course. Zero is a real answer and is shown as one. */
@@ -33,6 +37,17 @@ defineEmits(['home', 'admin', 'account', 'signout']);
  * puts a full email address in the corner of every page. Kept because a token predating that
  * fix, or any future writer that forgets, should degrade quietly rather than blankly. */
 const label = computed(() => props.name || props.email?.split('@')[0] || '');
+
+/* The picture, and the initials underneath it.
+ *
+ * `broken` is not belt and braces. The key is content-addressed and the object is immutable,
+ * so the URL is right or the object is gone - and gone is a real state: a delete that raced a
+ * page load, or a row pointing at an object that was removed. Falling back to the initials
+ * makes that look intentional rather than like a broken-image glyph in the corner of every
+ * page. Reset when the key changes, or an upload after a failure would never draw. */
+const broken = ref(false);
+const src = computed(() => (broken.value ? '' : avatarSrc(props.avatar)));
+watch(() => props.avatar, () => { broken.value = false; });
 const initials = computed(() => {
   const words = label.value.split(/[\s._-]+/).filter(Boolean);
   return (words.slice(0, 2).map(w => w[0]).join('') || '?').toUpperCase();
@@ -165,7 +180,8 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 
       <div v-if="label" ref="mineWrap" class="who" @keydown.esc="mine = false">
         <button class="chip" :aria-expanded="mine" @click="openMine">
-          <span class="avatar">{{ initials }}</span>
+          <img v-if="src" class="avatar" :src="src" :alt="label" @error="broken = true">
+          <span v-else class="avatar">{{ initials }}</span>
           <span class="name">{{ label }}</span>
         </button>
         <ul v-if="mine" class="menu">
@@ -256,6 +272,11 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
         font: inherit; background: none; border: 0; padding: 4px 6px; border-radius: 999px;
         color: var(--ice-fg); cursor: pointer; }
 .chip:hover { background: var(--ice-bg); }
+/* One rule for both, so a picture and a pair of initials are the same circle in the same
+   place - swapping between them must not move the name beside it. `object-fit: cover` is
+   belt and braces: the stored image is already square, and a hand-placed object would
+   otherwise stretch. */
+img.avatar { object-fit: cover; background: var(--ice-raise); }
 .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%;
           display: inline-flex; align-items: center; justify-content: center;
           background: var(--ice-primary-soft); color: var(--ice-primary-strong);

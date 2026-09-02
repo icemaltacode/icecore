@@ -411,8 +411,17 @@ export class IcecoreStack extends Stack {
        * placeholder rather than inventing a legal entity. */
       ORG_NAME: this.node.tryGetContext('orgName') || '',
       PRIVACY_CONTACT: this.node.tryGetContext('privacyContact') || '',
+      SITE_BUCKET: site.bucketName,
     });
     table.grantReadWriteData(account);
+    /* Avatars, and NOTHING ELSE IN THE BUCKET. `grantReadWrite(account)` would hand this
+     * function the whole site - three courses, 79 decks and the player itself - to store a
+     * 15KB picture. Scoped to the one prefix it owns, and to the two verbs it uses: a
+     * replacement is a put of the new key and a delete of the old. */
+    account.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['s3:PutObject', 's3:DeleteObject'],
+      resources: [site.arnForObjects('avatars/*')],
+    }));
     account.addToRolePolicy(new iam.PolicyStatement({
       // Two, and no more. It reads one user to resolve a sub to a username, and writes the
       // one attribute a person may change about themselves.
@@ -459,6 +468,11 @@ export class IcecoreStack extends Stack {
      * the resource being deleted is a course's progress rather than the account. One
      * function still serves both - it tells them apart by path, exactly as the admin
      * function tells users from cohorts. */
+    api.addRoutes({
+      path: '/api/account/avatar',
+      methods: [HttpMethod.POST, HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('AccountAvatarIntegration', account),
+    });
     api.addRoutes({
       path: '/api/account/export',
       methods: [HttpMethod.GET],
@@ -521,6 +535,12 @@ export class IcecoreStack extends Stack {
       additionalBehaviors: {
         '/content/*': privateBehaviour,
         '/slides/*': privateBehaviour,
+        /* BEHIND THE KEY GROUP, unlike `brand/`. That one is public because the recipient of
+         * an invitation is not signed in and fetches it straight from a mail client; nobody
+         * who is not signed in has any business fetching a student's face. The session
+         * cookie's policy is already `<origin>/*`, so it covers this prefix with no change
+         * to the session function. */
+        '/avatars/*': privateBehaviour,
         '/api/*': {
           origin: new origins.HttpOrigin(`${api.apiId}.execute-api.${this.region}.amazonaws.com`),
           viewerProtocolPolicy: cf.ViewerProtocolPolicy.HTTPS_ONLY,

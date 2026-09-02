@@ -438,6 +438,7 @@ watch(currentId, id => {
   <div v-else class="app" :class="{ watching: !!watched }">
     <TopBar
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
+      :avatar="session.avatar"
       :xp-today="xpToday"
       :watching="!!watched"
       @home="backToCourses" @admin="goAdmin()" @account="goAccount()" @signout="signOut" />

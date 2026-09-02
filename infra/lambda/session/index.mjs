@@ -19,7 +19,7 @@
 import { getSignedCookies } from '@aws-sdk/cloudfront-signer';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
 
 const SESSION_HOURS = 12;
 
@@ -42,6 +42,22 @@ async function enrolments(sub) {
     ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'ENROL#' },
   }));
   return (r.Items || []).map(i => i.sk.slice('ENROL#'.length));
+}
+
+/* The caller's avatar key, or null.
+ *
+ * IT RIDES WITH THE SESSION because the top bar needs it on the FIRST paint of every page,
+ * and everything else about an account is fetched when the account screen opens. A boot-time
+ * round trip for a picture would be a round trip on the way into a course; this call already
+ * happens, and the extra read runs beside the enrolment query rather than after it.
+ *
+ * Its own row rather than a prefix, so it is one GetItem - and `AVATAR` sorts before
+ * `COHORT#`, which keeps it outside the range the admin listing reads as one query. */
+async function avatar(sub) {
+  const r = await ddb.send(new GetCommand({
+    TableName: process.env.TABLE, Key: { pk: `USER#${sub}`, sk: 'AVATAR' },
+  }));
+  return r.Item?.key || null;
 }
 
 // API Gateway hands multi-valued claims through as an array or as a bracketed string,
@@ -102,7 +118,11 @@ export async function handler(event) {
     headers: { 'content-type': 'application/json' },
     cookies: Object.entries(signed).map(([k, v]) => `${k}=${v}; ${attrs}`),
     body: JSON.stringify({
-      courses: await enrolments(sub),
+      // Together rather than in sequence: two independent reads of one partition.
+      ...Object.fromEntries(await Promise.all([
+        enrolments(sub).then(v => ['courses', v]),
+        avatar(sub).then(v => ['avatar', v]),
+      ])),
       admin: isAdmin(claims),
       expires: expires.toISOString(),
     }),

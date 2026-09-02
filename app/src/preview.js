@@ -156,6 +156,9 @@ const ABOUT = {
 };
 
 const NAME_KEY = 'ice-preview-name';
+/* The uploaded avatar, as a data: URL. Session-scoped like the name, and for the same
+ * reason - preview state should not outlive the tab. */
+const AVATAR_KEY = 'ice-preview-avatar';
 const PREVIEW_NAME = () => sessionStorage.getItem(NAME_KEY) || 'Ada Lovelace';
 
 export async function previewApi(path, { method = 'GET', body } = {}) {
@@ -173,6 +176,11 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
       courses: role === 'admin' ? [] : courses,
       admin: role === 'admin',
       expires: Date.now() + 12 * 3600 * 1000,
+      /* Whatever the last upload left, so the top bar shows a picture on reload exactly as
+       * it does on a deployment. A data: URL rather than a key: there is no bucket here, and
+       * the top bar simply prefixes BASE_URL onto whatever this is - which a data: URL
+       * survives, because it is absolute. */
+      avatar: sessionStorage.getItem(AVATAR_KEY) || '',
     };
   }
 
@@ -232,6 +240,19 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
     };
   }
 
+  /* The avatar. The real one stores bytes and hands back a key; this stores the same bytes
+   * as a data: URL, so everything downstream - the chip, the fallback, the delete - is
+   * exercised on the real code path. */
+  if (route === 'account/avatar') {
+    if (method === 'DELETE') { sessionStorage.removeItem(AVATAR_KEY); return { ok: true, avatar: null }; }
+    const url = `data:${body?.type || 'image/webp'};base64,${body?.data || ''}`;
+    /* sessionStorage is a few megabytes and a normalised avatar is ~15KB, so this only
+     * fails if something upstream stopped normalising - which is worth failing loudly for
+     * rather than swallowing. */
+    sessionStorage.setItem(AVATAR_KEY, url);
+    return { ok: true, avatar: url };
+  }
+
   if (route === 'account') {
     const courses = (await loadManifest()).map(c => c.id);
     const mine = role === 'admin' ? [] : courses;
@@ -271,6 +292,7 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
       /* Not zero. Zero is the state where nothing has been spent, which is the one state
        * that shows none of the wording this section exists to get right. */
       hints: { used: 6, limit: 40, left: 34 },
+      avatar: sessionStorage.getItem(AVATAR_KEY) || null,
       about: ABOUT,
     };
   }

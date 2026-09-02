@@ -38,7 +38,7 @@ let token = null;    // the current id token, for calls to /api/*
  * Reactive because components read it through computed(); as a plain object the admin
  * flag was read once as false before sign-in and never looked at again.
  */
-export const session = reactive({ courses: null, admin: false, expires: null, name: '', email: '' });
+export const session = reactive({ courses: null, admin: false, expires: null, name: '', email: '', avatar: '' });
 
 /**
  * The display name and email out of the id token.
@@ -265,7 +265,7 @@ export function signOut() {
   pool?.getCurrentUser()?.signOut();
   token = null;
   session.courses = null; session.admin = false; session.expires = null;
-  session.name = ''; session.email = '';
+  session.name = ''; session.email = ''; session.avatar = '';
   location.reload();   // drops in-memory state and the stale cookies with it
 }
 

@@ -20,6 +20,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { api, changePassword, signOutEverywhere, session } from '../auth.js';
 import * as store from '../progress-store.js';
+import { normalise, avatarSrc } from '../avatar.js';
 
 const props = defineProps({
   name: String,
@@ -76,6 +77,53 @@ const learning = computed(() => {
 });
 
 const num = n => Number(n || 0).toLocaleString();
+
+/* ---- the picture -------------------------------------------------------------------
+ *
+ * The file never reaches the network. `normalise` decodes it, crops it square and re-encodes
+ * it, so what is sent is ~15KB of pixels the browser drew rather than whatever came off a
+ * phone - see avatar.js for why that is a security property and not only a size one.
+ */
+const picking = ref(null);      // the hidden <input type=file>
+const avatarBusy = ref(false);
+const avatarError = ref('');
+
+/* Through avatar.js, which the top bar also uses - the two renderers of one key. */
+const portrait = computed(() => avatarSrc(me.value?.avatar));
+
+async function pickAvatar(event) {
+  const file = event.target.files?.[0];
+  // Cleared straight away, or choosing the SAME file twice in a row fires no change event
+  // and the second attempt looks like a dead button.
+  event.target.value = '';
+  if (!file) return;
+  avatarBusy.value = true;
+  avatarError.value = '';
+  try {
+    const { data, type } = await normalise(file);
+    const r = await api('account/avatar', { method: 'POST', body: { data, type } });
+    me.value.avatar = r.avatar;
+    session.avatar = r.avatar;   // the top bar, for the reason the rename writes session.name
+  } catch (e) {
+    avatarError.value = e.message;
+  } finally {
+    avatarBusy.value = false;
+  }
+}
+
+async function removeAvatar() {
+  avatarBusy.value = true;
+  avatarError.value = '';
+  try {
+    await api('account/avatar', { method: 'DELETE' });
+    me.value.avatar = null;
+    session.avatar = '';
+  } catch (e) {
+    avatarError.value = e.message;
+  } finally {
+    avatarBusy.value = false;
+  }
+}
 
 /* ---- the access request ------------------------------------------------------------
  *
@@ -282,7 +330,7 @@ async function everywhere() {
  * they arrive in. */
 const SECTIONS = [
   { id: 'you', title: 'You',
-    blurb: 'What you are called here, and the address you sign in with.' },
+    blurb: 'Your picture, what you are called here, and the address you sign in with.' },
   { id: 'security', title: 'Security',
     blurb: 'Change your password, or sign out everywhere you are signed in.' },
   { id: 'learning', title: 'Learning',
@@ -296,6 +344,11 @@ const SECTIONS = [
 <template>
   <div class="account">
     <div class="card">
+      <!-- OUTSIDE THE SECTION LOOP, and that is the whole reason it is up here. A `ref`
+           inside a v-for collects into an ARRAY of elements rather than binding one, so
+           `picking.click()` was `[input].click()` - a TypeError on the button that opens
+           the file dialog. It is hidden, so where it sits in the DOM does not matter. -->
+      <input ref="picking" type="file" accept="image/*" hidden @change="pickAvatar">
       <header>
         <div>
           <h2>Your account</h2>
@@ -312,6 +365,27 @@ const SECTIONS = [
         <p class="blurb">{{ s.blurb }}</p>
 
         <template v-if="s.id === 'you'">
+          <div class="portrait">
+            <img v-if="portrait" class="big" :src="portrait" alt="">
+            <!-- The same fallback the top bar uses, at the size this page shows. Initials
+                 are the only fallback: no generated identicon, which would be a second thing
+                 to design and to keep looking deliberate. -->
+            <span v-else class="big initials">{{ (me?.name || name || '?').trim()[0]?.toUpperCase() }}</span>
+            <div class="portrait-acts">
+              <button class="btn" :disabled="avatarBusy || !me" @click="picking?.click()">
+                {{ avatarBusy ? 'Working…' : (me?.avatar ? 'Change picture' : 'Add a picture') }}
+              </button>
+              <button v-if="me?.avatar" class="btn ghost" :disabled="avatarBusy"
+                      @click="removeAvatar">Remove</button>
+              <!-- Says what happens to the file, because it is not what anyone assumes: it
+                   is cropped and re-encoded here, and the original never leaves the machine.
+                   That is also what strips the location out of a phone photo. -->
+              <p class="hint">Cropped square and shrunk in your browser — the original file
+                is never uploaded, so nothing hidden in it is either.</p>
+            </div>
+          </div>
+          <p v-if="avatarError" class="err">{{ avatarError }}</p>
+
           <dl class="facts">
             <dt>Name</dt>
             <dd>
@@ -659,6 +733,17 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 .statement dd { margin: 6px 0 0; font-size: 13px; line-height: 1.65; max-width: 68ch; }
 .statement ul { margin: 0; padding-left: 18px; }
 .statement li { margin: 3px 0; }
+
+.portrait { display: flex; align-items: flex-start; gap: 16px; margin: 18px 0 4px; }
+/* Width and height set outright rather than left to content, for the reason the top bar's
+   26px circle is: padding sizes a box to its text, and one initial then comes out an oval. */
+.big { flex: none; width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
+       background: var(--ice-primary-soft); }
+.initials { display: inline-flex; align-items: center; justify-content: center;
+            color: var(--ice-primary-strong); font-size: 26px; font-weight: 600;
+            line-height: 1; }
+.portrait-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.portrait-acts .hint { flex-basis: 100%; margin: 0; max-width: 46ch; }
 
 .gate { margin-top: 16px; }
 .gate label { display: block; margin: 16px 0 6px; text-transform: none; letter-spacing: 0;

@@ -4,6 +4,8 @@
  *   PUT    /api/account            { name }
  *   DELETE /api/account/progress?course=   start that course again from nothing
  *   GET    /api/account/export     a complete Article 15 response
+ *   POST   /api/account/avatar    { data, type }   replace the picture
+ *   DELETE /api/account/avatar    go back to initials
  *
  * THE MIRROR OF THE ADMIN FUNCTION, AND ITS OPPOSITE. That one answers questions about
  * anybody and is reachable only by admins; this one answers questions about exactly one
@@ -24,12 +26,16 @@
 import {
   CognitoIdentityProviderClient, ListUsersCommand, AdminUpdateUserAttributesCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { createHash } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient, QueryCommand, PutCommand, GetCommand, DeleteCommand, BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
 
 const cognito = new CognitoIdentityProviderClient({});
+const s3 = new S3Client({});
+const BUCKET = process.env.SITE_BUCKET;
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE;
 const POOL = process.env.USER_POOL_ID;
@@ -255,13 +261,14 @@ async function hints(sub) {
 async function get(sub, claims) {
   const who = await lookup(sub);
   const on = await belongings(sub);
-  const [cohorts, earned, hint] = await Promise.all([
-    titles(on.cohorts), progress(sub), hints(sub),
+  const [cohorts, earned, hint, avatar] = await Promise.all([
+    titles(on.cohorts), progress(sub), hints(sub), currentAvatar(sub),
   ]);
   return json(200, {
     sub,
     name: who.name,
     email: who.email,
+    avatar,
     /* From the token rather than from a second Cognito call: the app already trusts this
      * claim for what it draws, the API's authorizer verified it, and asking the pool would
      * be a ListUsersInGroup per account-screen open to tell somebody something they can
@@ -319,6 +326,108 @@ async function put(sub, body) {
   ]);
 
   return json(200, { ok: true, name: next });
+}
+
+/* ---- the avatar -------------------------------------------------------------------
+ *
+ * BYTES THROUGH THE API, WHICH IS A CHANGE FROM ACCOUNT.md - and the reason the plan said
+ * otherwise no longer holds. It argued for a presigned POST so that "the image never passes
+ * through API Gateway, whose payload limit would meet base64 inflation at exactly the wrong
+ * size". True of the file somebody chooses - a phone photo is megabytes. But the browser
+ * crops and re-encodes to 256x256 before anything is sent, so what actually crosses the wire
+ * is ~15KB, base64 ~20KB, against a 10MB limit. The plan's premise was written before the
+ * decision to normalise client-side.
+ *
+ * What that buys, beyond one npm package instead of two: the Lambda sees the actual bytes
+ * and can refuse them. A presigned POST hands a client a signed grant to write to the
+ * bucket, and its only defence against a 5GB upload is a content-length-range in the policy;
+ * this way the size limit and the format check are ordinary code on data we are holding.
+ *
+ * THE STORED IMAGE IS NEVER THE FILE THAT WAS CHOSEN. The browser draws it to a canvas and
+ * re-encodes, which discards EXIF - GPS coordinates, on a phone photo - and means a file
+ * crafted against a decoder does not survive being rasterised. We never store an original.
+ * The magic-byte check below is the second half of that: it is what stops this endpoint
+ * being a way to put arbitrary bytes in the bucket under an image content-type.
+ *
+ * THE KEY IS CONTENT-ADDRESSED: avatars/<sub>/<hash>.<ext>. A stable key would sit in
+ * CloudFront's cache and a student would replace their picture and go on seeing the old one
+ * for a day. Hashing makes every avatar URL immutable and infinitely cacheable, and a
+ * replacement is a new key plus a delete of the old - no invalidation, which is slow and
+ * costs per path.
+ */
+const AVATAR_ROW = 'AVATAR';        // sorts before COHORT#, so outside the belongings range
+const MAX_BYTES = 400 * 1024;       // a 256px square is ~15KB; this is room, not a target
+
+/* What a normalised avatar may be, and what its bytes have to start with. Checked rather
+ * than trusted: `type` arrives from the client, and a content-type is a claim. */
+const KINDS = [
+  { type: 'image/webp', ext: 'webp', magic: b => b.length > 12
+      && b.toString('ascii', 0, 4) === 'RIFF' && b.toString('ascii', 8, 12) === 'WEBP' },
+  { type: 'image/png', ext: 'png', magic: b => b.length > 8
+      && b.toString('hex', 0, 8) === '89504e470d0a1a0a' },
+  { type: 'image/jpeg', ext: 'jpg', magic: b => b.length > 3
+      && b.toString('hex', 0, 3) === 'ffd8ff' },
+];
+
+/** What the caller's avatar is now, or null. Its own row so the session can read it cheaply. */
+async function currentAvatar(sub) {
+  const r = await ddb.send(new GetCommand({
+    TableName: TABLE, Key: { pk: `USER#${sub}`, sk: AVATAR_ROW },
+  }));
+  return r.Item?.key || null;
+}
+
+async function setAvatar(sub, { data, type }) {
+  const kind = KINDS.find(k => k.type === type);
+  /* PNG and JPEG are accepted because canvas.toBlob falls back to one of them SILENTLY where
+   * WebP encoding is unsupported - so refusing them would fail on exactly the browsers that
+   * cannot say why. The client names the type from blob.type rather than from what it asked
+   * for, and this is the check that the two agree. */
+  if (!kind) return json(400, { error: 'That is not an image we can store.' });
+
+  let bytes;
+  try {
+    bytes = Buffer.from(String(data || ''), 'base64');
+  } catch {
+    return json(400, { error: 'That image could not be read.' });
+  }
+  if (!bytes.length) return json(400, { error: 'That image was empty.' });
+  if (bytes.length > MAX_BYTES) return json(413, { error: 'That image is too big.' });
+  // The claim against the bytes. Without this the endpoint stores anything at all under an
+  // image content-type, which is a stored-XSS shape even behind a signed cookie.
+  if (!kind.magic(bytes)) return json(400, { error: 'That file is not the kind of image it says it is.' });
+
+  const hash = createHash('sha256').update(bytes).digest('hex').slice(0, 16);
+  const key = `avatars/${sub}/${hash}.${kind.ext}`;
+  const previous = await currentAvatar(sub);
+  if (previous === key) return json(200, { ok: true, avatar: key });   // the same picture again
+
+  await s3.send(new PutObjectCommand({
+    Bucket: BUCKET, Key: key, Body: bytes, ContentType: kind.type,
+    /* Immutable, because the key already carries the hash. This is the whole point of
+     * content-addressing it: the browser and CloudFront may both keep it forever, and a
+     * replacement is a different URL rather than a cache to bust. */
+    CacheControl: 'public, max-age=31536000, immutable',
+  }));
+  await ddb.send(new PutCommand({
+    TableName: TABLE,
+    Item: { pk: `USER#${sub}`, sk: AVATAR_ROW, key, updated: new Date().toISOString() },
+  }));
+  /* The old object goes AFTER the row points at the new one. The other order leaves a window
+   * where the row names an object that is gone, which every viewer sees as a broken image;
+   * this order can at worst leave one orphaned object nobody references. */
+  if (previous) await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: previous }))
+    .catch(e => console.error('old avatar not removed', e));
+
+  return json(200, { ok: true, avatar: key });
+}
+
+async function clearAvatar(sub) {
+  const previous = await currentAvatar(sub);
+  await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: `USER#${sub}`, sk: AVATAR_ROW } }));
+  if (previous) await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: previous }))
+    .catch(e => console.error('avatar object not removed', e));
+  return json(200, { ok: true, avatar: null });
 }
 
 /* THE ACCESS REQUEST: everything we hold, and what we do with it.
@@ -392,6 +501,10 @@ async function exportAll(sub, claims) {
     identity: {
       name: who.name,
       email: who.email,
+      // The object itself is not inlined - it is fetched from the URL below with the same
+      // session cookie that draws it on screen, and base64ing it into the file would make
+      // the download bigger for a picture the person already has.
+      avatar: await currentAvatar(sub),
       accountCreated: who.created,
       lastChanged: who.modified,
       enabled: who.enabled,
@@ -472,19 +585,21 @@ export async function handler(event) {
   if (!sub) return json(401, { error: 'not signed in' });
 
   const method = event.requestContext.http.method;
-  /* Told apart by path as well as by method, the way the admin function tells its two
-   * resources apart. `rawPath` rather than a route key, so a stage prefix cannot change the
-   * answer. */
+  // `rawPath` rather than a route key, so a stage prefix cannot change the answer.
   const path = event.rawPath || '';
-  const progress = /\/progress\/?$/.test(path);
-  const exporting = /\/export\/?$/.test(path);
+  /* Told apart by path as well as by method, the way the admin function tells its two
+   * resources apart. One `sub` resource or none, so a bare /api/account is the account
+   * itself. */
+  const sub2 = /\/account\/([a-z]+)\/?$/.exec(path)?.[1] || '';
   try {
-    if (method === 'DELETE' && progress)
+    if (method === 'DELETE' && sub2 === 'progress')
       return await reset(sub, event.queryStringParameters?.course);
-    if (method === 'GET' && exporting) return await exportAll(sub, claims);
-    if (method === 'GET' && !progress && !exporting) return await get(sub, claims);
-    if (method === 'PUT' && !progress && !exporting)
-      return await put(sub, JSON.parse(event.body || '{}'));
+    if (method === 'GET' && sub2 === 'export') return await exportAll(sub, claims);
+    if (method === 'POST' && sub2 === 'avatar')
+      return await setAvatar(sub, JSON.parse(event.body || '{}'));
+    if (method === 'DELETE' && sub2 === 'avatar') return await clearAvatar(sub);
+    if (method === 'GET' && !sub2) return await get(sub, claims);
+    if (method === 'PUT' && !sub2) return await put(sub, JSON.parse(event.body || '{}'));
     return json(405, { error: `${method} not allowed` });
   } catch (e) {
     console.error(e);
