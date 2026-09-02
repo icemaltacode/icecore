@@ -176,6 +176,56 @@ export function completeNewPassword(password) {
   });
 }
 
+/* The signed-in user, with a session actually loaded onto it.
+ *
+ * `getCurrentUser()` builds a fresh CognitoUser out of localStorage every time it is
+ * called, and that object's `signInUserSession` is null until `getSession` fills it in - so
+ * anything needing an authenticated call fails on a user who is plainly signed in. The
+ * failure is worth the helper: it comes back as "no session" from a screen that could only
+ * be reached with one.
+ */
+function withSession() {
+  const user = pool?.getCurrentUser();
+  if (!user) return Promise.reject(new Error('You are not signed in.'));
+  return new Promise((resolve, reject) => {
+    user.getSession((err, s) => (err || !s?.isValid()
+      ? reject(new Error('Your session has expired - sign in again.'))
+      : resolve(user)));
+  });
+}
+
+/** Change the password of the person already signed in. */
+export async function changePassword(current, next) {
+  if (PREVIEW) {
+    // The refusal has to be reachable locally, like `temp` and `unopened` on the sign-in card.
+    if (current === 'wrong') return Promise.reject(new Error('That is not your current password.'));
+    return Promise.resolve();
+  }
+  const user = await withSession();
+  return new Promise((resolve, reject) => {
+    user.changePassword(current, next, err => (err ? reject(new Error(friendly(err, 'change'))) : resolve()));
+  });
+}
+
+/**
+ * Revoke every refresh token this account has, then sign out here.
+ *
+ * IT IS NOT IMMEDIATE ANYWHERE ELSE, and the screen says so rather than implying otherwise.
+ * Cognito revokes refresh tokens; the id and access tokens already issued stay valid until
+ * they expire, which is 12 hours. Another device therefore keeps working until then and only
+ * fails when it next needs to refresh - `restore()` reads a cached token and checks it
+ * locally, so even a reload over there will not notice sooner. Promising an instant
+ * disconnection would be the one claim a person actually relies on this for.
+ */
+export async function signOutEverywhere() {
+  if (PREVIEW) return signOut();
+  const user = await withSession();
+  await new Promise((resolve, reject) => {
+    user.globalSignOut({ onSuccess: resolve, onFailure: err => reject(new Error(friendly(err, 'change'))) });
+  });
+  signOut();
+}
+
 /** Trade the token for signed cookies. Returns the caller's courses and admin flag. */
 export async function startSession(idJwt) {
   token = idJwt;
@@ -242,6 +292,10 @@ function friendly(err, context = 'signin') {
     if (/disabled/i.test(message)) return 'That account is suspended. Ask your tutor.';
     return 'That account cannot be reset here. Ask your tutor.';
   }
+  /* Same code again, a third meaning: from the account screen it is the CURRENT password
+   * being wrong, which is neither a failed sign-in nor an unopened invitation. */
+  if (code === 'NotAuthorizedException' && context === 'change')
+    return 'That is not your current password.';
   if (code === 'CodeMismatchException')
     return 'That code is not right. Check the email again, or send yourself another.';
   if (code === 'ExpiredCodeException')
@@ -253,5 +307,5 @@ function friendly(err, context = 'signin') {
   if (code === 'UserNotFoundException') return 'That email and password combination was not recognised.';
   if (code === 'PasswordResetRequiredException') return 'Your password needs resetting - ask your tutor.';
   if (code === 'InvalidPasswordException') return message.replace(/^.*: /, '');
-  return message || (context === 'recover' ? 'That did not work.' : 'Sign-in failed.');
+  return message || (context === 'signin' ? 'Sign-in failed.' : 'That did not work.');
 }

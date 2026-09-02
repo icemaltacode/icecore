@@ -9,11 +9,12 @@ import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
-import { route as adminRoute, go as goAdmin, watch as goWatch, leave as leaveAdmin } from './route.js';
+import { route as appRoute, go as goAdmin, account as goAccount, watch as goWatch, leave as leaveArea } from './route.js';
 import WatchBanner from './components/WatchBanner.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
+import AccountPanel from './components/AccountPanel.vue';
 import Icon from './components/Icon.vue';
 import Badge from './components/Badge.vue';
 import SlidesPanel from './components/SlidesPanel.vue';
@@ -124,7 +125,11 @@ const isAdmin = computed(() => session.admin);
 /* The admin area is a URL, not a flag - see route.js. A route is only a request: it is
  * honoured here, once, so that a student who types `#/admin` is turned away in one place
  * rather than in every screen that reads a section name. */
-const showAdmin = computed(() => isAdmin.value && adminRoute.value?.area === 'admin');
+const showAdmin = computed(() => isAdmin.value && appRoute.value?.area === 'admin');
+/* Not gated on `isAdmin`, and that is the whole difference between this area and the other
+ * two: it is everybody's. Gated on `authed` instead - on an open deployment there is no
+ * account to manage, and the top bar draws no way in. */
+const showAccount = computed(() => authed.value && appRoute.value?.area === 'account');
 
 /* WHOSE progress the player is showing - see subject.js. A value rather than a flag, so
  * that reading somebody else's session and reading your own are the same code path with a
@@ -134,7 +139,7 @@ const showAdmin = computed(() => isAdmin.value && adminRoute.value?.area === 'ad
  * Held here because this is the only component that asks about progress at all. */
 const subject = ref(mySubject());
 const watchingSub = computed(() =>
-  (isAdmin.value && adminRoute.value?.area === 'watch' ? adminRoute.value.id : ''));
+  (isAdmin.value && appRoute.value?.area === 'watch' ? appRoute.value.id : ''));
 const watched = ref(null);   // { sub, name, email } - who the banner names
 
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
@@ -339,7 +344,7 @@ watch(watchingSub, switchSubject);
 function backToCourses() {
   // The logo is the way home from anywhere, user management included - leaving that open
   // would make it look like it had done nothing.
-  leaveAdmin();
+  leaveArea();
   course.value = null;
   playground.value = null;
   currentId.value = null;
@@ -363,7 +368,12 @@ onMounted(async () => {
    * pushed: it was not a step the student took, so Back must not walk into it. After the
    * session, because `admin` is not known before it - and it covers an open deployment,
    * where there are no admins at all. */
-  if (adminRoute.value && !isAdmin.value) leaveAdmin(true);
+  if (appRoute.value && appRoute.value.area !== 'account' && !isAdmin.value) leaveArea(true);
+  /* The account area's own version of the same correction: signed out, or an open
+   * deployment with no accounts at all. Separate rather than folded into the line above,
+   * because they turn away different people for different reasons and a single condition
+   * spelling both would have to be read twice to see which. */
+  if (appRoute.value?.area === 'account' && !authed.value) leaveArea(true);
   /* A deep link straight into somebody's session - a reload, or a pasted URL. Before the
    * courses load rather than after: the other order fetches the admin's own progress, draws
    * it, and then replaces it, which is a flash of the wrong person's work on exactly the
@@ -430,7 +440,7 @@ watch(currentId, id => {
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
       :xp-today="xpToday"
       :watching="!!watched"
-      @home="backToCourses" @admin="goAdmin()" @signout="signOut" />
+      @home="backToCourses" @admin="goAdmin()" @account="goAccount()" @signout="signOut" />
 
     <!-- Above everything, always, for as long as the session is open. The screens below it
          are the ordinary player, so this band is the only thing distinguishing a student's
@@ -441,7 +451,13 @@ watch(currentId, id => {
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
          use for the exercise nav, and it has to be reachable from the grid, where there is
          none. -->
-    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="leaveAdmin()" />
+    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="leaveArea()" />
+
+    <!-- Before the grid and after the admin panel, in the same run of alternatives: it is a
+         mode, not a pane. Ordered so that a student who is somehow both cannot be, rather
+         than relying on the two conditions never overlapping. -->
+    <AccountPanel v-else-if="showAccount" :name="session.name" :email="session.email"
+                  @close="leaveArea()" />
 
     <CourseGrid
       v-else-if="!course"

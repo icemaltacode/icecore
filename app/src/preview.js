@@ -97,6 +97,15 @@ const find = sub => people.find(p => p.sub === sub);
  * Stands in for `api()`. Same contract: resolves to the parsed body, throws an Error
  * carrying the message the real service would have put in `error`.
  */
+/* The preview user's name, and the one place a rename is remembered.
+ *
+ * Session-scoped rather than a module `let`: the real rename does not reload, but the real
+ * SIGN-OUT does, and preview state that outlived the tab would be a name still changed
+ * after signing out and in again as somebody notionally else. `Ada Lovelace` is the name in
+ * PREVIEW_TOKEN in auth.js, so an untouched preview and the top bar agree. */
+const NAME_KEY = 'ice-preview-name';
+const PREVIEW_NAME = () => sessionStorage.getItem(NAME_KEY) || 'Ada Lovelace';
+
 export async function previewApi(path, { method = 'GET', body } = {}) {
   const [route, query] = path.split('?');
   const q = new URLSearchParams(query || '');
@@ -112,6 +121,54 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
       courses: role === 'admin' ? [] : courses,
       admin: role === 'admin',
       expires: Date.now() + 12 * 3600 * 1000,
+    };
+  }
+
+  /* The account screen, standing in for a Cognito pool and a partition read.
+   *
+   * The name lives in sessionStorage rather than in a `let`, so that a rename survives the
+   * reload the real one causes and reads as having worked. Session-scoped on purpose - it
+   * is preview state, and it should not outlive the tab any more than the fake sign-out
+   * does. */
+  if (route === 'account') {
+    const courses = (await loadManifest()).map(c => c.id);
+    const mine = role === 'admin' ? [] : courses;
+    if (method === 'PUT') {
+      const next = String(body?.name || '').trim();
+      if (!next) return { ok: true, name: PREVIEW_NAME() };
+      if (next.length > 100) throw new Error('That name is too long.');
+      sessionStorage.setItem(NAME_KEY, next);
+      return { ok: true, name: next };
+    }
+    /* Real XP out of the same local record the player writes, so the figure here and the
+     * figure on the course card cannot disagree - which is the bug this screen would
+     * otherwise be the first place to show. */
+    const byCourse = {};
+    let total = 0;
+    for (const id of mine) {
+      const rec = store.earned(id);
+      const solved = Object.keys(rec).length;
+      if (!solved) continue;
+      byCourse[id] = { solved, xp: store.xpIn(rec) };
+      total += byCourse[id].xp;
+    }
+    return {
+      sub: 'preview-sub',
+      name: PREVIEW_NAME(),
+      email: role === 'admin' ? 'ada@example.com' : 'ada@example.com',
+      admin: role === 'admin',
+      courses: mine,
+      /* One archived, because a cohort that has ended still names a student's class and is
+       * a state the picker has to survive - the same reason the seeded cohort list holds
+       * an empty one. */
+      cohorts: [
+        { id: 'sept-2026-evening', title: 'Sept 2026 evening', archived: false },
+        { id: 'jan-2026-day', title: 'Jan 2026 day', archived: true },
+      ],
+      xp: { total, byCourse },
+      /* Not zero. Zero is the state where nothing has been spent, which is the one state
+       * that shows none of the wording this section exists to get right. */
+      hints: { used: 6, limit: 40, left: 34 },
     };
   }
 

@@ -23,7 +23,7 @@ const props = defineProps({
    * student who has done nothing today, which is a different claim entirely. */
   watching: Boolean,
 });
-defineEmits(['home', 'admin', 'signout']);
+defineEmits(['home', 'admin', 'account', 'signout']);
 
 /* Falls back through name, then the local part of the email, then nothing.
  *
@@ -107,7 +107,25 @@ onBeforeUnmount(() => { cancelAnimationFrame(frame); cancelAnimationFrame(sweepF
 const GLYPH = { light: '☀', dark: '☾' };
 const menu = ref(false);
 const wrap = ref(null);
-const away = e => { if (!wrap.value?.contains(e.target)) menu.value = false; };
+
+/* The person is now a menu rather than a label, because the account screen needed a way in
+ * and the corner already had this exact behaviour sitting next to it. Sign out moved into
+ * it: it was a button of its own beside a chip that did nothing, which is the wrong way
+ * round - the chip is the thing about you, so the things you can do about yourself belong
+ * under it. */
+const mine = ref(false);
+const mineWrap = ref(null);
+
+/* ONE listener for both menus rather than one each. Two would each have to know not to
+ * close the other's click, and the bug that produces is a menu that will not open because
+ * the gesture that opened it also closed it. */
+const away = e => {
+  if (!wrap.value?.contains(e.target)) menu.value = false;
+  if (!mineWrap.value?.contains(e.target)) mine.value = false;
+};
+/* Opening one closes the other. Both hang off the same corner and would otherwise overlap. */
+const openMine = () => { menu.value = false; mine.value = !mine.value; };
+const openTheme = () => { mine.value = false; menu.value = !menu.value; };
 onMounted(() => addEventListener('pointerdown', away));
 onBeforeUnmount(() => removeEventListener('pointerdown', away));
 </script>
@@ -124,7 +142,7 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 
       <div ref="wrap" class="theme" @keydown.esc="menu = false">
         <button class="pick" :title="`Theme: ${theme}`" :aria-expanded="menu"
-                @click="menu = !menu">{{ GLYPH[resolved] }}</button>
+                @click="openTheme">{{ GLYPH[resolved] }}</button>
         <ul v-if="menu" class="menu">
           <li v-for="c in CHOICES" :key="c.value">
             <button :class="{ on: theme === c.value }"
@@ -145,11 +163,23 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
         </span>
       </span>
 
-      <div v-if="label" class="who">
-        <span class="avatar">{{ initials }}</span>
-        <span class="name">{{ label }}</span>
+      <div v-if="label" ref="mineWrap" class="who" @keydown.esc="mine = false">
+        <button class="chip" :aria-expanded="mine" @click="openMine">
+          <span class="avatar">{{ initials }}</span>
+          <span class="name">{{ label }}</span>
+        </button>
+        <ul v-if="mine" class="menu">
+          <!-- Hidden while watching somebody, and not disabled: this screen is always about
+               the person signed in, so from inside a student's session it would offer the
+               ADMIN's account under the student's name. See subject.js. -->
+          <li v-if="!watching">
+            <button @click="mine = false; $emit('account')">Your account</button>
+          </li>
+          <li v-if="authed">
+            <button @click="mine = false; $emit('signout')">Sign out</button>
+          </li>
+        </ul>
       </div>
-      <button v-if="authed" class="btn ghost" @click="$emit('signout')">Sign out</button>
     </div>
   </header>
 </template>
@@ -166,6 +196,38 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 .mark:hover { background: var(--ice-bg); }
 
 .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+/* THE DROPDOWNS, WHICH HAD NO CSS AT ALL until the account screen needed a second one.
+ *
+ * The theme picker has been shipping as an unstyled <ul> in normal flow: no positioning, no
+ * surface, list bullets, and opening it pushed the bar's own layout around. Exactly what
+ * `.avatar` was doing before it was found - markup with class names that read as though
+ * they were styled somewhere, and were not.
+ *
+ * Absolute against the wrapper, which is why both wrappers are `position: relative` and why
+ * neither may be a plain flex child. Anchored to the RIGHT edge: the bar's contents grow
+ * leftward from the corner, so a menu pinned left would hang off the window on a long
+ * name. */
+.theme { position: relative; }
+.pick { font: inherit; font-size: 14px; line-height: 1; width: 30px; height: 30px;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: none; border: 1px solid transparent; border-radius: 8px;
+        color: var(--ice-fg); cursor: pointer; }
+.pick:hover { background: var(--ice-bg); border-color: var(--ice-border); }
+
+.menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
+        list-style: none; margin: 0; padding: 4px; min-width: 160px;
+        background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
+        border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .18); }
+.menu button { display: flex; align-items: center; gap: 8px; width: 100%; font: inherit;
+               font-size: 13px; text-align: left; padding: 7px 9px; border-radius: 7px;
+               background: none; border: 0; color: var(--ice-fg); cursor: pointer;
+               white-space: nowrap; }
+.menu button:hover { background: var(--ice-raise); }
+.menu button.on { color: var(--ice-fg); font-weight: 500; }
+/* A fixed column for the tick, so the labels line up whether or not one is in front of
+   them - without it the chosen row is indented past the other two. */
+.tick { flex: none; width: 12px; color: var(--ice-primary); }
 /* The ring is the wrapper, so the pill keeps its own background and nothing moves when
    the sweep starts: the 2px is always there, and only the gradient inside it appears. */
 .ring { padding: 2px; border-radius: 999px; background: transparent; }
@@ -189,7 +251,11 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
  * No letter-spacing. Tracking adds its gap after the last glyph too, which shunts centred
  * text left by half of it - visible at 26px, and it reads as the circle being off rather
  * than the letters. */
-.who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.who { position: relative; min-width: 0; }
+.chip { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px;
+        font: inherit; background: none; border: 0; padding: 4px 6px; border-radius: 999px;
+        color: var(--ice-fg); cursor: pointer; }
+.chip:hover { background: var(--ice-bg); }
 .avatar { flex: none; width: 26px; height: 26px; border-radius: 50%;
           display: inline-flex; align-items: center; justify-content: center;
           background: var(--ice-primary-soft); color: var(--ice-primary-strong);

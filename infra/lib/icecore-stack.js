@@ -388,6 +388,31 @@ export class IcecoreStack extends Stack {
       resources: [users.userPoolArn],
     }));
 
+    /* A person's own account: what we hold about them, and their own name.
+     *
+     * Its own function rather than a branch in the admin one, and the reason is the blast
+     * radius rather than the code. The admin function may act on ANY sub and is reachable
+     * only by admins; this one may act on exactly the caller's and is reachable by
+     * everybody. Folded together, the thing standing between a student and every other
+     * student's rows would be an `if` - and the day somebody adds a `?sub=` here for a
+     * good reason, it is gone. Separate functions make that mistake impossible to make by
+     * accident rather than merely against the rules.
+     *
+     * The same DAILY_LIMIT the hint function enforces, because this reports it. One
+     * context key read in two places is a number that cannot disagree with itself; passing
+     * it only to the enforcer and typing 40 into the screen is how it eventually does. */
+    const account = fn('Account', 'account', {
+      USER_POOL_ID: users.userPoolId,
+      DAILY_LIMIT: String(this.node.tryGetContext('hintsPerDay') || 40),
+    });
+    table.grantReadWriteData(account);
+    account.addToRolePolicy(new iam.PolicyStatement({
+      // Two, and no more. It reads one user to resolve a sub to a username, and writes the
+      // one attribute a person may change about themselves.
+      actions: ['cognito-idp:ListUsers', 'cognito-idp:AdminUpdateUserAttributes'],
+      resources: [users.userPoolArn],
+    }));
+
     const api = new HttpApi(this, 'Api', {
       apiName: 'icecore',
       defaultAuthorizer: new HttpJwtAuthorizer('Cognito', users.userPoolProviderUrl, {
@@ -418,6 +443,11 @@ export class IcecoreStack extends Stack {
     /* The same function, told apart by its path. No GET: the cohort catalogue rides back
      * with the user listing, because the screen that draws cohorts is the screen that draws
      * people and two round trips for one table is one too many. */
+    api.addRoutes({
+      path: '/api/account',
+      methods: [HttpMethod.GET, HttpMethod.PUT],
+      integration: new HttpLambdaIntegration('AccountIntegration', account),
+    });
     api.addRoutes({
       path: '/api/admin/cohorts',
       methods: [HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
