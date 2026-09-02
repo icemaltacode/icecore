@@ -4,6 +4,9 @@ import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { check, allItems } from '../dragdrop.js';
 import Icon from './Icon.vue';
+import RevealNotice from './RevealNotice.vue';
+import * as store from '../progress-store.js';
+import { progressId } from '../progress.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
 const emit = defineEmits(['solved']);
@@ -95,6 +98,25 @@ function submit() {
   if (verdict.value.pass) emit('solved', props.exercise.id);
 }
 
+/* SHOWING THE ANSWER FORFEITS THE EXERCISE'S XP - see CodingExercise. Different in shape
+ * here only because there is no answer PANEL to toggle: revealing places the items where
+ * they belong, so there is nothing to hide again afterwards, and `wantAnswer` gates the act
+ * rather than a boolean. */
+const asked = ref(false);
+const spent = computed(() => store.revealed(props.courseId).has(progressId(props.exercise.id)));
+
+function wantAnswer() {
+  if (spent.value || !store.warnOnReveal()) { doReveal(); return; }
+  asked.value = true;
+}
+
+function doReveal(quiet) {
+  if (quiet) store.stopRevealWarning();
+  store.reveal(props.courseId, props.exercise.id);
+  asked.value = false;
+  showAnswer();
+}
+
 function showAnswer() {
   columns.value = isOrder.value
     ? [{ id: POOL, title: null, items: [...(props.exercise.items || [])] }]
@@ -113,7 +135,8 @@ function showAnswer() {
              has `exercise.xp === undefined`, which Vue interpolates as an empty string -
              so this rendered a bare "XP" against nothing. Truthiness on purpose: an
              exercise explicitly worth 0 has no badge to show either. -->
-        <span v-if="exercise.xp" class="xp">{{ exercise.xp }} XP</span>
+        <span v-if="exercise.xp" class="xp" :class="{ spent }"
+              :title="spent ? 'The answer was shown, so this exercise no longer earns XP' : null">{{ exercise.xp }} XP</span>
       </header>
 
       <div class="prose" v-html="mdx(exercise.prompt)"></div>
@@ -160,9 +183,10 @@ function showAnswer() {
         </p>
         <span v-else class="muted">Drag items, or click one and then click where it should go.</span>
         <button class="btn ghost" @click="reset">Start over</button>
-        <button class="btn ghost" @click="showAnswer"><Icon name="answer" />Show answer</button>
+        <button class="btn ghost" @click="wantAnswer"><Icon name="answer" />Show answer</button>
         <button class="btn primary" @click="submit">Check answer</button>
       </div>
+      <RevealNotice v-if="asked" :xp="exercise.xp" @confirm="doReveal" @cancel="asked = false" />
     </div>
   </div>
 </template>
@@ -173,6 +197,7 @@ function showAnswer() {
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h2 { margin: 0 0 8px; font-size: 22px; }
 .xp { color: var(--ice-primary-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.xp.spent { color: var(--ice-fg-muted); text-decoration: line-through; }
 .instructions { margin-top: 4px; color: var(--ice-fg); }
 
 .board { display: grid; gap: 14px; margin: 26px 0 0;

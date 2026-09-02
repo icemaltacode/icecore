@@ -28,6 +28,39 @@ const read = k => {
   try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; }
 };
 
+/* WHICH ANSWERS HAVE BEEN LOOKED AT, and the warning preference that guards them.
+ *
+ * Revealing a solution forfeits the exercise's XP, so this has to outlive the page: a
+ * student who reveals, reloads and then solves must still earn nothing, or the forfeit is a
+ * suggestion. Kept per course, like the solved record, so resetting a course clears it too.
+ *
+ * LOCAL ONLY, DELIBERATELY. The forfeit reaches the server the moment it matters - the solve
+ * itself sends `xp: 0` and the row keeps that forever. Recording the reveal remotely as well
+ * would be a second write on a button press, and a second fact to keep in step with the
+ * first. The cost is that revealing on one device and solving on another still earns: a
+ * narrow enough case to accept out loud rather than build for.
+ *
+ * The warning is one preference for the whole platform rather than per course - "do not warn
+ * me again" is a statement about the student, not about what they are studying. */
+const revealKey = course => `ice-platform-revealed:${course}`;
+const WARN_KEY = 'ice-platform-reveal-warn';
+
+/** The exercise ids whose answer has been shown, as a Set of STRINGS - see progressId. */
+export function revealed(course) {
+  const raw = read(revealKey(course));
+  return new Set(Array.isArray(raw) ? raw.map(String) : []);
+}
+
+export function reveal(course, exercise) {
+  const set = revealed(course);
+  set.add(String(exercise));
+  localStorage.setItem(revealKey(course), JSON.stringify([...set]));
+}
+
+/** Whether to warn before showing an answer. Defaults to warning. */
+export const warnOnReveal = () => localStorage.getItem(WARN_KEY) !== 'off';
+export const stopRevealWarning = () => localStorage.setItem(WARN_KEY, 'off');
+
 /* Forget one course entirely - the account screen's reset.
  *
  * IT LIVES HERE BECAUSE THE KEYS DO. A reset that cleared DynamoDB alone would leave a
@@ -42,6 +75,9 @@ export function forget(course) {
   localStorage.removeItem(key(course));
   localStorage.removeItem(placeKey(course));
   localStorage.removeItem(codeKey(course));
+  // Starting a course again means the answers are unseen again - otherwise a reset course
+  // is one a student can never earn anything on.
+  localStorage.removeItem(revealKey(course));
 }
 
 /** What a course has earned so far, as `{ exerciseId: xp }`. */

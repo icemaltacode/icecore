@@ -9,6 +9,7 @@ import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
+import * as store from './progress-store.js';
 import { route as appRoute, go as goAdmin, account as goAccount, watch as goWatch, leave as leaveArea } from './route.js';
 import WatchBanner from './components/WatchBanner.vue';
 import CourseGrid from './components/CourseGrid.vue';
@@ -172,7 +173,16 @@ const doneCount = computed(() => exercises.value.filter(e => isSolved(e.id)).len
  * The daily one is deliberately not per course: it is a fact about the student, and it is
  * fetched once a session rather than re-asked on every solve. */
 const earned = ref(0);
-const xpToday = ref(0);
+/* NULL MEANS "NOT YET KNOWN", and 0 is a real answer that has arrived.
+ *
+ * This was `ref(0)`, and the difference is the whole of the top bar's animation. TopBar
+ * takes the FIRST value it sees as the opening balance and shows it silently - counting up
+ * to a total earned yesterday would be celebrating old work. But when this started at 0 and
+ * the API also said 0 - which is every student who has not earned yet today, so the common
+ * case - nothing changed, the watcher never fired, and `opened` stayed false. The first
+ * earn of the day was then mistaken for the opening balance and played no animation at all:
+ * exactly the moment the animation exists for. */
+const xpToday = ref(null);
 /* What solved each exercise last time, by exercise then by step. Arrives with the course's
  * progress and is kept up to date here as things are solved, so leaving an exercise and
  * coming back inside one session shows the answer without asking the server again. */
@@ -294,7 +304,11 @@ function fillProgress() {
       .catch(() => {});
   // One question about the student rather than about any course, so it is asked here and
   // then kept up to date by markSolved rather than re-fetched.
-  subject.value.earnedToday().then(n => { xpToday.value = n; }).catch(() => {});
+  subject.value.earnedToday()
+    .then(n => { xpToday.value = n; })
+    // A failed fetch still has to settle the opening balance, or the first earn is silent
+    // for the same reason - "unknown" is not a state the counter can stay in.
+    .catch(() => { xpToday.value = xpToday.value ?? 0; });
 }
 
 /* Entering or leaving somebody else's session.
@@ -312,7 +326,7 @@ async function switchSubject(sub) {
   earned.value = 0;
   savedCode.value = {};
   courseProgress.value = {};
-  xpToday.value = 0;
+  xpToday.value = null;   // unknown again until the next session answers
   const url = new URL(location.href);
   url.searchParams.delete('course');
   history.replaceState({}, '', url);
@@ -408,10 +422,16 @@ const markSolved = (id, code) => {
   // What the exercise is worth travels with the solve, because that is what gets recorded.
   // Read off the row rather than looked up again: the walk carries the exercise's own
   // fields, and a second lookup is a second chance to disagree about which exercise it is.
-  const worth = Number(flat.value.find(r => r.id === id)?.xp) || 0;
+  /* AND NOTHING AT ALL IF THE ANSWER WAS SHOWN. The exercise still counts as complete and
+   * still turns green - it is the XP that is forfeited, not the progress - so this is the
+   * one place the two facts come apart. Read here rather than passed up from the exercise
+   * component, because three components offer Show answer and only this one decides what a
+   * solve is worth. */
+  const shown = store.revealed(course.value.id).has(progressId(id));
+  const worth = shown ? 0 : Number(flat.value.find(r => r.id === id)?.xp) || 0;
   solved.value = new Set([...solved.value, progressId(id)]);
   earned.value += worth;
-  xpToday.value += worth;
+  xpToday.value = (xpToday.value || 0) + worth;
   courseProgress.value = {
     ...courseProgress.value,
     [course.value.id]: { done: solved.value.size, xp: earned.value },

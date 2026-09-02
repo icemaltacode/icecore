@@ -8,6 +8,9 @@ import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 import Icon from './Icon.vue';
+import RevealNotice from './RevealNotice.vue';
+import * as store from '../progress-store.js';
+import { progressId } from '../progress.js';
 
 const props = defineProps({
   courseId: String, exercise: Object, done: Boolean,
@@ -52,6 +55,31 @@ const tutorBusy = ref(false);
  * without knowing why. */
 const urgeHelp = ref(false);
 watch(code, () => { urgeHelp.value = false; });
+/* SHOWING THE ANSWER FORFEITS THE EXERCISE'S XP.
+ *
+ * Recorded per exercise rather than per step: a multi-step exercise is worth one amount, so
+ * looking at any one of its answers spends it. Written before the answer appears, not after,
+ * so a student who reveals and closes the tab has still spent it.
+ *
+ * The warning is skipped once the cost is already paid - re-opening an answer you have
+ * already seen takes nothing more, and warning again would be asking a question whose answer
+ * cannot change anything. */
+const asked = ref(false);
+const spent = computed(() => store.revealed(props.courseId).has(progressId(props.exercise.id)));
+
+function wantAnswer() {
+  if (showSolution.value) { showSolution.value = false; return; }
+  if (spent.value || !store.warnOnReveal()) { doReveal(); return; }
+  asked.value = true;
+}
+
+function doReveal(quiet) {
+  if (quiet) store.stopRevealWarning();
+  store.reveal(props.courseId, props.exercise.id);
+  asked.value = false;
+  showSolution.value = true;
+}
+
 
 const steps = computed(() => props.exercise.steps || []);
 const step = computed(() => steps.value[stepIndex.value] || {});
@@ -154,7 +182,11 @@ async function doReset() {
              has `exercise.xp === undefined`, which Vue interpolates as an empty string -
              so this rendered a bare "XP" against nothing. Truthiness on purpose: an
              exercise explicitly worth 0 has no badge to show either. -->
-        <span v-if="exercise.xp" class="xp">{{ exercise.xp }} XP</span>
+        <!-- Struck through once the answer has been seen, because the amount is no
+             longer what finishing this will pay. Showing it unchanged would have a student
+             earn nothing from a badge still promising 100. -->
+        <span v-if="exercise.xp" class="xp" :class="{ spent }"
+              :title="spent ? 'The answer was shown, so this exercise no longer earns XP' : null">{{ exercise.xp }} XP</span>
       </header>
 
       <div class="prose" v-html="mdx(exercise.prompt)"></div>
@@ -198,10 +230,11 @@ async function doReset() {
                   @click="askForHelp" :disabled="tutorBusy">
             <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
           </button>
-          <button v-if="step.solution || isMcqStep" class="btn ghost" @click="showSolution = !showSolution">
+          <button v-if="step.solution || isMcqStep" class="btn ghost" @click="wantAnswer">
             <Icon :name="showSolution ? 'hidden' : 'answer'" />{{ showSolution ? 'Hide answer' : 'Show answer' }}
           </button>
         </div>
+        <RevealNotice v-if="asked" :xp="exercise.xp" @confirm="doReveal" @cancel="asked = false" />
         <div v-if="showHint" class="prose hintbody" v-html="mdx(step.hint)"></div>
         <div v-if="tutor" class="prose tutorbody" v-html="mdx(tutor.hint)"></div>
         <p v-if="tutorError" class="tutorerr">{{ tutorError }}</p>
@@ -242,6 +275,7 @@ async function doReset() {
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h2 { margin: 0 0 4px; font-size: 20px; }
 .xp { color: var(--ice-primary-strong); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.xp.spent { color: var(--ice-fg-muted); text-decoration: line-through; }
 h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ice-fg-muted); margin: 24px 0 8px; }
 .steps { float: right; text-transform: none; letter-spacing: 0; }
 .steplist { list-style: none; margin: 0; padding: 0; }

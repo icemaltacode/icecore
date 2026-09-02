@@ -19,6 +19,9 @@ import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
 import Icon from './Icon.vue';
+import RevealNotice from './RevealNotice.vue';
+import * as store from '../progress-store.js';
+import { progressId } from '../progress.js';
 
 const props = defineProps({
   courseId: String, exercise: Object, done: Boolean,
@@ -47,6 +50,28 @@ const busy = ref(false);
 const booting = ref(false);
 const showHint = ref(false);
 const showSolution = ref(false);
+
+/* SHOWING THE ANSWER FORFEITS THE EXERCISE'S XP - see CodingExercise, which does the same
+ * three lines for the same reason. Per exercise rather than per step: a multi-step exercise
+ * is worth one amount, so looking at any one of its answers spends it. Written before the
+ * answer appears, so revealing and closing the tab has still spent it. The warning is
+ * skipped once the cost is paid - re-opening an answer already seen takes nothing more. */
+const asked = ref(false);
+const spent = computed(() => store.revealed(props.courseId).has(progressId(props.exercise.id)));
+
+function wantAnswer() {
+  if (showSolution.value) { showSolution.value = false; return; }
+  if (spent.value || !store.warnOnReveal()) { doReveal(); return; }
+  asked.value = true;
+}
+
+function doReveal(quiet) {
+  if (quiet) store.stopRevealWarning();
+  store.reveal(props.courseId, props.exercise.id);
+  asked.value = false;
+  showSolution.value = true;
+}
+
 const tutor = ref(null);
 const tutorError = ref('');
 const tutorBusy = ref(false);
@@ -179,7 +204,8 @@ const ranQuietly = computed(() =>
              has `exercise.xp === undefined`, which Vue interpolates as an empty string -
              so this rendered a bare "XP" against nothing. Truthiness on purpose: an
              exercise explicitly worth 0 has no badge to show either. -->
-        <span v-if="exercise.xp" class="xp">{{ exercise.xp }} XP</span>
+        <span v-if="exercise.xp" class="xp" :class="{ spent }"
+              :title="spent ? 'The answer was shown, so this exercise no longer earns XP' : null">{{ exercise.xp }} XP</span>
       </header>
 
       <div class="prose" v-html="mdx(exercise.prompt)"></div>
@@ -209,13 +235,14 @@ const ranQuietly = computed(() =>
                   @click="askForHelp" :disabled="tutorBusy">
             <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
           </button>
-          <button v-if="step.solution" class="btn ghost" @click="showSolution = !showSolution">
+          <button v-if="step.solution" class="btn ghost" @click="wantAnswer">
             <Icon :name="showSolution ? 'hidden' : 'answer'" />{{ showSolution ? 'Hide answer' : 'Show answer' }}
           </button>
         </div>
         <div v-if="showHint" class="prose hintbody" v-html="mdx(step.hint)"></div>
         <div v-if="tutor" class="prose tutorbody" v-html="mdx(tutor.hint)"></div>
         <p v-if="tutorError" class="tutorerr">{{ tutorError }}</p>
+        <RevealNotice v-if="asked" :xp="exercise.xp" @confirm="doReveal" @cancel="asked = false" />
         <div v-if="showSolution" class="solution">
           <pre><code>{{ step.solution }}</code></pre>
           <button class="link" @click="useSolution">Copy into the editor</button>
@@ -274,6 +301,7 @@ const ranQuietly = computed(() =>
    unlike CodingExercise's. */
 .xp { margin-left: auto; color: var(--ice-primary-strong); font-size: 12px;
       font-weight: 600; white-space: nowrap; }
+.xp.spent { color: var(--ice-fg-muted); text-decoration: line-through; }
 .instructions { margin-top: 20px; }
 .instructions h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
                    color: var(--ice-fg-muted); display: flex; gap: 8px; align-items: baseline; }
