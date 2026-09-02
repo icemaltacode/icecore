@@ -16,6 +16,15 @@ const PATHS = {
   copy: 'M9 9h10v12H9zM5 15V3h10v2',
   pin: 'M12 17v5 M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z',
   contents: 'M4 6h16M4 12h16M4 18h16',
+  // a chevron, pointing down. The affordance that says a control opens something rather
+  // than does something - a triangle at this weight reads as Play, which the set already
+  // has a glyph for.
+  chevron: 'M6 9.5l6 6 6-6',
+  // a body with a lens and the little bump of a viewfinder. The bump is what stops it
+  // reading as a generic rounded rectangle with a circle in it at 14px.
+  camera: 'M3 8.5a1.5 1.5 0 0 1 1.5-1.5h2.2l1.1-2h8.4l1.1 2h2.2A1.5 1.5 0 0 1 21 8.5v9a1.5'
+        + ' 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5ZM12 16.2a3.4 3.4 0 1 0 0-6.8 3.4 3.4'
+        + ' 0 0 0 0 6.8Z',
   // an arrow leaving a pane: the standard "opens elsewhere", not a plus or a window
   tab: 'M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
   // an arrow INTO a tray. The arrow alone is indistinguishable from a collapse or a

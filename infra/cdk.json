@@ -23,6 +23,6 @@
     "siteCertificateArn": "arn:aws:acm:us-east-1:845106282768:certificate/4f2343ee-902c-42aa-a848-76e7c5218bdd",
     "inviteFromEmail": "noreply@icecampus.com",
     "orgName": "ICE Campus (Institute of Computer Education Ltd.)",
-    "privacyContact": "keith@icecampus.com"
+    "privacyContact": "student@icecampus.com"
   }
 }

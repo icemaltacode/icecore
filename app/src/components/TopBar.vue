@@ -1,5 +1,6 @@
 <script setup>
 import Wordmark from './Wordmark.vue';
+import Icon from './Icon.vue';
 /* The bar across the top of every signed-in screen.
  *
  * It exists so the identity of the product and of the person using it sit in one fixed
@@ -179,10 +180,15 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
       </span>
 
       <div v-if="label" ref="mineWrap" class="who" @keydown.esc="mine = false">
-        <button class="chip" :aria-expanded="mine" @click="openMine">
+        <!-- A PILL, not a label with a click on it. The picture is the left cap, the name
+             the body, and a chevron the right - which is the shape every menu in every
+             product this student has used, and the only part of it doing real work is the
+             chevron: without one, a name in a corner reads as a caption. -->
+        <button class="chip" :class="{ open: mine }" :aria-expanded="mine" @click="openMine">
           <img v-if="src" class="avatar" :src="src" :alt="label" @error="broken = true">
           <span v-else class="avatar">{{ initials }}</span>
           <span class="name">{{ label }}</span>
+          <Icon name="chevron" :size="13" class="caret" />
         </button>
         <ul v-if="mine" class="menu">
           <!-- Hidden while watching somebody, and not disabled: this screen is always about
@@ -268,10 +274,19 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
  * text left by half of it - visible at 26px, and it reads as the circle being off rather
  * than the letters. */
 .who { position: relative; min-width: 0; }
-.chip { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px;
-        font: inherit; background: none; border: 0; padding: 4px 6px; border-radius: 999px;
-        color: var(--ice-fg); cursor: pointer; }
-.chip:hover { background: var(--ice-bg); }
+/* The avatar sits flush in the left cap, so the padding is asymmetric: 3px around the
+   circle on the left, and room for the chevron on the right. Equal padding leaves the
+   picture floating in the middle of a lozenge. */
+.chip { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 240px;
+        font: inherit; background: var(--ice-bg); border: 1px solid var(--ice-border);
+        padding: 3px 9px 3px 3px; border-radius: 999px; color: var(--ice-fg);
+        cursor: pointer; }
+.chip:hover { border-color: var(--ice-primary-soft); }
+.chip.open { border-color: var(--ice-primary); }
+/* Turns to point at the menu it opened. 150ms: long enough to be seen as a movement rather
+   than a repaint, short enough not to be waited for. */
+.caret { color: var(--ice-fg-muted); transition: transform .15s ease; }
+.chip.open .caret { transform: rotate(180deg); }
 /* One rule for both, so a picture and a pair of initials are the same circle in the same
    place - swapping between them must not move the name beside it. `object-fit: cover` is
    belt and braces: the stored image is already square, and a hand-placed object would

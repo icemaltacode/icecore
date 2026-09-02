@@ -98,14 +98,14 @@ const ABOUT = {
       + ' month and then deleted automatically.',
   ],
   rights: [
-    'Rectification: you can change your name on this page. Ask your tutor about anything else.',
+    'Rectification: you can change your name on this page. Ask your educator about anything else.',
     'Erasure: ask, and your account and everything above is deleted.',
     'Restriction and objection: ask.',
     'Portability: the download on this page is machine-readable JSON.',
   ],
   complaint: 'You can complain to the Information and Data Protection Commissioner in Malta'
     + ' - idpc.org.mt - if you think we have got this wrong.',
-  source: 'From you, and from the tutor who created your account and enrolled you.',
+  source: 'From you, and from the educator who created your account and enrolled you.',
   /* Said rather than omitted. Silence is what a reader assumes the worst about, and the
    * honest answer here is a good one: grading decides whether an exercise is right and
    * nothing follows from it. */

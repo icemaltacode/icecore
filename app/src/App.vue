@@ -251,7 +251,7 @@ async function loadCourses() {
      * is shown. Promotion takes effect on the next sign-in, with nothing to migrate. */
     manifest.value = visible(published);
     if (!manifest.value.length) throw new Error(session.courses
-      ? 'You are not enrolled on any course yet - ask your tutor.'
+      ? 'You are not enrolled on any course yet - ask your educator.'
       : 'No courses published - run npm run content');
     fillProgress();
     // A course named in the URL opens straight away. That is what makes returning to the

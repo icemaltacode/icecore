@@ -1,8 +1,13 @@
 /* Turning whatever a student picked into something we are willing to store.
  *
- * Pure-ish and dependency-free, like compare.js and csv.js - it takes a File and gives back
- * bytes. It touches the DOM only in the sense that a canvas is the image decoder every
- * browser already has; nothing here reads or writes the page.
+ * Pure-ish and dependency-free, like compare.js and csv.js - it takes a File and a square,
+ * and gives back bytes. It touches the DOM only in the sense that a canvas is the image
+ * decoder every browser already has; nothing here reads or writes the page.
+ *
+ * SPLIT IN TWO because the crop happens between them: `decode` gives the picker something to
+ * measure and show, and `encode` takes the square the person chose. A single normalise(file)
+ * could only ever take the centre, which is the right guess and the wrong result about half
+ * the time - a face is rarely in the middle of a photograph.
  *
  * THE POINT IS THAT WE NEVER STORE THE FILE THAT WAS CHOSEN. It is decoded, cropped square,
  * scaled to a fixed size and re-encoded, so the bytes that leave the machine are pixels the
@@ -44,7 +49,8 @@ export const avatarSrc = key => {
  * key with an image/webp content-type is a file that will not render. */
 const WANT = 'image/webp';
 
-const decode = file => new Promise((resolve, reject) => {
+/** Decode a File into an image the caller can measure and draw. */
+export const decode = file => new Promise((resolve, reject) => {
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
@@ -55,16 +61,22 @@ const decode = file => new Promise((resolve, reject) => {
 const toBlob = (canvas, type, quality) =>
   new Promise(resolve => canvas.toBlob(resolve, type, quality));
 
+/** The largest centred square in an image - what you get if nobody chooses a crop. */
+export function centreSquare(img) {
+  const size = Math.min(img.naturalWidth, img.naturalHeight);
+  return { sx: (img.naturalWidth - size) / 2, sy: (img.naturalHeight - size) / 2, size };
+}
+
 /**
- * A File in, `{ data, type }` out - base64 and the type the browser actually produced.
+ * A decoded image and a square of it, in the image's own pixels, out to `{ data, type }`.
  *
- * Cropped to the CENTRE square before scaling, rather than squashed to fit: a face in a
- * circle that has been stretched reads as a bad photo rather than as a bad crop.
+ * The crop is in NATURAL coordinates rather than in whatever the chooser was displaying at,
+ * so the picker can be any size on screen and resize under the user without the result
+ * moving. Converting at the boundary is the picker's job and it does it once.
  */
-export async function normalise(file) {
-  const img = await decode(file);
-  const side = Math.min(img.naturalWidth, img.naturalHeight);
-  if (!side) throw new Error('That image has no size to it.');
+export async function encode(img, crop) {
+  const { sx, sy, size } = crop || centreSquare(img);
+  if (!size) throw new Error('That image has no size to it.');
 
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = SIZE;
@@ -76,9 +88,7 @@ export async function normalise(file) {
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, SIZE, SIZE);
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img,
-    (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side,
-    0, 0, SIZE, SIZE);
+  ctx.drawImage(img, sx, sy, size, size, 0, 0, SIZE, SIZE);
 
   const blob = await toBlob(canvas, WANT, 0.86)
     // A browser that encodes neither WebP nor anything at this call has bigger problems, but

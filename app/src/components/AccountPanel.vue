@@ -20,7 +20,9 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { api, changePassword, signOutEverywhere, session } from '../auth.js';
 import * as store from '../progress-store.js';
-import { normalise, avatarSrc } from '../avatar.js';
+import { decode, encode, avatarSrc } from '../avatar.js';
+import Icon from './Icon.vue';
+import AvatarCrop from './AvatarCrop.vue';
 
 const props = defineProps({
   name: String,
@@ -80,32 +82,48 @@ const num = n => Number(n || 0).toLocaleString();
 
 /* ---- the picture -------------------------------------------------------------------
  *
- * The file never reaches the network. `normalise` decodes it, crops it square and re-encodes
- * it, so what is sent is ~15KB of pixels the browser drew rather than whatever came off a
- * phone - see avatar.js for why that is a security property and not only a size one.
+ * The file never reaches the network: it is decoded, the person chooses a square of it, and
+ * that square is re-encoded at 256px. What is sent is ~15KB of pixels the browser drew
+ * rather than whatever came off a phone - see avatar.js for why that is a security property
+ * as well as a size one.
  */
 const picking = ref(null);      // the hidden <input type=file>
+const cropping = ref(null);     // the decoded image, while its square is being chosen
 const avatarBusy = ref(false);
 const avatarError = ref('');
 
 /* Through avatar.js, which the top bar also uses - the two renderers of one key. */
 const portrait = computed(() => avatarSrc(me.value?.avatar));
 
+/* Decode only - the upload waits for a square to be chosen. Decoding here rather than in the
+ * dialog keeps a file the browser cannot read from opening an empty one. */
 async function pickAvatar(event) {
   const file = event.target.files?.[0];
   // Cleared straight away, or choosing the SAME file twice in a row fires no change event
   // and the second attempt looks like a dead button.
   event.target.value = '';
   if (!file) return;
+  avatarError.value = '';
+  try {
+    cropping.value = await decode(file);
+  } catch (e) {
+    avatarError.value = e.message;
+  }
+}
+
+async function useCrop(square) {
   avatarBusy.value = true;
   avatarError.value = '';
   try {
-    const { data, type } = await normalise(file);
+    const { data, type } = await encode(cropping.value, square);
     const r = await api('account/avatar', { method: 'POST', body: { data, type } });
     me.value.avatar = r.avatar;
     session.avatar = r.avatar;   // the top bar, for the reason the rename writes session.name
+    cropping.value = null;
   } catch (e) {
     avatarError.value = e.message;
+    // The dialog stays open on failure: closing it would throw away the crop they chose and
+    // make them find the file again to retry.
   } finally {
     avatarBusy.value = false;
   }
@@ -343,6 +361,8 @@ const SECTIONS = [
 
 <template>
   <div class="account">
+    <AvatarCrop v-if="cropping" :image="cropping" :busy="avatarBusy"
+                @use="useCrop" @cancel="cropping = null" />
     <div class="card">
       <!-- OUTSIDE THE SECTION LOOP, and that is the whole reason it is up here. A `ref`
            inside a v-for collects into an ARRAY of elements rather than binding one, so
@@ -366,22 +386,29 @@ const SECTIONS = [
 
         <template v-if="s.id === 'you'">
           <div class="portrait">
-            <img v-if="portrait" class="big" :src="portrait" alt="">
-            <!-- The same fallback the top bar uses, at the size this page shows. Initials
-                 are the only fallback: no generated identicon, which would be a second thing
-                 to design and to keep looking deliberate. -->
-            <span v-else class="big initials">{{ (me?.name || name || '?').trim()[0]?.toUpperCase() }}</span>
+            <!-- THE CIRCLE IS THE CONTROL. A button beside a picture saying "Add a picture"
+                 is a label for something already on screen; the badge is the gesture every
+                 profile page has taught, and it puts the affordance on the thing it changes.
+                 It is a real <button> rather than a styled div so that it is reachable by
+                 keyboard and announces itself. -->
+            <button class="shot" :disabled="avatarBusy || !me"
+                    :title="me?.avatar ? 'Change your picture' : 'Add a picture'"
+                    @click="picking?.click()">
+              <img v-if="portrait" class="big" :src="portrait" alt="">
+              <!-- The same fallback the top bar uses, at the size this page shows. Initials
+                   are the only fallback: no generated identicon, which would be a second
+                   thing to design and to keep looking deliberate. -->
+              <span v-else class="big initials">{{ (me?.name || name || '?').trim()[0]?.toUpperCase() }}</span>
+              <span class="badge"><Icon name="camera" :size="13" /></span>
+              <span class="sr">{{ me?.avatar ? 'Change your picture' : 'Add a picture' }}</span>
+            </button>
             <div class="portrait-acts">
-              <button class="btn" :disabled="avatarBusy || !me" @click="picking?.click()">
-                {{ avatarBusy ? 'Working…' : (me?.avatar ? 'Change picture' : 'Add a picture') }}
-              </button>
-              <button v-if="me?.avatar" class="btn ghost" :disabled="avatarBusy"
-                      @click="removeAvatar">Remove</button>
-              <!-- Says what happens to the file, because it is not what anyone assumes: it
-                   is cropped and re-encoded here, and the original never leaves the machine.
-                   That is also what strips the location out of a phone photo. -->
-              <p class="hint">Cropped square and shrunk in your browser — the original file
-                is never uploaded, so nothing hidden in it is either.</p>
+              <!-- Removing has no gesture on the circle, so it keeps a control. Quiet, and
+                   only where there is something to remove. Nothing else here: how the file
+                   is processed is not a thing anybody came to this page to read, and the
+                   Your data section is where that belongs if it belongs anywhere. -->
+              <button v-if="me?.avatar" class="linky" :disabled="avatarBusy"
+                      @click="removeAvatar">Remove picture</button>
             </div>
           </div>
           <p v-if="avatarError" class="err">{{ avatarError }}</p>
@@ -411,7 +438,7 @@ const SECTIONS = [
                    this is not a policy that might be relaxed - Cognito would refuse the
                    write. It is also the sign-in alias, which makes changing it an identity
                    change rather than a preference. -->
-              <p class="hint">This is how you sign in. Ask your tutor if it needs to change.</p>
+              <p class="hint">This is how you sign in. Ask your educator if it needs to change.</p>
             </dd>
           </dl>
         </template>
@@ -520,7 +547,7 @@ const SECTIONS = [
                      Enrolment and class are an admin's to set: a student who could take
                      themselves off a course would lose one they were put on, and it would
                      look from the admin panel exactly like an administrative mistake. -->
-                <p class="hint">Your courses and class are set by your tutor. Ask them if
+                <p class="hint">Your courses and class are set by your educator. Ask them if
                   something here is wrong.</p>
               </dd>
             </dl>
@@ -538,6 +565,22 @@ const SECTIONS = [
             <p v-if="exportError" class="err">{{ exportError }}</p>
             <p class="hint">A JSON file with everything below in it, including the code you
               wrote for every exercise you have solved.</p>
+
+            <!-- FOLDED, and this is the one thing on the page that needed folding.
+                 Four of the five sections are a screen between them; this statement alone
+                 was half the page, because it is nine answers of full-sentence prose and
+                 there is no shorter honest version of it. Collapsing it is what makes the
+                 page scannable - tabs would have hidden Security behind a click for
+                 everyone in order to solve a problem caused by the legal text.
+
+                 A <details>, not a v-if: it is findable by the browser's own in-page search
+                 when closed, which matters for a document somebody is looking through for
+                 one specific answer. -->
+            <details class="fold">
+              <summary>
+                What we hold, what it is for, and your rights
+                <Icon name="chevron" :size="14" class="foldmark" />
+              </summary>
 
             <!-- THE SAME OBJECT THE FILE CARRIES, rendered rather than rewritten. Article 15
                  wants a copy of the data AND this; a page that showed different words from
@@ -578,7 +621,7 @@ const SECTIONS = [
               <dt>Being erased</dt>
               <dd>
                 Ask <template v-if="about.controller.contact">{{ about.controller.contact
-                  }}</template><template v-else>your tutor</template>, or your tutor, and your
+                  }}</template><template v-else>your educator</template>, or your educator, and your
                 account and everything above is deleted. It is not a button here because
                 deleting your account also ends your enrolment, and that is a decision worth
                 a person reading.
@@ -587,6 +630,7 @@ const SECTIONS = [
               <dt>If we get it wrong</dt>
               <dd>{{ about.complaint }}</dd>
             </dl>
+            </details>
           </template>
         </template>
 
@@ -663,7 +707,12 @@ h2 { margin: 0; font-size: 22px; }
 .block { border: 1px solid var(--ice-border); border-radius: var(--ice-radius);
          padding: 18px 20px; margin-bottom: 14px; }
 h3 { margin: 0 0 6px; font-size: 15px; }
-.blurb { color: var(--ice-fg-muted); font-size: 13px; margin: 0; max-width: 60ch;
+/* NO MEASURE CAP ON THE SHORT TEXT, and that is a correction rather than an omission.
+   These carried `max-width: 60ch`, which is the line length that makes RUNNING PROSE
+   comfortable - paragraphs somebody reads for minutes. A one-sentence label under a heading
+   is not that: capped, it filled about half the card and read as text that had run out
+   rather than as a comfortable column. The block's own width is the measure here. */
+.blurb { color: var(--ice-fg-muted); font-size: 13px; margin: 0;
          line-height: 1.6; }
 .soon { color: var(--ice-fg-muted); font-size: 12px; margin: 10px 0 0; opacity: .7; }
 
@@ -674,10 +723,20 @@ input { font: inherit; font-size: 14px; padding: 9px 11px; margin-bottom: 14px;
         background: var(--ice-bg); color: var(--ice-fg);
         border: 1px solid var(--ice-border); border-radius: 8px; }
 input:focus { outline: none; border-color: var(--ice-primary); }
-.hint { color: var(--ice-fg-muted); font-size: 12px; margin: -4px 0 12px; }
-.err { color: var(--ice-bad); font-size: 13px; margin: 0 0 12px; }
-.ok { color: var(--ice-fg-muted); font-size: 13px; margin: 12px 0 0; max-width: 60ch;
-      line-height: 1.6; }
+/* THE DEFAULT IS THE COMMON CASE, which it was not: this carried `margin: -4px 0 12px`, a
+   pull-up sized for sitting under a form input where the input's own bottom margin makes the
+   gap. Under a button, a list or a pair of tallies it had nothing to pull against and simply
+   clamped the text onto whatever was above it. The form is the exception and says so
+   below. */
+.hint { color: var(--ice-fg-muted); font-size: 12px; margin: 10px 0 0; }
+.form .hint { margin: -4px 0 12px; }
+/* Same inversion as `.hint` had, and the same fix. `margin: 0 0 12px` assumes something
+   above supplies the gap, which is true inside a form and false in the four other places
+   this appears - under the picture, under a button, under the last section. Default to a gap
+   of its own; the two form-ish contexts opt out. */
+.err { color: var(--ice-bad); font-size: 13px; margin: 10px 0 0; }
+.form .err, .gate .err { margin: 0 0 12px; }
+.ok { color: var(--ice-fg-muted); font-size: 13px; margin: 12px 0 0; line-height: 1.6; }
 .acts { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 
 /* A definition list because that is what it is: a label and the fact it names. Grid rather
@@ -726,15 +785,54 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 /* A definition list again, but reading as prose rather than as fields: these are questions
    and answers, so the label sits above its answer instead of beside it. Beside it, the
    answers - which are lists of full sentences - would be squeezed into half the width. */
-.statement { margin: 20px 0 0; }
+/* Chrome and Safari draw their own disclosure triangle; `list-style: none` on the summary
+   removes it in Chrome and the ::-webkit- pseudo is what removes it in Safari. Without both,
+   the custom chevron sits beside a native triangle pointing the other way. */
+.fold { margin-top: 18px; border-top: 1px solid var(--ice-border); }
+.fold summary { display: flex; align-items: center; gap: 8px; list-style: none;
+                padding: 14px 0 0; font-size: 13px; font-weight: 500; cursor: pointer; }
+.fold summary::-webkit-details-marker { display: none; }
+.fold summary:hover { color: var(--ice-primary); }
+.foldmark { color: var(--ice-fg-muted); transition: transform .15s ease; }
+.fold[open] summary .foldmark { transform: rotate(180deg); }
+
+/* The gap under the summary lives here rather than as summary padding, because
+   `dt:first-child` has its top margin reset - so the list has to bring its own. It was 4px,
+   which is what put "WHO HOLDS IT" against the disclosure it had just opened. */
+.statement { margin: 16px 0 18px; }
 .statement dt { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
                 color: var(--ice-fg-muted); margin-top: 18px; }
 .statement dt:first-child { margin-top: 0; }
-.statement dd { margin: 6px 0 0; font-size: 13px; line-height: 1.65; max-width: 68ch; }
+/* NO MEASURE CAP HERE EITHER. This was 68ch and then 82ch, on the argument that the
+   statement is the page's only running prose and a 100-character line is past comfortable.
+   The argument is fine and the result was not: capped, it wrapped well inside the card and
+   read as text stopping short rather than as a column. The card's width is already the
+   measure - it is 720px because this page holds prose, not a table. */
+.statement dd { margin: 6px 0 0; font-size: 13px; line-height: 1.65; }
 .statement ul { margin: 0; padding-left: 18px; }
 .statement li { margin: 3px 0; }
 
-.portrait { display: flex; align-items: flex-start; gap: 16px; margin: 18px 0 4px; }
+.portrait { display: flex; align-items: center; gap: 16px; margin: 18px 0 4px; }
+/* The circle and its badge. `overflow: visible` so the badge can sit on the rim rather than
+   be clipped by it, and the badge is positioned against this rather than against .big -
+   which is swapped between an <img> and a <span> and would take the anchor with it. */
+.shot { position: relative; flex: none; padding: 0; border: 0; background: none;
+        border-radius: 50%; cursor: pointer; line-height: 0; }
+.shot:disabled { cursor: default; opacity: .6; }
+.badge { position: absolute; right: -1px; bottom: -1px; width: 26px; height: 26px;
+         display: inline-flex; align-items: center; justify-content: center;
+         border-radius: 50%; background: var(--ice-primary); color: var(--ice-on-primary);
+         /* Ringed in the page's own background so it reads as sitting ON the circle rather
+            than overlapping it - the same trick a notification dot uses. */
+         box-shadow: 0 0 0 2px var(--ice-bg-soft); }
+.shot:hover:not(:disabled) .badge { background: var(--ice-primary-strong); }
+.shot:focus-visible { outline: 2px solid var(--ice-primary); outline-offset: 3px; }
+/* The button's accessible name, since the badge is an icon and the circle is a picture. */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%);
+      white-space: nowrap; }
+.linky { background: none; border: 0; padding: 0; font: inherit; font-size: 12px;
+         color: var(--ice-fg-muted); cursor: pointer; text-decoration: underline; }
+.linky:hover:not(:disabled) { color: var(--ice-bad); }
 /* Width and height set outright rather than left to content, for the reason the top bar's
    26px circle is: padding sizes a box to its text, and one initial then comes out an oval. */
 .big { flex: none; width: 72px; height: 72px; border-radius: 50%; object-fit: cover;
@@ -742,8 +840,7 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 .initials { display: inline-flex; align-items: center; justify-content: center;
             color: var(--ice-primary-strong); font-size: 26px; font-weight: 600;
             line-height: 1; }
-.portrait-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.portrait-acts .hint { flex-basis: 100%; margin: 0; max-width: 46ch; }
+.portrait-acts { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 
 .gate { margin-top: 16px; }
 .gate label { display: block; margin: 16px 0 6px; text-transform: none; letter-spacing: 0;

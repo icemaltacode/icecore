@@ -111,7 +111,7 @@ const find = sub => people.find(p => p.sub === sub);
  * two ever disagree, the Lambda is right and this is stale: it is the copy that gets sent to
  * a person. */
 const ABOUT = {
-  controller: { name: 'ICE Campus (Institute of Computer Education Ltd.)', contact: 'keith@icecampus.com' },
+  controller: { name: 'ICE Campus (Institute of Computer Education Ltd.)', contact: 'student@icecampus.com' },
   purposes: [
     'Giving you access to the courses you are enrolled on.',
     'Recording what you have solved, so that your progress and XP survive between sessions'
@@ -142,14 +142,14 @@ const ABOUT = {
       + ' month and then deleted automatically.',
   ],
   rights: [
-    'Rectification: you can change your name on this page. Ask your tutor about anything else.',
+    'Rectification: you can change your name on this page. Ask your educator about anything else.',
     'Erasure: ask, and your account and everything above is deleted.',
     'Restriction and objection: ask.',
     'Portability: the download on this page is machine-readable JSON.',
   ],
   complaint: 'You can complain to the Information and Data Protection Commissioner in Malta'
     + ' - idpc.org.mt - if you think we have got this wrong.',
-  source: 'From you, and from the tutor who created your account and enrolled you.',
+  source: 'From you, and from the educator who created your account and enrolled you.',
   automated: 'Nothing here makes an automated decision about you with legal or similarly'
     + ' significant effects. Your exercises are marked automatically, but that marking is'
     + ' formative - it tells you whether an answer is right, and nothing else follows from it.',

@@ -277,7 +277,7 @@ export function signOut() {
  * correct and says nothing a student can act on. The fix is an admin resending the
  * invitation, so the message names it. */
 const UNOPENED = 'Your invitation has not been opened yet, so there is no password to reset.'
-  + ' Ask your tutor to send the invitation again.';
+  + ' Ask your educator to send the invitation again.';
 
 function friendly(err, context = 'signin') {
   const code = err?.code || err?.name;
@@ -286,11 +286,11 @@ function friendly(err, context = 'signin') {
   /* NotAuthorizedException means two entirely different things depending on where it came
    * from, and only the message text tells them apart. Matched loosely and with a safe
    * fallback: Cognito does not give these distinct codes, so the string is all there is,
-   * and a reworded one should degrade to "ask your tutor" rather than to nonsense. */
+   * and a reworded one should degrade to "ask your educator" rather than to nonsense. */
   if (code === 'NotAuthorizedException' && context === 'recover') {
     if (/cannot be reset/i.test(message)) return UNOPENED;
-    if (/disabled/i.test(message)) return 'That account is suspended. Ask your tutor.';
-    return 'That account cannot be reset here. Ask your tutor.';
+    if (/disabled/i.test(message)) return 'That account is suspended. Ask your educator.';
+    return 'That account cannot be reset here. Ask your educator.';
   }
   /* Same code again, a third meaning: from the account screen it is the CURRENT password
    * being wrong, which is neither a failed sign-in nor an unopened invitation. */
@@ -305,7 +305,7 @@ function friendly(err, context = 'signin') {
 
   if (code === 'NotAuthorizedException') return 'That email and password combination was not recognised.';
   if (code === 'UserNotFoundException') return 'That email and password combination was not recognised.';
-  if (code === 'PasswordResetRequiredException') return 'Your password needs resetting - ask your tutor.';
+  if (code === 'PasswordResetRequiredException') return 'Your password needs resetting - ask your educator.';
   if (code === 'InvalidPasswordException') return message.replace(/^.*: /, '');
   return message || (context === 'signin' ? 'Sign-in failed.' : 'That did not work.');
 }
