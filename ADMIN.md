@@ -8,8 +8,8 @@ This plan gives it three sections, and argues that the second of them — a cour
 page — is where nearly all the remaining value is, because it is the only one that can tell
 a tutor something they cannot already see by asking the student.
 
-Status: **steps 1 to 4 are built and deployed.** Cohorts, the spend ledger, the route and
-shell, and the person page. Nothing reads the ledger yet, which is the ordering rather than
+Status: **steps 1 to 5 are built and deployed.** Cohorts, the spend ledger, the route and
+shell, the person page, and the course page. Nothing reads the ledger yet, which is the ordering rather than
 an oversight. What is done is listed under [Already done](#already-done); everything else
 is proposed. The backlog line this replaces is "track student progress in admin"; remote
 control is still on it, pointed back here.
@@ -394,8 +394,7 @@ without them is a day of students untagged and hints uncounted.
 2. ~~**The spend ledger and the per-exercise hint counter.**~~ — done, see below.
 3. ~~**The route and the shell.**~~ — done, see below.
 4. ~~**The person page, with their submitted code.**~~ — done, see below.
-5. **The course page: roster, position, completion**, pivotable by cohort. Gives `byCourse`
-   its first reader — three of its four partitions at once.
+5. ~~**The course page: roster, position, completion.**~~ — done, see below.
 6. **Where the class stalls**, from solves, bookmark bunching and hint counts.
 7. **View-as**, read-only, under the five constraints above.
 8. **The platform page**: publication state, spend four ways, the ceiling.
@@ -468,6 +467,29 @@ they carry, the idiom the progress function already uses, so this needed no new 
 - **The dialog kept adding and editing**, opened from the page rather than by the URL - so
   it is state beside the route rather than part of it, and Back from a dialog does not mean
   something different from Back anywhere else.
+
+**Step 5, the course page.** `CoursePage.vue` and `getCourse`, behind
+`GET /api/admin/users?course=` - the fourth GET on that path and still no new route.
+
+- **`byCourse`'s first reader, two partitions at once.** `ENROL#<course>` is the roster in
+  one query with the cached names on it; `LAST#<course>` is every student's position *and*
+  their last-active time, also one query and no fan-out. Only completion fans out, one query
+  per enrolled student.
+- **Completion travels beside position, never instead of it.** A bookmark is not a
+  completion flag: somebody who finished last month is parked on the final exercise, which
+  reads exactly like somebody stuck on it. A student who has solved everything is drawn as
+  finished, and the count is what tells those two apart.
+- **The cohort filter is here rather than a cohort page carrying a course filter.** They are
+  one fact pivoted two ways and building both is two screens maintaining one answer. This is
+  the pivot a tutor starts from: they teach a course, and the intake narrows it. That
+  settles the open question this plan had about a cohort page - it comes only if it earns
+  itself later.
+- **Sorting by least recently active puts never-started first**, because that ordering
+  answers "who has stopped" rather than "who is behind", and never having begun is the most
+  interesting value of that column rather than the least.
+- **The response carries a per-exercise solve tally that nothing reads yet.** Unlike the
+  index, this could have been added later at no cost; it rides along because it is three
+  lines of a loop that was already running, and it makes the stall view a client change.
 
 **And two corrections out of this plan, applied while writing it:**
 

@@ -3,6 +3,7 @@
  *   GET    /api/admin/users            everyone in the pool, with their courses and cohorts
  *   GET    /api/admin/users?sub=        one person, summarised across every course
  *   GET    /api/admin/users?sub=&course= one course of theirs, with what they wrote
+ *   GET    /api/admin/users?course=     everyone on that course, and how far they are
  *   POST   /api/admin/users            { email, name?, courses?, cohorts?, admin?, resend? }
  *   PUT    /api/admin/users            { sub, name?, courses?, cohorts?, admin?, enabled? }
  *   DELETE /api/admin/users?sub=       delete the account and everything it owns
@@ -399,6 +400,7 @@ export async function handler(event) {
      * the same idiom the progress function uses, where one call names a course and the
      * other an instant. Everyone, one person, or one person on one course. */
     if (method === 'GET' && q.sub) return await getPerson(q.sub, q.course);
+    if (method === 'GET' && q.course) return await getCourse(q.course);
     if (method === 'GET') return await getUsers();
     if (method === 'POST') return await postUser(JSON.parse(event.body || '{}'));
     if (method === 'PUT') return await putUser(JSON.parse(event.body || '{}'), me);
@@ -630,6 +632,85 @@ async function getPerson(sub, course) {
     // solved without one.
     clipped,
   });
+}
+
+/* ---- one course ------------------------------------------------------------------
+ *
+ * How a class is doing, which is the one question this area could not ask before and the
+ * only one a tutor cannot get by asking a student.
+ *
+ * THIS IS `byCourse`'s FIRST READER, and it uses two of its partitions at once. The index
+ * inverts the key, so `ENROL#<course>` is the roster in ONE query - with the name and email
+ * cached on each row, which is what that cache was for - and `LAST#<course>` is every
+ * student's bookmark AND their last-active time, also one query and no fan-out at all.
+ *
+ * What the index cannot answer is how much each of them has done: that is a count over each
+ * student's own `PROG#<course>#` prefix. So it fans out per STUDENT, exactly as the user
+ * listing does - tens of queries against the size of a class, rather than hundreds against
+ * the size of a catalogue, which is what one query per exercise would be.
+ *
+ * The denominator is not here. The catalogue lives in the content bucket, and the client
+ * already holds it - the same reason this function has never known which courses exist.
+ */
+
+/** One partition of `byCourse`, every page of it. */
+const byCourse = (sk, projection) => queryAll({
+  TableName: TABLE, IndexName: 'byCourse',
+  KeyConditionExpression: 'sk = :sk',
+  ExpressionAttributeValues: { ':sk': sk },
+  ...(projection || {}),
+});
+
+const subOf = pk => pk.slice('USER#'.length);
+
+async function getCourse(course) {
+  const [roster, places] = await Promise.all([
+    byCourse(`ENROL#${course}`),
+    byCourse(`LAST#${course}`, {
+      ProjectionExpression: 'pk, exercise, #a',
+      ExpressionAttributeNames: { '#a': 'at' },
+    }),
+  ]);
+
+  const place = Object.fromEntries(places.map(p => [subOf(p.pk), { exercise: p.exercise, at: p.at }]));
+
+  const progress = await mapLimit(roster, FANOUT, r => queryAll({
+    TableName: TABLE,
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': r.pk, ':sk': `PROG#${course}#` },
+    ProjectionExpression: 'sk, xp, #a',
+    ExpressionAttributeNames: { '#a': 'at' },
+  }));
+
+  /* Solve counts per exercise, tallied out of the same rows. NOTHING READS THIS YET - it is
+   * what "where does the class stall" is made of, and unlike the index it could have been
+   * added later at no cost. It rides along because it is three lines of the loop that was
+   * already running, and it makes that screen a client change rather than another deploy. */
+  const exercises = {};
+
+  const students = roster.map((r, i) => {
+    const rows = progress[i];
+    let xp = 0;
+    let last = null;
+    for (const row of rows) {
+      xp += Number(row.xp) || 0;
+      if (row.at && (!last || row.at > last)) last = row.at;
+      const id = exerciseOf(row.sk, course);
+      exercises[id] = (exercises[id] || 0) + 1;
+    }
+    const sub = subOf(r.pk);
+    return {
+      sub, name: r.name || '', email: r.email || '',
+      solved: rows.length, xp, last,
+      /* Where they are and how much they have done, together. A bookmark is not a
+       * completion flag: somebody who finished last month is parked on the final exercise,
+       * which reads identically to somebody stuck on it. Only the count tells them apart,
+       * so the count travels beside the position and never instead of it. */
+      place: place[sub] || null,
+    };
+  });
+
+  return json(200, { course, students, exercises });
 }
 
 /* ---- cohorts -----------------------------------------------------------------------

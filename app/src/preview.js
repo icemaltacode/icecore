@@ -226,6 +226,26 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
         clipped: false,
       };
     }
+    /* One course. Built from the seeded people, so the cohort filter on that screen has
+     * something real to filter - the point of the stub is the shape of the screen, and a
+     * cohort column that never varies would not exercise it. Spread across started,
+     * half-done, finished and not-started, because those are four different rows. */
+    if (method === 'GET' && q.get('course')) {
+      const course = q.get('course');
+      const on = users.filter(u => u.courses.includes(course));
+      const exercises = {};
+      const students = on.map((u, i) => {
+        const solved = [14, 0, 31, 6][i % 4];
+        for (let n = 1; n <= solved; n++) exercises[n] = (exercises[n] || 0) + 1;
+        return {
+          sub: u.sub, name: u.name, email: u.email,
+          solved, xp: solved * 20,
+          last: solved ? `2026-08-${String(10 + (i % 18)).padStart(2, '0')}T10:00:00Z` : null,
+          place: solved ? { exercise: String(solved), at: '2026-08-20T10:00:00Z' } : null,
+        };
+      });
+      return { course, students, exercises };
+    }
     if (method === 'GET')
       return { users: users.map(u => ({ ...u })), cohorts: classes.map(c => ({ ...c })), truncated: false };
 

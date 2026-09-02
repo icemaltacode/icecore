@@ -29,6 +29,7 @@ import UserDialog from './UserDialog.vue';
 import UserImport from './UserImport.vue';
 import CohortList from './CohortList.vue';
 import PersonPage from './PersonPage.vue';
+import CoursePage from './CoursePage.vue';
 import Icon from './Icon.vue';
 import { route, go, leave } from '../route.js';
 
@@ -40,6 +41,7 @@ const emit = defineEmits(['close']);
  * out what exists. */
 const SECTIONS = [
   { id: 'people', title: 'People' },
+  { id: 'courses', title: 'Courses' },
   { id: 'cohorts', title: 'Cohorts' },
 ];
 /* An unknown section falls back rather than blanking the screen: the URL is typed by hand
@@ -88,6 +90,20 @@ onMounted(refresh);
  * from a dialog would otherwise mean something different from Back anywhere else. */
 const viewing = computed(() => (section.value === 'people' ? route.value?.id || '' : ''));
 const person = computed(() => users.value.find(u => u.sub === viewing.value));
+
+/* A course id in the URL that names no published course falls back to the list rather than
+ * drawing an empty page: the catalogue is assembled from the bucket, so a course really can
+ * stop existing while somebody has its URL open. */
+const openCourse = computed(() => (section.value === 'courses'
+  ? (props.courses || []).find(c => c.id === route.value?.id) || null
+  : null));
+
+/** How many people hold an enrolment row for each course. Tallied from what is already here. */
+const enrolled = computed(() => {
+  const n = {};
+  for (const u of users.value) for (const c of u.courses || []) n[c] = (n[c] || 0) + 1;
+  return n;
+});
 
 async function done(message) {
   editing.value = undefined;
@@ -155,6 +171,13 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
           <button class="btn primary" @click="editing = null">Add user</button>
         </div>
       </header>
+      <header v-else-if="section === 'courses' && !openCourse">
+        <div>
+          <h2>Courses</h2>
+          <p class="muted">Every course on the site. Opening one shows who is on it and how
+            far they have got.</p>
+        </div>
+      </header>
       <header v-else-if="section === 'cohorts'">
         <div><h2>Cohorts</h2></div>
       </header>
@@ -167,6 +190,23 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
       <PersonPage v-if="viewing" :sub="viewing" :user="person"
                   :courses="courses" :cohorts="cohorts"
                   @edit="editing = person" @back="go('people')" />
+
+      <CoursePage v-else-if="openCourse" :course="openCourse" :users="users" :cohorts="cohorts"
+                  @person="sub => go('people', sub)" @back="go('courses')" />
+
+      <ul v-else-if="section === 'courses'" class="list">
+        <li v-for="c in courses" :key="c.id">
+          <button class="crow" type="button" @click="go('courses', c.id)">
+            <span class="cname">{{ c.title }}</span>
+            <span class="num">{{ c.exercises || 0 }} exercises</span>
+            <!-- An open course is on everybody's grid without an enrolment row, so a count
+                 of nought there is not a course nobody is taking. -->
+            <span v-if="c.open" class="num">open to everyone</span>
+            <span v-else class="num">{{ enrolled[c.id] || 0 }} enrolled</span>
+          </button>
+        </li>
+        <li v-if="!courses.length" class="none">No courses are published yet.</li>
+      </ul>
 
       <CohortList v-else-if="section === 'cohorts'" :cohorts="cohorts" :users="users"
                   @done="m => { notice = m || ''; refresh(); }" />
@@ -261,6 +301,18 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
 <style scoped>
 .admin { height: 100%; overflow: auto; padding: 40px 32px; display: flex; justify-content: center; }
 .card { width: min(1040px, 100%); }
+.list { list-style: none; margin: 0; padding: 0;
+        border: 1px solid var(--ice-border); border-radius: var(--ice-radius); overflow: hidden; }
+.list li { border-bottom: 1px solid var(--ice-border); }
+.list li:last-child { border-bottom: 0; }
+.list li.none { padding: 14px; color: var(--ice-fg-muted); font-size: 13px; }
+.crow { display: flex; align-items: center; gap: 16px; width: 100%; font: inherit;
+        font-size: 14px; text-align: left; padding: 13px 14px; cursor: pointer;
+        background: none; border: 0; color: var(--ice-fg); }
+.crow:hover { background: var(--ice-raise); }
+.cname { flex: 1; font-weight: 500; }
+.crow .num { font-size: 12px; color: var(--ice-fg-muted); white-space: nowrap; }
+
 .sections { display: flex; align-items: center; gap: 4px; margin-bottom: 22px;
             border-bottom: 1px solid var(--ice-border); }
 .sec { font: inherit; font-size: 14px; padding: 8px 12px 11px; margin-bottom: -1px;
