@@ -1,0 +1,447 @@
+# The admin area — plan
+
+Today the admin area is user management: one modal, one table, four verbs. It is good at
+what it does. What it is not is an *area* — there is nowhere for a second screen to go, and
+the only noun it knows is a person.
+
+This plan gives it three sections, and argues that the second of them — a course-shaped
+page — is where nearly all the remaining value is, because it is the only one that can tell
+a tutor something they cannot already see by asking the student.
+
+Status: **steps 1 and 2 are built and not deployed.** Cohorts exist end to end, and the
+hint Lambda now writes the spend ledger and the per-exercise counter. Nothing reads either
+yet - which is the point of the ordering, see [Order](#order-i-would-build-it). What is
+built is listed under [Already done](#already-done); everything else is proposed. The two
+backlog lines this replaces are "track student progress in admin" and "remote-control the
+session of a logged in user".
+
+## Decisions taken
+
+| | |
+|---|---|
+| **Shape** | Three sections — People, Courses, Platform — not a growing pile of modals |
+| **Addressing** | A hash route, hand-rolled. No `vue-router` |
+| **Cohorts** | A group of **people**, not of enrolments. An axis on every screen, not a section of its own |
+| **Cohort data** | Fan out per student, exactly as the user listing already does. **No new index** |
+| **Difficulty** | Derived from solves, drop-off and hints first. Attempts are not recorded, and not yet worth recording |
+| **Support** | Read the student's own submitted code. View-as now, **shaped so remote control is an addition and not a rewrite** |
+| **Spend** | A ledger row of its own, in the student's partition, written from the day the decision lands |
+| **Boundary** | The admin area reads content and never writes it |
+
+## What is wrong with the shape today
+
+`showAdmin = true` in `App.vue` is a boolean over the course grid. That has three
+consequences, and only the first is cosmetic:
+
+- **There is no address.** The player has no top-level URL state at all — the only hash work
+  in the app is inside the slides iframe, on its own document. So an admin cannot link
+  anyone to a screen, cannot reload onto one, and cannot open two side by side.
+- **Every new feature has to be a modal or a column.** The user dialog is already at the
+  size where the next thing added to it makes it a page badly.
+- **The course is a filter over people, and never a thing to stand on.** "Who is on
+  Data Analyst SQL" is answerable; "how is Data Analyst SQL going" is not expressible.
+
+## The three sections
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  icecore · admin      People │ Courses │ Platform       ◐  ✕  │
+│                       ╰ Cohorts                              │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│   People  ─────────────→  a person  ──┐                      │
+│     └ Cohorts ─────────→  a cohort  ──┼── the useful cell:   │
+│                                       │   this class, this   │
+│   Courses ─────────────→  a course  ──┘   course, this answer │
+│                                                              │
+│   Platform                                                   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+`#/admin`, `#/admin/people/<sub>`, `#/admin/cohorts/<id>`, `#/admin/courses/<id>`. Parsing
+that by hand is a few lines of `location.hash`; adding a router to a player that has managed
+without one is a dependency bought for four routes.
+
+**The cross-links are the point.** From a course you reach a person, from a person you reach
+what they have done, from a cohort you reach both — and the cell where they meet, *this
+student, this course, this exercise, this answer*, is the screen a tutor actually wants when
+somebody says they are stuck.
+
+## People
+
+The list stays as it is. It is already the right list: people rather than enrolments, the
+course as a filter, `truncated` said out loud rather than a partial list passing as the
+pool.
+
+What changes is that a row opens a **page** rather than a dialog. The dialog can stay for
+add-and-edit; it is the wrong container for the things below.
+
+### The person page
+
+- The account facts `UserDialog` already shows: name, email, cohorts, courses, admin,
+  enabled, whether the invitation has ever been used, resend.
+- **What they have done, per course.** Solved out of total, XP, first solve, most recent
+  solve, and where they are up to.
+- **Their own submitted answers.** This is the first screen I would build.
+
+### Why their code, and why it is first
+
+`infra/lambda/progress/index.mjs` already writes `code` onto every `PROG#` row — the
+student's own source, keyed by step, capped at 20KB a step and 60KB a row. It is stored so
+that returning to finished work shows their answer rather than a blank editor. Nothing
+reads it but the student.
+
+A tutor reading the query a student actually wrote, against the exercise they are actually
+stuck on, is most of what "remote-control the session of a logged in user" was reaching
+for. It needs **no new writes, no channel, and no consent question** — the data is sitting
+in the table.
+
+So: a read path on `/api/admin`, authorised the way the rest of that function is, returning
+one student's progress and submissions for one course.
+
+### View-as now; remote control later, as an addition
+
+**Only view-as gets built now** — read-only, the real player rendered as that student sees
+it. `App.vue` already derives an admin's course list by skipping the enrolment filter;
+view-as is that same derivation pointed at somebody else's rows.
+
+**Remote control is wanted later**: the admin sees the student's live screen, both cursors
+are visible to both, and the admin can navigate on their behalf. Not built now. But
+view-as must be built so that it is the *same feature with a different source*, not
+something that gets thrown away. Five constraints, all cheap now and expensive to retrofit:
+
+1. **The viewed session is a value, not a mode.** One object — identity, enrolment,
+   progress, position — that the player reads instead of reaching for its own. View-as
+   fetches it once; remote control feeds the same object from a channel. A boolean checked
+   at twenty call sites is what would have to be un-picked later.
+2. **Never hydrate through the local record.** `progress.js` and `progress-store.js` write
+   localStorage keys. A view-as that loads a student through them **overwrites the admin's
+   own progress** and leaves live updates nowhere to land. The viewed session is in memory
+   and touches no key.
+3. **Position must be explicit and settable from outside.** Course, unit, topic, exercise,
+   step, slide number, editor contents. Remote control *is* "set the position from
+   outside"; if position lives only inside components, nothing outside can set it. This is
+   the second reason the hash route is item one.
+4. **One write gate, at the API layer.** View-as makes progress PUTs inert. Remote control
+   later needs them to go through — as the student, attributed to the admin — which is one
+   gate changing behaviour rather than a guard removed from every call site.
+5. **Do not render a snapshot server-side.** A dump of what the student's page looked like
+   is much easier and is a dead end: it becomes nothing.
+
+What remote control still needs, and what nothing here pre-builds: a channel (there is no
+WebSocket anywhere in this stack — API Gateway's WebSocket API or WebRTC would both be new
+infrastructure), the student's client *sending* rather than only receiving, cursor
+transport, and a rule for what happens when two people type at once.
+
+**And one line worth keeping straight while both exist.** View-as is invisible to the
+student, which is fine for reading rows they have already submitted — a tutor reading
+homework. Taking over their screen is not that, and the design Keith wants has the student
+seeing the admin's cursor, so it announces itself by construction. Keeping view-as
+read-only is what keeps that distinction clean until the channel exists.
+
+## Cohorts
+
+**A cohort is a group of people** — an intake, a class, "Sept 2026 evening". Not a group of
+enrolments and not a property of a course: an intake may take two courses, and a cohort
+that named one course would be a second, worse spelling of enrolment.
+
+So a cohort does not appear in the navigation as a peer of Courses. It is **an axis**: a
+filter in People, a page of its own reachable from there, a pivot on the course page ("this
+class, this course"), and a grouping on spend.
+
+### The rows
+
+| Row | Key | Why |
+|---|---|---|
+| The cohort | `pk = COHORTS`, `sk = COHORT#<id>` | Title, created, archived. One query lists every cohort |
+| Membership | `pk = USER#<sub>`, `sk = COHORT#<id>` | Name and email cached, exactly as `ENROL#` does |
+
+Membership in the **user's** partition, not the cohort's, for two reasons that both already
+have precedent here: `byCourse` inverts the key, so `COHORT#<id>` is a partition and the
+cohort's roster is one query with names on it; and `forget()` deletes everything under
+`USER#<sub>`, so removing a person removes their membership without anything new being
+written to remember to do it.
+
+**A cohort needs a row of its own because an empty cohort has to exist.** You name the class
+before you import it, and a list derived from membership cannot represent a cohort with
+nobody in it yet — which is exactly the state it is in at the moment you need to pick it.
+
+**The title lives on the cohort row and is not cached on membership.** That differs from the
+person's name, which *is* cached on `ENROL#` rows, and the difference is the reason: the
+name cache exists so `byCourse` can answer without a call to the pool. Anything reading a
+cohort has already read the cohort row.
+
+### How they are set
+
+- **Creatable inline, from both places that create people.** The dialog and the CSV import
+  each offer the existing cohorts and let you name a new one without going somewhere else
+  first. POST accepting an unknown cohort creates it.
+- **Additive on POST, the whole set on PUT** — the same rule courses already follow, for the
+  same reason: the import runs POST once per row, and a row that does not mention a cohort
+  must not take one away.
+- **The import's cohort applies to every row**, like the ticked courses, and for the same
+  reason — a plain class list has no cohort column, and that is the case the field matters
+  most in. A `cohort` column may also name one per row.
+- **The `#` legend at the bottom of the template lists existing cohort ids**, as it already
+  does for courses. A cohort typed slightly wrong is a class that quietly splits in two.
+- **Archived, not deleted, when an intake finishes.** A training company accumulates
+  intakes; a picker holding forty dead ones is a picker nobody reads. Archived cohorts keep
+  their statistics and drop out of the pickers.
+- **Deleting a cohort deletes the grouping and none of the people.** Say it on the button:
+  "delete" beside a list of students reads as deleting students.
+
+A person may be in more than one cohort. Somebody who comes back for a second intake is the
+ordinary case, not an anomaly to design against.
+
+### Two details the listing forces
+
+**The id is a slug of the title, taken once; the title stays editable and the id never
+moves.** A tutor types the id into a CSV column, so it has to be `sept-2026-evening` rather
+than an opaque key — and re-slugging on rename would rewrite every membership row to keep a
+URL tidy. Drift between a renamed title and its original slug is the ordinary, harmless
+outcome. The import matches a cohort column on the id *or* the title, case-insensitively.
+
+**An unknown cohort in a CSV is created, and the preview says so before anything is sent.**
+`UserImport` already parses locally and already reports unknown courses that way; a cohort
+it is about to create is the same sentence. Auto-creating silently is how a class splits in
+two on a typo, and refusing outright would defeat naming an intake at import time — the
+preview is what makes creating safe, and it exists.
+
+**The listing reads both prefixes in ONE query per user.** `COHORT#` and `ENROL#` are
+adjacent in sort order, so `sk BETWEEN 'COHORT#' AND 'ENROL$'` returns exactly the two and
+nothing else — where a second `begins_with` query would double the fan-out on the slowest
+screen in the app. `$` is one codepoint above `#`, which is what makes the upper bound
+exclusive of everything after it. **The fragility is worth writing at the call site: a new
+sort-key prefix beginning with D or E would fall inside that range**, and would arrive in
+the listing as an enrolment nobody wrote.
+
+## Courses
+
+The missing half, and where the teaching value is. One page per course:
+
+- **The roster** — who is on it, filterable to one cohort.
+- **Where the class is** — each student's current position and when they were last there.
+- **Completion** — how much of the course each of them has done.
+- **Where they stall** — solve counts per topic and per exercise across the cohort.
+
+A cliff at one exercise is the single most actionable thing this platform could report,
+because unlike everything else on these screens it is not about a student at all: it is
+feedback into a content repo.
+
+### What the data model already answers, and what it does not
+
+`byCourse` inverts the key — partition `sk`, sort `pk` — and has had no reader since it was
+added. These are the questions it answers in **one query**:
+
+| Partition | Answers | Carries |
+|---|---|---|
+| `ENROL#<course>` | The roster | The cached name and email on each row |
+| `COHORT#<id>` | Who is in an intake | The same cache |
+| `LAST#<course>` | Where every student is, and when they were last there | `exercise`, `at` |
+| `PROG#<course>#<exercise>` | Everyone who has solved that one exercise | `xp`, `at`, `code` |
+
+`LAST#<course>` is the surprise, and it is the headline of the cohort page: one query gives
+the whole class's position *and* their last-active time, with no fan-out at all.
+
+**What no single query answers is per-student completion**, because that is a count over
+each student's own `PROG#<course>#…` prefix. Two ways to get it, and the choice is not
+close:
+
+- One query per exercise, over `PROG#<course>#<exercise>`. Hundreds of queries for a course
+  the size of Data Analyst.
+- One query per **enrolled student**, tallied. Tens of queries, and the same tally yields
+  per-exercise solve counts as a by-product.
+
+So the cohort view fans out per student, exactly as `getUsers` already does with
+`mapLimit`, and for the same reason the user listing does: it is the shape that scales with
+the number of people rather than with the size of the catalogue. That function alone has 30
+seconds where the others have 10, which is the budget this was left room in.
+
+**No new index.** A third key pattern for this would be a full index build on a live table,
+bought to save queries that a few hundred accounts do not make expensive.
+
+The denominator — how many exercises a course has — never reaches the Lambda at all.
+`card.json` already carries `exercises`, `coding` and `mcq`, and the client already has the
+catalogue. The Lambda continues not to know which courses exist, which is what keeps the
+content bucket the one place the catalogue lives.
+
+### Difficulty needs a fact nobody records
+
+**Nothing records a failed attempt.** A `PROG#` row is written when an exercise is solved
+and never before it, so from the table "hard exercise" and "exercise nobody has reached
+yet" are the same shape. Any chart labelled difficulty would be inferring one from the
+other.
+
+What is honestly derivable today:
+
+- **Solve rate against the roster** — how many of the class have finished each exercise.
+- **Drop-off position** — where `LAST#<course>` bunches up. A dozen bookmarks parked on one
+  topic is a stall, and it is one query.
+- **Hint volume per exercise** — the strongest of the three, and it needs one new row
+  (below).
+
+Ship those first. **Only add attempt recording if they are not enough**, and price it
+honestly when the time comes: every Check press becomes a write, on the student's critical
+path, and a per-exercise attempt counter is trivial to add and impossible to remove once a
+screen depends on it. If it is added, add it where it answers the question — a counter on
+the exercise, not an event per press. The interesting number is "how many tries before this
+class got it", not an audit log.
+
+## Platform
+
+Small, and deliberately not a second CloudWatch. Three things earn a place.
+
+**Publication state.** Which courses the bucket actually holds, when each last published,
+which are announced-but-empty. Read from the same `card.json` files the grid assembles
+from, so the page shows the truth rather than a report about it.
+
+**The truncation ceiling.** `PAGE` 60 × `MAX_PAGES` 25 is 1500 accounts, and today it
+surfaces as a red line that appears only once you are already past it. On a platform page it
+can be a fact — this many accounts, this is the ceiling — read before it matters.
+
+**Spend**, which needs its own section.
+
+Alarms, error rates, latency: leave in CloudWatch. A tutor will not read them and you have a
+terminal.
+
+### Hint spend, and why the counter that exists cannot be it
+
+`RATE#hint#<day>` counts hints per student per day already — but those rows carry a
+**three-day TTL**. They are a rate *limit*, swept by the table's TTL, and they were never
+history. Widening the TTL to make them a ledger would give the limit a memory it does not
+need and does not want; the two facts want different lifetimes, so they get different rows.
+
+**The ledger.** One row per student, per day, per course:
+
+```
+pk = USER#<sub>   sk = SPEND#hint#<day>#<course>     n, in, out, model
+```
+
+- **In the student's own partition**, which is not an aesthetic choice: `forget()` deletes
+  everything under `USER#<sub>`, so this is deleted with the person. A row keyed
+  `pk = SPEND#<day>` would **survive deleting somebody and still name their sub** — a ledger
+  that outlives the person it is about is a data-protection problem, not a feature.
+- **Tokens and the model, not money.** A cost computed at write time bakes in a rate nobody
+  can check later. Priced at read time from one constant, with the consequence stated where
+  the constant is: changing the rate re-prices history. For an internal cost view that is
+  the honest trade.
+- **Nothing new has to be sent.** `hint.js` already puts `course` and `exercise.id` in the
+  request body and the Lambda already ignores both — so the ledger and the counter below are
+  two writes in one function, with no client change and no new field to plumb.
+
+**Four views, one rule.** One student is one query on their own prefix. Overall, by course
+and by cohort are the same fan-out per person the rest of this document commits to, tallied
+different ways — and **cohort is joined at read time from membership**, so the hint Lambda
+never learns what a cohort is.
+
+### And one row that is not personal
+
+Hint volume per exercise is the difficulty signal, and it is not a fact about a student:
+
+```
+pk = HINTS#<course>   sk = <exercise>      n
+```
+
+One `ADD` beside the ledger write. One query gives a whole course's hint pressure, exercise
+by exercise, which is precisely the "which exercises are hard" question. Being aggregate and
+anonymous, it is also the one row here that does **not** get deleted with a person — which
+is correct, and worth writing down so nobody later "fixes" it.
+
+## The boundary
+
+**The admin area may read content. It must never write it.**
+
+The moment it grows a "fix this exercise" button, the content → platform direction inverts
+and this repo starts holding the thing it exists to keep out. Showing that exercise 3.2.4
+stalls the class is the platform's job; fixing it is a commit in the course repo.
+
+This is the rule most likely to rot, because every step towards breaking it looks
+reasonable in isolation. It belongs in `CLAUDE.md` next to the others.
+
+## Rules that carry over
+
+Existing decisions the new screens have to keep, all of them already argued elsewhere:
+
+- **An admin may not unmake themselves.** Self-demotion and self-suspension are refused in
+  `putUser`, because only the `admins` group can reach that function and there is no way
+  back from inside the app.
+- **An admin's course list is derived, never enrolled**, and the screens must not imply
+  otherwise — see [Already done](#already-done). Nothing may "fix" an admin's empty
+  enrolment by writing rows: those would be rows to withdraw on demotion, and rows somebody
+  has to remember for every course published afterwards.
+- **`preview.js` stubs every method, including the refusals.** `icecore dev --as admin` is
+  the only way to see these screens without a pool behind them. A new route with no stub is
+  a screen nobody looks at before it ships.
+- **Cognito owns identity; the table owns enrolment** — and now cohorts, which are the same
+  kind of fact. Nothing new caches something the pool is the writer of.
+- **The sub is not the username.** Every `Admin*` call goes through `lookup()`.
+
+## Order I would build it
+
+The ordering principle is **writes before views**. A screen can be built later against data
+that exists; it cannot be built at all against data nobody recorded. Cohorts and the spend
+ledger are therefore first, not because they are the most useful but because every day
+without them is a day of students untagged and hints uncounted.
+
+1. ~~**Cohorts**~~ — done, see below.
+2. ~~**The spend ledger and the per-exercise hint counter.**~~ — done, see below.
+3. **The route and the three-section shell.** Everything after it has somewhere to go.
+4. **The person page, with their submitted code.** Highest value per line in the plan, and
+   no new data at all.
+5. **The course page: roster, position, completion**, pivotable by cohort. Gives `byCourse`
+   its first reader — three of its four partitions at once.
+6. **Where the class stalls**, from solves, bookmark bunching and hint counts.
+7. **View-as**, read-only, under the five constraints above.
+8. **The platform page**: publication state, spend four ways, the ceiling.
+9. **Only then** decide whether attempts need recording.
+
+Remote control sits after all of it and behind a channel that does not exist yet.
+
+## Already done
+
+**Step 1, cohorts.** `COHORTS`/`COHORT#<id>` for the cohort and `USER#<sub>`/`COHORT#<id>`
+for membership; `POST`/`PUT`/`DELETE` on a new `/api/admin/cohorts` path served by the same
+Lambda; the catalogue riding back with the user listing; a `cohort` column and a
+whole-file field in the import, with the cohorts it is about to create named before
+anything is sent; a picker with inline create in the dialog; a column and a filter group in
+the list; `CohortDialog.vue` for rename, archive and delete; the whole of it stubbed in
+`preview.js`, including an empty cohort and an archived one, because those are the two
+states a membership-derived list could not draw.
+
+The listing reads cohorts and enrolments as one range - `sk BETWEEN 'COHORT#' AND 'ENROL$'`
+- so this cost no extra query per person. The fragility that buys is commented at the call
+site and in the stack beside the key map: **a sort-key prefix added later beginning with D
+or E would arrive in the listing as an enrolment nobody wrote.**
+
+**Step 2, the ledger.** `SPEND#hint#<day>#<course>` in the student's own partition, tokens
+and model rather than money, plus the aggregate `HINTS#<course>`/`<exercise>` counter. Both
+writes are awaited but their failure is logged and swallowed: the hint is already paid for
+and already good by the time they run. No client change was needed - `hint.js` has always
+sent `course` and `exercise.id`, and the Lambda had always ignored them.
+
+Nothing reads either yet. That is deliberate: the screens can be built later against data
+that exists, and could not be built at all against data nobody recorded.
+
+**And two corrections out of this plan, applied while writing it:**
+
+- **The user list no longer shows an admin's enrolments.** An admin sees every course
+  because `App.vue` skips the enrolment filter for them, so listing two courses beside
+  their name stated a limit that is not one — and a promoted student appeared to have lost
+  the rest of the catalogue. The column reads "All courses"; the ticks in the dialog stay,
+  editable, because they are what the person is left on if their rights are removed, with a
+  line saying exactly that.
+- **`icecore-stack.js` said `PROG#<course>#<unit>`** in the comment documenting the table's
+  keys; the Lambda writes `PROG#<course>#<exercise>`. Drift in a comment, now fixed.
+
+## Open questions
+
+- **What view-as does about writes, concretely.** One gate at the API layer is the shape;
+  where it lives — `auth.js`'s `api()`, or the progress module — decides how hard remote
+  control is later. Worth settling before item 7, not during it.
+- **Whether a cohort should be able to carry a default course.** Argued against above: it
+  makes cohort a second spelling of enrolment. But if every real intake turns out to do
+  exactly one course, the pivot on the course page is a click somebody makes every time.
+  Revisit after the first two intakes, with evidence rather than now.
+- **What the cohort page shows that the course page does not.** Its honest answer today is
+  "the same numbers, grouped the other way". That is enough to build it, and not enough to
+  build it first.

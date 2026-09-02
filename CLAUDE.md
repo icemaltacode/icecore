@@ -295,9 +295,20 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
 
 ## Managing users
 
-`AdminPanel.vue`, `UserDialog.vue`, `UserImport.vue` and `infra/lambda/admin/` — one route,
-`/api/admin/users`, doing GET/POST/PUT/DELETE. It replaced a screen that could only ask "who
-is on course X" and could only invite and unenrol.
+`AdminPanel.vue`, `UserDialog.vue`, `UserImport.vue`, `CohortDialog.vue` and
+`infra/lambda/admin/` — two paths, `/api/admin/users` and `/api/admin/cohorts`, served by
+one function and told apart by the path. It replaced a screen that could only ask "who is
+on course X" and could only invite and unenrol.
+
+[`ADMIN.md`](ADMIN.md) is the plan for what this becomes: three sections rather than one
+modal, what belongs in each, and the order. What follows here is the part that constrains
+other work.
+
+- **The admin area may read content and must never write it.** The moment it grows a "fix
+  this exercise" button, the content → platform direction inverts and this repo starts
+  holding the thing it exists to keep out. Showing that an exercise stalls a class is the
+  platform's job; fixing it is a commit in the course repo. The rule most likely to rot,
+  because every step towards breaking it looks reasonable on its own.
 
 - **Cognito owns identity; the table owns enrolment.** Name, email, sign-in status, enabled,
   and membership of `admins` are read back from the pool, never from a copy. The name is
@@ -349,9 +360,69 @@ is on course X" and could only invite and unenrol.
   import whose course column is quietly wrong succeeds and leaves a class with an empty grid.
   The legend goes *under* the data: a comment before the header makes the header the second
   line, and every spreadsheet then imports the comment as its column names.
-- **`preview.js` stubs all four methods, including both refusals.** `icecore dev --as admin`
+- **`preview.js` stubs every method, including both refusals.** `icecore dev --as admin`
   is the only way to look at this screen without a pool behind it, and a disabled control
-  whose message cannot be reached locally is a message nobody reads before shipping.
+  whose message cannot be reached locally is a message nobody reads before shipping. Its
+  seeded cohorts include an empty one and an archived one, because those are the two states
+  a list derived from membership could not draw.
+
+### Cohorts
+
+**A cohort is a group of PEOPLE** — an intake, a class — not a group of enrolments and not a
+property of a course. An intake may take two courses, so a cohort that named one would be a
+second, worse spelling of enrolment. It is therefore an axis rather than a section: a filter
+in the user list, a page of its own later, a pivot on the course page, a grouping on spend.
+
+- **Two rows.** `COHORTS`/`COHORT#<id>` is the cohort; `USER#<sub>`/`COHORT#<id>` is
+  membership, with the name cached on it exactly as `ENROL#` does. Membership lives in the
+  *user's* partition for two reasons: `byCourse` inverts the key, so the roster is one query
+  with names on it, and `forget()` already deletes it with the person.
+- **The cohort needs a row of its own because an empty cohort has to exist.** You name a
+  class before you import it, and that is precisely when a list derived from membership
+  cannot represent it.
+- **THE LISTING READS `COHORT#` AND `ENROL#` AS ONE RANGE** — `sk BETWEEN 'COHORT#' AND
+  'ENROL$'` in `belongings` — so cohorts cost no extra query per person on the slowest screen
+  in the app. **A sort-key prefix added later that begins with D or E falls inside that range
+  and arrives in the listing as an enrolment nobody wrote.** The prefixes today are `COHORT#`,
+  `ENROL#`, `LAST#`, `PROG#`, `RATE#` and `SPEND#`.
+- **The id is a slug of the title, taken once and never moved.** A tutor types it into a CSV
+  column, so it cannot be opaque; and because it never moves, a rename rewrites one row
+  rather than every membership row. The title drifting from its original slug is the
+  ordinary outcome, not a bug. Matching is on id *or* title, case-insensitively, and the
+  Lambda is the authority — the import's own resolution is only for the preview.
+- **An unknown course blocks an import row; an unknown cohort creates one.** A course id that
+  is not published means a typo and a student landing on nothing; a cohort that does not
+  exist yet is how an intake gets named. What makes creating safe is that the preview says
+  which cohorts it is about to create, before anything is sent.
+- **The cohort column splits on `;` and `|` only, never whitespace.** A course id cannot
+  contain a space and a cohort name usually does — "Sept 2026 evening" through the course
+  splitter is three cohorts, two of them created on the spot.
+- **Deleting a cohort deletes the grouping and none of the people.** Said twice in the UI,
+  because "delete" beside a member count reads as deleting students. Archiving is the
+  ordinary end of an intake: it keeps the statistics and leaves the pickers.
+
+### What a hint costs
+
+`SPEND#hint#<day>#<course>` on the student's own row, plus an aggregate
+`HINTS#<course>`/`<exercise>` counter. Written by the hint Lambda; **nothing reads either
+yet**, and that is the ordering rather than an oversight — a screen can be built later
+against data that exists and cannot be built at all against data nobody recorded.
+
+- **The ledger is in the student's partition on purpose.** `forget()` deletes everything
+  under `USER#<sub>`, so it goes with the person. A row keyed on the day instead would
+  survive deleting somebody and still name their sub.
+- **It is a separate row from `RATE#hint#<day>`, which has a three-day TTL.** That one is a
+  limit and wants to be forgotten; this one is history and must not be. Widening the TTL to
+  serve both gives the limit a memory it has no use for.
+- **Tokens and the model, not money**, priced at read time — which does mean changing the
+  rate re-prices history, and for an internal cost view that is the honest trade.
+- **The per-exercise counter is not about a student**, which is why it is the one row here
+  that is *not* deleted with a person. It is the difficulty signal the platform otherwise
+  lacks entirely, because a `PROG#` row is only ever written when somebody succeeds.
+- Both writes are awaited and their failure is logged and swallowed: the hint is already
+  paid for and already good by the time they run. Neither needed a client change —
+  `hint.js` has always sent `course` and `exercise.id`, and the Lambda had always ignored
+  them.
 
 ## Progress and XP
 
