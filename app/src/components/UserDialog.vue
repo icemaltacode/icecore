@@ -303,7 +303,16 @@ input:disabled { opacity: .6; }
 .pair.tight { grid-template-columns: 1fr auto; gap: 8px; margin: 0; align-items: center; }
 .hint { margin: 5px 0 0; font-size: 11.5px; color: var(--ice-fg-muted); line-height: 1.45; }
 .hint.self { margin: -6px 0 14px; }
-.hint.above { margin: -12px 0 16px; }
+/* A HINT BELONGING TO THE THING ABOVE IT, and the gap is now the hint's rather than a pull
+   against somebody else's.
+   This was `margin: -12px 0 16px` - a negative top sized to cancel exactly 18px, which is
+   what `.courses` happens to carry. `.newco` carries 6px and `.courses.short` 10px, so the
+   same class overshot by 6px and 2px: the cohort hint rendered INSIDE the input above it.
+   Whoever adds the next one of these would have hit it again.
+   `:has(+ ...)` lets the predecessor drop its own bottom margin when a hint follows, so the
+   spacing stops depending on which predecessor it is. */
+.hint.above { margin: 6px 0 16px; }
+.courses:has(+ .hint.above), .newco:has(+ .hint.above) { margin-bottom: 0; }
 .courses.short { max-height: 132px; margin-bottom: 10px; }
 .newco { margin-bottom: 6px; }
 .newco input { width: 100%; }

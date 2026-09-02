@@ -59,6 +59,14 @@ onMounted(() => {
           },
           '.cm-activeLine': { background: 'var(--ice-raise)' },
           '.cm-activeLineGutter': { background: 'var(--ice-raise)', color: 'var(--ice-fg)' },
+          /* CARET-COLOR, NOT .cm-cursor, and the .cm-cursor rule below has never done
+             anything. CodeMirror only draws its own cursor element when the `drawSelection`
+             extension is loaded, and it is not - so what blinks here is the BROWSER's native
+             caret, which takes `caret-color` and ignores border-left-color entirely. The
+             native caret defaults to currentColor on the element it sits in, and .cm-content
+             carries no colour of its own, so in dark mode it came out black on dark blue.
+             Kept alongside so that adding drawSelection later does not reintroduce it. */
+          '.cm-content': { caretColor: 'var(--ice-fg)' },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
           '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
             background: 'var(--ice-primary-soft)',

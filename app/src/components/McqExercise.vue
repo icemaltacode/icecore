@@ -36,7 +36,11 @@ function submit() {
     <div class="card">
       <header>
         <h2>{{ exercise.title }}</h2>
-        <span class="xp">{{ exercise.xp }} XP</span>
+        <!-- Only where there is an amount. An exercise with no `xp:` in its frontmatter
+             has `exercise.xp === undefined`, which Vue interpolates as an empty string -
+             so this rendered a bare "XP" against nothing. Truthiness on purpose: an
+             exercise explicitly worth 0 has no badge to show either. -->
+        <span v-if="exercise.xp" class="xp">{{ exercise.xp }} XP</span>
       </header>
 
       <div class="prose" v-html="mdx(exercise.prompt)"></div>
