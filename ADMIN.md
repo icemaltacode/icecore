@@ -8,7 +8,7 @@ This plan gives it three sections, and argues that the second of them — a cour
 page — is where nearly all the remaining value is, because it is the only one that can tell
 a tutor something they cannot already see by asking the student.
 
-Status: **steps 1 to 6 are built and deployed.** Cohorts, the spend ledger, the route and
+Status: **steps 1 to 7 are built and deployed.** Cohorts, the spend ledger, the route and
 shell, the person page, the course page, and the stall view - which is the first thing to
 read the ledger, and the reason it was written before anything could. Nothing reads the ledger yet, which is the ordering rather than
 an oversight. What is done is listed under [Already done](#already-done); everything else
@@ -397,7 +397,7 @@ without them is a day of students untagged and hints uncounted.
 4. ~~**The person page, with their submitted code.**~~ — done, see below.
 5. ~~**The course page: roster, position, completion.**~~ — done, see below.
 6. ~~**Where the class stalls.**~~ — done, see below.
-7. **View-as**, read-only, under the five constraints above.
+7. ~~**View-as**, read-only.~~ — done, see below.
 8. **The platform page**: publication state, spend four ways, the ceiling.
 9. **Only then** decide whether attempts need recording.
 
@@ -518,6 +518,38 @@ query on `HINTS#<course>` in `getCourse`.
   Worth keeping as the argument against shipping data before something reads it: the field
   cost nothing to add and was wrong in a way only a reader could have found.
 
+**Step 7, view-as.** `subject.js`, `WatchBanner.vue`, `#/watch/<sub>`, and `enrolled` added
+to `getPerson`.
+
+- **One grep settled the shape.** `App.vue` is the *only* reader of `progress.js` - all four
+  calls are there and every component below takes props. So the player was already rendered
+  from a single subject holder, and this was those four calls taking a subject rather than
+  implying one.
+- **`me()`, `watching(sub)`, and later `driving(sub)`** — one interface, no call sites in
+  between. Remote control is the third implementation rather than a branch anywhere.
+- **The write gate went on the SUBJECT, not the API layer**, which this plan had said. The
+  thing deciding what is read must be the thing deciding what is written, or the two can
+  disagree about whose session this is - and a mismatch there means reading one student
+  while recording against another.
+- **No new endpoint for the reads.** `admin/users?sub=&course=` was written for the person
+  page and already returns exactly what `load` gives back.
+- **Nothing touches localStorage.** A watched session hydrated through `progress.js`'s
+  offline fallback would overwrite the admin's own record with a student's, silently and
+  permanently. It is held in memory and forgotten on exit.
+- **The grid is filtered to the student's enrolments**, which is why `getPerson` now returns
+  them: a view of a student showing the admin's whole catalogue is a lie about the one thing
+  the feature exists to show.
+- **The subject is switched BEFORE the courses load** on a deep link. The other order
+  fetches the admin's own progress, draws it, and replaces it - a flash of the wrong
+  person's work on the screen that must never show one.
+- **Running code still works and records nothing.** The editor and its database are local to
+  the browser, so trying the student's query against the student's exercise is most of why
+  you opened it; only `mark` and `remember` are inert.
+- **The banner is the feature.** Everything under it is the ordinary player, so it is the
+  only thing distinguishing a student's work from your own - persistent, naming them, and
+  saying that nothing is being recorded. Mistaking your own work for someone else's is
+  confusing; mistaking theirs for yours is worse.
+
 **And two corrections out of this plan, applied while writing it:**
 
 - **The user list no longer shows an admin's enrolments.** An admin sees every course
@@ -531,9 +563,6 @@ query on `HINTS#<course>` in `getCourse`.
 
 ## Open questions
 
-- **What view-as does about writes, concretely.** One gate at the API layer is the shape;
-  where it lives — `auth.js`'s `api()`, or the progress module — decides how hard remote
-  control is later. Worth settling before item 7, not during it.
 - **Whether a cohort should be able to carry a default course.** Argued against above: it
   makes cohort a second spelling of enrolment. But if every real intake turns out to do
   exactly one course, the pivot on the course page is a click somebody makes every time.

@@ -17,6 +17,11 @@ const props = defineProps({
   authed: Boolean,
   /** XP earned today, across every course. Zero is a real answer and is shown as one. */
   xpToday: Number,
+  /* Somebody else's session is being viewed. The counter is hidden rather than zeroed:
+   * today's XP is derived from rows filtered by an instant and the admin route answers per
+   * course, so it is a number this side does not have - and a nought would read as a
+   * student who has done nothing today, which is a different claim entirely. */
+  watching: Boolean,
 });
 defineEmits(['home', 'admin', 'signout']);
 
@@ -134,7 +139,7 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
            something today. It sits beside the person because it is a fact about them
            rather than about whatever course happens to be open - which is also why it is
            counted across all of them. -->
-      <span ref="ring" class="ring" :class="{ sweeping }">
+      <span v-if="!watching" ref="ring" class="ring" :class="{ sweeping }">
         <span class="xp" title="XP earned today">
           <strong>{{ shown.toLocaleString() }}</strong> XP today
         </span>

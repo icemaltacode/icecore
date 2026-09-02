@@ -19,14 +19,31 @@
  */
 import { ref } from 'vue';
 
-/** `#/admin`, `#/admin/<section>`, `#/admin/<section>/<id>`, or null for anywhere else. */
+/* Two areas, and a route says which.
+ *
+ *   #/admin, #/admin/<section>, #/admin/<section>/<id>
+ *   #/watch/<sub>                 the player, rendered as that student sees it
+ *
+ * Watching is a URL rather than a flag for the reason the rest of this file exists: it is
+ * somewhere you can BE, a reload should land you back in it rather than quietly back in
+ * your own session, and Back is the natural way out. It being addressable is also half of
+ * what remote control will need - a session somebody else can point at. */
 function parse() {
-  const m = /^#\/admin(?:\/([a-z-]+))?(?:\/(.+))?$/.exec(location.hash || '');
-  if (!m) return null;
-  return { section: m[1] || 'people', id: m[2] ? decodeURIComponent(m[2]) : null };
+  const hash = location.hash || '';
+  const admin = /^#\/admin(?:\/([a-z-]+))?(?:\/(.+))?$/.exec(hash);
+  if (admin) {
+    return {
+      area: 'admin',
+      section: admin[1] || 'people',
+      id: admin[2] ? decodeURIComponent(admin[2]) : null,
+    };
+  }
+  const watch = /^#\/watch\/(.+)$/.exec(hash);
+  if (watch) return { area: 'watch', section: null, id: decodeURIComponent(watch[1]) };
+  return null;
 }
 
-/** The current admin location, or null when the admin area is not open. */
+/** The current location, or null when neither area is open. */
 export const route = ref(parse());
 
 /* Back and Forward, and somebody editing the URL by hand. Our own navigations go through
@@ -46,6 +63,11 @@ function navigate(url, replace) {
 /** Open the admin area, at a section and optionally one thing inside it. */
 export function go(section = 'people', id = null) {
   navigate('#/admin/' + section + (id ? '/' + encodeURIComponent(id) : ''), false);
+}
+
+/** Open a student's session, read-only. */
+export function watch(sub) {
+  navigate('#/watch/' + encodeURIComponent(sub), false);
 }
 
 /** Leave it. Pushes a hash-less URL rather than clearing the hash, which would leave a

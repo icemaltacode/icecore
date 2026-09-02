@@ -578,9 +578,11 @@ const courseOf = sk => sk.slice('PROG#'.length).split('#')[0];
 const CODE_BUDGET = 400_000;
 
 async function getPerson(sub, course) {
-  const [who, { progress, places }] = await Promise.all([
+  const [who, { progress, places }, on] = await Promise.all([
     lookup(sub).catch(() => null),
     history(sub),
+    // Only the summary needs it, but it is one query on a screen asked for by hand.
+    belongings(sub),
   ]);
   if (!who) return json(404, { error: 'no such user' });
 
@@ -604,6 +606,12 @@ async function getPerson(sub, course) {
     return json(200, {
       sub, email: who.email, name: who.name,
       courses: Object.values(by).sort((a, b) => (b.last || '').localeCompare(a.last || '')),
+      /* What they are ENROLLED on, which is a different list from what they have touched
+       * above - and the one a watched session has to draw its grid from. Seeing an admin's
+       * whole catalogue while claiming to show a student's view would make the feature a
+       * lie about the one thing it exists to show. */
+      enrolled: on.courses,
+      cohorts: on.cohorts,
     });
   }
 

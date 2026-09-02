@@ -1,14 +1,16 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
-import { loadAuthConfig, isEnabled, restore, startSession, signOut, session } from './auth.js';
-import { load as loadProgress, mark as markProgress, remember, earnedToday, progressId } from './progress.js';
+import { loadAuthConfig, isEnabled, restore, startSession, signOut, session, api } from './auth.js';
+import { progressId } from './progress.js';
+import { me as mySubject, watching } from './subject.js';
 import CodingExercise from './components/CodingExercise.vue';
 import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
-import { route as adminRoute, go as goAdmin, leave as leaveAdmin } from './route.js';
+import { route as adminRoute, go as goAdmin, watch as goWatch, leave as leaveAdmin } from './route.js';
+import WatchBanner from './components/WatchBanner.vue';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
@@ -122,7 +124,18 @@ const isAdmin = computed(() => session.admin);
 /* The admin area is a URL, not a flag - see route.js. A route is only a request: it is
  * honoured here, once, so that a student who types `#/admin` is turned away in one place
  * rather than in every screen that reads a section name. */
-const showAdmin = computed(() => isAdmin.value && !!adminRoute.value);
+const showAdmin = computed(() => isAdmin.value && adminRoute.value?.area === 'admin');
+
+/* WHOSE progress the player is showing - see subject.js. A value rather than a flag, so
+ * that reading somebody else's session and reading your own are the same code path with a
+ * different subject in it, and so remote control later is a third subject rather than a
+ * branch at every call site.
+ *
+ * Held here because this is the only component that asks about progress at all. */
+const subject = ref(mySubject());
+const watchingSub = computed(() =>
+  (isAdmin.value && adminRoute.value?.area === 'watch' ? adminRoute.value.id : ''));
+const watched = ref(null);   // { sub, name, email } - who the banner names
 
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
  * above exist to make 200-odd exercises navigable. */
@@ -183,7 +196,7 @@ async function open(id) {
       history.replaceState({}, '', url);
       return;
     }
-    const { solved: done, last, xp: earnedHere, code } = await loadProgress(id);
+    const { solved: done, last, xp: earnedHere, code } = await subject.value.load(id);
     solved.value = done;
     earned.value = earnedHere;
     savedCode.value = code || {};
@@ -231,23 +244,11 @@ async function loadCourses() {
      * The same shape as `open`, and for the same reason: a property of who you are, resolved
      * where the catalogue is actually known, against a boundary that was only ever about what
      * is shown. Promotion takes effect on the next sign-in, with nothing to migrate. */
-    manifest.value = session.courses && !isAdmin.value
-      ? published.filter(c => c.open || session.courses.includes(c.id))
-      : published;
+    manifest.value = visible(published);
     if (!manifest.value.length) throw new Error(session.courses
       ? 'You are not enrolled on any course yet - ask your tutor.'
       : 'No courses published - run npm run content');
-    // Each card carries its own tally, so every enrolled course's progress is fetched -
-    // not awaited, though: the grid is worth showing before the numbers land on it.
-    for (const c of manifest.value.filter(c => !c.playground))
-      loadProgress(c.id)
-        .then(({ solved: s, xp: n }) => {
-          courseProgress.value = { ...courseProgress.value, [c.id]: { done: s.size, xp: n } };
-        })
-        .catch(() => {});
-    // One question about the student rather than about any course, so it is asked here and
-    // then kept up to date by markSolved rather than re-fetched.
-    earnedToday().then(n => { xpToday.value = n; }).catch(() => {});
+    fillProgress();
     // A course named in the URL opens straight away. That is what makes returning to the
     // tab resume where they were, rather than sending them back through the grid.
     const wanted = new URLSearchParams(location.search).get('course');
@@ -259,6 +260,80 @@ async function loadCourses() {
     loading.value = false;
   }
 }
+
+/* Which courses the grid shows, for whoever is being looked at.
+ *
+ * Watching somebody narrows it to THEIR enrolments rather than the admin's derived
+ * everything: a view of a student that shows the whole catalogue is a lie about the single
+ * thing the feature exists to show. `open` courses stay, because they are on everybody's
+ * grid without an enrolment row - including theirs. */
+const visible = (all) => {
+  if (watched.value) {
+    const mine = watched.value.courses || [];
+    return all.filter(c => c.open || mine.includes(c.id));
+  }
+  return session.courses && !isAdmin.value
+    ? all.filter(c => c.open || session.courses.includes(c.id))
+    : all;
+};
+
+/* Every tally the grid draws, for whoever the subject currently is. Extracted because it
+ * runs twice now: once on load, and again whenever the subject changes underneath it. */
+function fillProgress() {
+  // Not awaited: the grid is worth showing before the numbers land on it.
+  for (const c of manifest.value.filter(c => !c.playground))
+    subject.value.load(c.id)
+      .then(({ solved: s, xp: n }) => {
+        courseProgress.value = { ...courseProgress.value, [c.id]: { done: s.size, xp: n } };
+      })
+      .catch(() => {});
+  // One question about the student rather than about any course, so it is asked here and
+  // then kept up to date by markSolved rather than re-fetched.
+  subject.value.earnedToday().then(n => { xpToday.value = n; }).catch(() => {});
+}
+
+/* Entering or leaving somebody else's session.
+ *
+ * EVERYTHING THE PREVIOUS SUBJECT ANSWERED IS DROPPED FIRST. The solved set, the XP, the
+ * saved code and the open course all belong to whoever was being shown a moment ago, and
+ * leaving any of it in place would draw one person's work against another's course - which
+ * is the exact confusion the banner exists to prevent, arriving through the back door. */
+async function switchSubject(sub) {
+  course.value = null;
+  playground.value = null;
+  currentId.value = null;
+  showSlides.value = false;
+  solved.value = new Set();
+  earned.value = 0;
+  savedCode.value = {};
+  courseProgress.value = {};
+  xpToday.value = 0;
+  const url = new URL(location.href);
+  url.searchParams.delete('course');
+  history.replaceState({}, '', url);
+
+  if (!sub) {
+    watched.value = null;
+    subject.value = mySubject();
+    manifest.value = visible(allCourses.value);
+    fillProgress();
+    return;
+  }
+  /* Named from the listing rather than from the URL. A banner reading `preview-3` names
+   * nobody, and this screen's whole job is to say unmistakably whose session this is - so
+   * the identity is fetched before the player is drawn against it. */
+  subject.value = watching(sub, null);
+  watched.value = { sub, name: '', email: '' };
+  try {
+    const who = await api(`admin/users?sub=${encodeURIComponent(sub)}`);
+    watched.value = { sub, name: who.name, email: who.email, courses: who.enrolled || [] };
+    subject.value = watching(sub, who);
+  } catch { /* the banner falls back to the sub, which is still a banner */ }
+  // The grid was filtered for whoever was being shown a moment ago.
+  manifest.value = visible(allCourses.value);
+  fillProgress();
+}
+watch(watchingSub, switchSubject);
 
 /** Back to the grid. Drops ?course= as well, or a reload would walk straight past it. */
 function backToCourses() {
@@ -284,13 +359,18 @@ onMounted(async () => {
     catch { needsSignIn.value = true; loading.value = false; return; }
     authed.value = true;
   }
-  await loadCourses();
-
   /* A route nobody may follow is corrected rather than ignored, and REPLACED rather than
    * pushed: it was not a step the student took, so Back must not walk into it. After the
    * session, because `admin` is not known before it - and it covers an open deployment,
    * where there are no admins at all. */
   if (adminRoute.value && !isAdmin.value) leaveAdmin(true);
+  /* A deep link straight into somebody's session - a reload, or a pasted URL. Before the
+   * courses load rather than after: the other order fetches the admin's own progress, draws
+   * it, and then replaces it, which is a flash of the wrong person's work on exactly the
+   * screen that must never show one. */
+  else if (watchingSub.value) await switchSubject(watchingSub.value);
+
+  await loadCourses();
 });
 
 async function onAuthenticated(token) {
@@ -313,7 +393,7 @@ const markSolved = (id, code) => {
   urgeNext.value = true;
   if (code) savedCode.value = { ...savedCode.value, [id]: code };
 
-  if (!first) { markProgress(course.value.id, id, { code }); return; }
+  if (!first) { subject.value.mark(course.value.id, id, { code }); return; }
 
   // What the exercise is worth travels with the solve, because that is what gets recorded.
   // Read off the row rather than looked up again: the walk carries the exercise's own
@@ -326,7 +406,7 @@ const markSolved = (id, code) => {
     ...courseProgress.value,
     [course.value.id]: { done: solved.value.size, xp: earned.value },
   };
-  markProgress(course.value.id, id, { xp: worth, code });
+  subject.value.mark(course.value.id, id, { xp: worth, code });
 };
 const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value = n.id; };
 
@@ -338,18 +418,25 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
  * be told where to go. */
 watch(currentId, id => {
   urgeNext.value = false;
-  if (course.value && id) remember(course.value.id, id);
+  if (course.value && id) subject.value.remember(course.value.id, id);
 });
 </script>
 
 <template>
   <SignIn v-if="needsSignIn" @authenticated="onAuthenticated" />
 
-  <div v-else class="app">
+  <div v-else class="app" :class="{ watching: !!watched }">
     <TopBar
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
       :xp-today="xpToday"
+      :watching="!!watched"
       @home="backToCourses" @admin="goAdmin()" @signout="signOut" />
+
+    <!-- Above everything, always, for as long as the session is open. The screens below it
+         are the ordinary player, so this band is the only thing distinguishing a student's
+         work from your own. -->
+    <WatchBanner v-if="watched" :name="watched.name" :email="watched.email"
+                 @exit="goAdmin('people', watched.sub)" />
 
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
          use for the exercise nav, and it has to be reachable from the grid, where there is
@@ -509,6 +596,10 @@ watch(currentId, id => {
    the viewport and does its own scrolling. minmax(0,·) on the row, or a long exercise
    pushes the grid taller than the window instead of scrolling inside it. */
 .app { height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+/* A CONDITIONAL CHILD OF A FIXED-ROW GRID NEEDS ITS OWN ROW. Two rows for the bar and the
+   player; the banner is a third child, so without this it takes the `1fr` row - stretching
+   to fill the whole screen - and the player is pushed into an implicit row underneath. */
+.app.watching { grid-template-rows: auto auto minmax(0, 1fr); }
 .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
 .shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
 .shell.railed { grid-template-columns: 44px minmax(0, 1fr); }

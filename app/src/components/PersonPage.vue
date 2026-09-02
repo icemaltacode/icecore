@@ -30,7 +30,7 @@ const props = defineProps({
   courses: Array,
   cohorts: Array,
 });
-const emit = defineEmits(['edit', 'back']);
+const emit = defineEmits(['edit', 'back', 'watch']);
 
 const summary = ref(null);
 const error = ref('');
@@ -111,7 +111,12 @@ const steps = code => Object.entries(code || {}).sort(([a], [b]) => Number(a) - 
           </template>
         </p>
       </div>
-      <button v-if="user" class="btn" @click="emit('edit')">Edit</button>
+      <div class="acts">
+        <!-- Read-only, and the banner on the other side says so. Offered here rather than
+             from the list because it is a considered thing to do, not a row click. -->
+        <button v-if="user" class="btn" @click="emit('watch')">View as</button>
+        <button v-if="user" class="btn" @click="emit('edit')">Edit</button>
+      </div>
     </header>
 
     <p v-if="error" class="err">{{ error }}</p>
@@ -192,6 +197,7 @@ h2 { margin: 0 0 4px; font-size: 22px; font-weight: 500; }
 .tag.admin { color: var(--ice-primary-strong); border-color: var(--ice-primary-soft);
              text-transform: uppercase; letter-spacing: .05em; font-size: 10px;
              vertical-align: 3px; margin-left: 6px; }
+.acts { display: flex; gap: 8px; flex: none; }
 .err { color: var(--ice-bad); font-size: 13px; }
 .muted { color: var(--ice-fg-muted); font-size: 13px; line-height: 1.6; max-width: 60ch; }
 .muted.small { font-size: 12px; }

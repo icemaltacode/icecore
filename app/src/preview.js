@@ -205,6 +205,8 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       if (!course) {
         return {
           sub: who.sub, email: who.email, name: who.name,
+          // What they are enrolled on, which is what a watched session draws its grid from.
+          enrolled: [...who.courses], cohorts: [...who.cohorts],
           courses: mine.map((id, i) => ({
             course: id, solved: 12 - i * 7, xp: 240 - i * 140,
             first: '2026-08-04T09:12:00Z', last: i ? '2026-08-19T16:02:00Z' : '2026-09-01T11:40:00Z',

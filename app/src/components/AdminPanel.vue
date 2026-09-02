@@ -31,7 +31,7 @@ import CohortList from './CohortList.vue';
 import PersonPage from './PersonPage.vue';
 import CoursePage from './CoursePage.vue';
 import Icon from './Icon.vue';
-import { route, go, leave } from '../route.js';
+import { route, go, watch as goWatch, leave } from '../route.js';
 
 const props = defineProps({ courses: Array });
 const emit = defineEmits(['close']);
@@ -189,7 +189,8 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
 
       <PersonPage v-if="viewing" :sub="viewing" :user="person"
                   :courses="courses" :cohorts="cohorts"
-                  @edit="editing = person" @back="go('people')" />
+                  @edit="editing = person" @back="go('people')"
+                  @watch="goWatch(viewing)" />
 
       <CoursePage v-else-if="openCourse" :course="openCourse" :users="users" :cohorts="cohorts"
                   @person="sub => go('people', sub)" @back="go('courses')" />
