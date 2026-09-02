@@ -174,6 +174,23 @@ onBeforeUnmount(() => removeEventListener('pointerdown', away));
 .xp strong { font-family: var(--ice-font-mono); font-variant-numeric: tabular-nums;
              font-size: 12px; color: var(--ice-fg); }
 
+/* The initials, and the thing it has to survive is ONE letter as well as two.
+ *
+ * Width and height are set outright rather than left to padding: padding sizes the box to
+ * its text, so "K" comes out an oval and "KV" a lozenge, and only a two-initial name ever
+ * looks round. `flex: none` for the same reason from the other side - a long name beside it
+ * would otherwise squash the circle into an ellipse.
+ *
+ * No letter-spacing. Tracking adds its gap after the last glyph too, which shunts centred
+ * text left by half of it - visible at 26px, and it reads as the circle being off rather
+ * than the letters. */
+.who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.avatar { flex: none; width: 26px; height: 26px; border-radius: 50%;
+          display: inline-flex; align-items: center; justify-content: center;
+          background: var(--ice-primary-soft); color: var(--ice-primary-strong);
+          font-size: 10.5px; font-weight: 600; line-height: 1; }
+.name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* A student who has asked for less motion gets the number and nothing else. */
 @media (prefers-reduced-motion: reduce) {
   .ring.sweeping { background: transparent; }
