@@ -404,6 +404,13 @@ export class IcecoreStack extends Stack {
     const account = fn('Account', 'account', {
       USER_POOL_ID: users.userPoolId,
       DAILY_LIMIT: String(this.node.tryGetContext('hintsPerDay') || 40),
+      /* WHO THE DATA CONTROLLER IS, for the Article 15 statement. Committed context for the
+       * reason the alarm email and the bootstrap admin are: passed as a flag it has to be
+       * remembered on every deploy, and a privacy statement naming the wrong organisation is
+       * worse than one that is late. Absent, the function falls back to an obvious
+       * placeholder rather than inventing a legal entity. */
+      ORG_NAME: this.node.tryGetContext('orgName') || '',
+      PRIVACY_CONTACT: this.node.tryGetContext('privacyContact') || '',
     });
     table.grantReadWriteData(account);
     account.addToRolePolicy(new iam.PolicyStatement({
@@ -452,6 +459,11 @@ export class IcecoreStack extends Stack {
      * the resource being deleted is a course's progress rather than the account. One
      * function still serves both - it tells them apart by path, exactly as the admin
      * function tells users from cohorts. */
+    api.addRoutes({
+      path: '/api/account/export',
+      methods: [HttpMethod.GET],
+      integration: new HttpLambdaIntegration('AccountExportIntegration', account),
+    });
     api.addRoutes({
       path: '/api/account/progress',
       methods: [HttpMethod.DELETE],

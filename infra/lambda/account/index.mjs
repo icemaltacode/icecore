@@ -3,6 +3,7 @@
  *   GET    /api/account            everything this platform holds about the caller, summarised
  *   PUT    /api/account            { name }
  *   DELETE /api/account/progress?course=   start that course again from nothing
+ *   GET    /api/account/export     a complete Article 15 response
  *
  * THE MIRROR OF THE ADMIN FUNCTION, AND ITS OPPOSITE. That one answers questions about
  * anybody and is reachable only by admins; this one answers questions about exactly one
@@ -34,6 +35,78 @@ const TABLE = process.env.TABLE;
 const POOL = process.env.USER_POOL_ID;
 const COHORTS = 'COHORTS';
 const DAILY_LIMIT = Number(process.env.DAILY_LIMIT || 40);
+
+/* WHAT WE HOLD AND WHY, in the words Article 15(1) asks for.
+ *
+ * ARTICLE 15 IS TWO THINGS, and the second is the one usually missed: a copy of the personal
+ * data, AND supplementary information about the processing of it. A file with only the copy
+ * looks generous and answers about a third of the article.
+ *
+ * ONE DEFINITION, RENDERED TWICE. It is returned by GET /api/account, where the account
+ * screen draws it as its own privacy summary, and it is embedded verbatim in the export.
+ * Written as prose in a component AND as JSON here, the two drift - and the drift is between
+ * what we tell somebody and what we send them.
+ *
+ * It carries no personal data at all: every field is a fact about the platform. That is why
+ * it can be a constant, and why sending it with the account summary costs a couple of
+ * kilobytes rather than a query.
+ *
+ * The organisation's own details are COMMITTED CONTEXT, for the reason the alarm email and
+ * the bootstrap admin are: passed as a flag they have to be remembered on every deploy, and
+ * a privacy statement naming the wrong controller is worse than one that is late. The
+ * fallbacks are deliberately obvious placeholders - a legal entity is not something this
+ * file may invent.
+ */
+const ABOUT = {
+  controller: {
+    name: process.env.ORG_NAME || 'the course provider',
+    contact: process.env.PRIVACY_CONTACT || '',
+  },
+  purposes: [
+    'Giving you access to the courses you are enrolled on.',
+    'Recording what you have solved, so that your progress and XP survive between sessions'
+      + ' and across devices.',
+    'Answering your requests for a hint, which sends your code to an AI service.',
+    'Administering accounts - inviting you, enrolling you, and grouping you into a class.',
+  ],
+  categories: [
+    'Identity: your name and the email address you sign in with.',
+    'Enrolment: which courses you are on and which class you are in.',
+    'Learning record: which exercises you have solved, when, what XP each earned, where you'
+      + ' left off, and the code you wrote to solve them.',
+    'Hint usage: how many hints you asked for, on which day and which course, and the size'
+      + ' of each request.',
+  ],
+  recipients: [
+    'Amazon Web Services, which hosts this platform. Your data is stored in the EU'
+      + ' (eu-south-1, Milan).',
+    'OpenAI, when you ask for a hint. THE CODE YOU WROTE IS SENT WITH THE REQUEST, because'
+      + ' that is what the hint is about. OpenAI is in the United States, so this is a'
+      + ' transfer outside the EU.',
+  ],
+  retention: [
+    'Your account and your learning record are kept for as long as your account exists.',
+    'The daily hint counter is deleted automatically after three days - it is a limit rather'
+      + ' than history.',
+    'Operational logs, which record that you signed in but not what you did, are kept for one'
+      + ' month and then deleted automatically.',
+  ],
+  rights: [
+    'Rectification: you can change your name on this page. Ask your tutor about anything else.',
+    'Erasure: ask, and your account and everything above is deleted.',
+    'Restriction and objection: ask.',
+    'Portability: the download on this page is machine-readable JSON.',
+  ],
+  complaint: 'You can complain to the Information and Data Protection Commissioner in Malta'
+    + ' - idpc.org.mt - if you think we have got this wrong.',
+  source: 'From you, and from the tutor who created your account and enrolled you.',
+  /* Said rather than omitted. Silence is what a reader assumes the worst about, and the
+   * honest answer here is a good one: grading decides whether an exercise is right and
+   * nothing follows from it. */
+  automated: 'Nothing here makes an automated decision about you with legal or similarly'
+    + ' significant effects. Your exercises are marked automatically, but that marking is'
+    + ' formative - it tells you whether an answer is right, and nothing else follows from it.',
+};
 
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -76,6 +149,12 @@ async function lookup(sub) {
     username: found.Username,
     email: attr(found.Attributes, 'email') || found.Username,
     name: attr(found.Attributes, 'name') || '',
+    // Only the export reads these, and it costs nothing to carry them: this is the same
+    // ListUsers call either way.
+    created: found.UserCreateDate,
+    modified: found.UserLastModifiedDate,
+    enabled: found.Enabled,
+    status: found.UserStatus,
   };
 }
 
@@ -192,6 +271,10 @@ async function get(sub, claims) {
     cohorts,
     xp: earned,
     hints: hint,
+    /* Carried here so the screen can draw its privacy summary without a second call and
+     * without writing the same prose again. It is a constant with no personal data in it -
+     * see ABOUT. */
+    about: ABOUT,
   });
 }
 
@@ -236,6 +319,88 @@ async function put(sub, body) {
   ]);
 
   return json(200, { ok: true, name: next });
+}
+
+/* THE ACCESS REQUEST: everything we hold, and what we do with it.
+ *
+ * A COMPLETE ARTICLE 15 RESPONSE, not a convenience download - both halves. The copy is
+ * below; the supplementary information is ABOUT, above, and both go in the file.
+ *
+ * GROUPED BY WHAT EACH ROW IS, not dumped as a list of rows. Article 12(1) asks for an
+ * intelligible form, and `{"sk": "PROG#data-analyst-sql#1418943"}` is a partition key rather
+ * than an answer. The grouping is the same one the prefixes already encode, so nothing here
+ * decides what a row means - it only spells it.
+ *
+ * NO PROJECTION, unlike every other read in this file: the `code` on each PROG# row is the
+ * bulky part of the partition and the part that makes this genuinely theirs. It is the only
+ * route by which a student leaves here with the work they did.
+ *
+ * SPEND#hint# ROWS ARE INCLUDED. They are personal data by any reading - keyed on the
+ * student, recording something they did - and leaving them out because of how they might
+ * read would be a presentation decision overruling a legal one. The presentation problem is
+ * solved as a presentation problem: they are called "hints you asked for" here and on the
+ * screen, listed by day, and the token counts are present because they are in the row rather
+ * than because they are the point.
+ *
+ * WHAT IS DELIBERATELY ABSENT, named so that it is a position rather than an omission:
+ *
+ *   HINTS#<course>   is not personal data - it counts hints per EXERCISE across everyone,
+ *                    is not keyed on any person, and is not in this partition at all.
+ *   CloudWatch logs  ARE personal data: a sub is a pseudonymous identifier. They are
+ *                    disclosed in ABOUT.retention rather than copied in - they are
+ *                    operational, they expire after a month, and a month of log lines would
+ *                    be slower, larger and less legible than the sentence that explains them.
+ *                    Somebody who specifically wants theirs asks a person.
+ */
+async function exportAll(sub, claims) {
+  const who = await lookup(sub);
+  const rows = await queryAll({
+    TableName: TABLE,
+    KeyConditionExpression: 'pk = :pk',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}` },
+  });
+
+  const data = {
+    enrolments: [], cohorts: [], progress: [], place: [],
+    hintsAsked: [], hintCounters: [],
+  };
+  for (const r of rows) {
+    const { pk, sk, ttl, ...rest } = r;
+    if (sk.startsWith('ENROL#')) data.enrolments.push({ course: sk.slice(6), ...rest });
+    else if (sk.startsWith('COHORT#')) data.cohorts.push({ cohort: sk.slice(7), ...rest });
+    else if (sk.startsWith('PROG#')) {
+      const [course, ...rest2] = sk.slice(5).split('#');
+      data.progress.push({ course, exercise: rest2.join('#'), ...rest });
+    } else if (sk.startsWith('LAST#')) data.place.push({ course: sk.slice(5), ...rest });
+    else if (sk.startsWith('SPEND#hint#')) {
+      const [day, ...c] = sk.slice(11).split('#');
+      data.hintsAsked.push({ day, course: c.join('#'), ...rest });
+    } else if (sk.startsWith('RATE#hint#')) {
+      data.hintCounters.push({ day: sk.slice(10), ...rest });
+    } else {
+      /* A prefix nobody thought about when this was written still belongs to the person and
+       * still has to come out. Named by its sort key rather than dropped, because silently
+       * omitting a category is the one failure mode this whole function exists to avoid. */
+      data.other = data.other || [];
+      data.other.push({ key: sk, ...rest });
+    }
+  }
+
+  return json(200, {
+    generated: new Date().toISOString(),
+    about: ABOUT,
+    identity: {
+      name: who.name,
+      email: who.email,
+      accountCreated: who.created,
+      lastChanged: who.modified,
+      enabled: who.enabled,
+      status: who.status,
+      // From the token: it is what the platform acts on, and it needs no extra permission.
+      administrator: String(claims?.['cognito:groups'] ?? '').includes('admins'),
+    },
+    data,
+  });
 }
 
 /* Start one course again from nothing.
@@ -310,12 +475,16 @@ export async function handler(event) {
   /* Told apart by path as well as by method, the way the admin function tells its two
    * resources apart. `rawPath` rather than a route key, so a stage prefix cannot change the
    * answer. */
-  const progress = /\/progress\/?$/.test(event.rawPath || '');
+  const path = event.rawPath || '';
+  const progress = /\/progress\/?$/.test(path);
+  const exporting = /\/export\/?$/.test(path);
   try {
     if (method === 'DELETE' && progress)
       return await reset(sub, event.queryStringParameters?.course);
-    if (method === 'GET' && !progress) return await get(sub, claims);
-    if (method === 'PUT' && !progress) return await put(sub, JSON.parse(event.body || '{}'));
+    if (method === 'GET' && exporting) return await exportAll(sub, claims);
+    if (method === 'GET' && !progress && !exporting) return await get(sub, claims);
+    if (method === 'PUT' && !progress && !exporting)
+      return await put(sub, JSON.parse(event.body || '{}'));
     return json(405, { error: `${method} not allowed` });
   } catch (e) {
     console.error(e);

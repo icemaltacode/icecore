@@ -77,6 +77,44 @@ const learning = computed(() => {
 
 const num = n => Number(n || 0).toLocaleString();
 
+/* ---- the access request ------------------------------------------------------------
+ *
+ * The download is built here rather than served as a file, because the endpoint is behind
+ * the API's JWT authorizer: a plain link carries no Authorization header and would 401. So
+ * `api()` fetches it as it fetches everything else, and the Blob is made from what came
+ * back.
+ */
+const exporting = ref(false);
+const exportError = ref('');
+
+async function download() {
+  exporting.value = true;
+  exportError.value = '';
+  try {
+    const all = await api('account/export');
+    /* Two-space JSON, not minified. Article 12(1) asks for an intelligible form, and this is
+     * a file somebody may well open in a text editor rather than feed to anything. */
+    const blob = new Blob([JSON.stringify(all, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `icecampus-data-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    // Revoked on the next task rather than immediately: Safari has not started reading the
+    // blob by the time click() returns, and revoking synchronously gives an empty file.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  } catch (e) {
+    exportError.value = e.message;
+  } finally {
+    exporting.value = false;
+  }
+}
+
+/* The statement, shown as well as sent. It arrives with the account summary rather than on
+ * a call of its own - it is a constant with no personal data in it, so it costs a couple of
+ * kilobytes and saves a round trip and a loading state for static text. */
+const about = computed(() => me.value?.about);
+
 /* ---- the danger zone -------------------------------------------------------------
  *
  * TWO GATES, and they guard different mistakes. The first is "did you mean to do this at
@@ -251,8 +289,7 @@ const SECTIONS = [
     blurb: 'What you have earned, the hints you have left today, and which courses and '
          + 'class you are on.' },
   { id: 'data', title: 'Your data',
-    blurb: 'Everything we hold about you, what it is for, and how to have it erased.',
-    soon: true },
+    blurb: 'Everything we hold about you, what it is for, and how to have it erased.' },
 ];
 </script>
 
@@ -416,6 +453,69 @@ const SECTIONS = [
           </template>
         </template>
 
+        <template v-else-if="s.id === 'data'">
+          <p v-if="!about" class="soon">Loading…</p>
+          <template v-else>
+            <div class="acts">
+              <button class="btn" :disabled="exporting" @click="download">
+                {{ exporting ? 'Gathering…' : 'Download everything' }}
+              </button>
+            </div>
+            <p v-if="exportError" class="err">{{ exportError }}</p>
+            <p class="hint">A JSON file with everything below in it, including the code you
+              wrote for every exercise you have solved.</p>
+
+            <!-- THE SAME OBJECT THE FILE CARRIES, rendered rather than rewritten. Article 15
+                 wants a copy of the data AND this; a page that showed different words from
+                 the ones in the download would be two answers to one question. -->
+            <dl class="statement">
+              <dt>Who holds it</dt>
+              <dd>
+                {{ about.controller.name }}<template v-if="about.controller.contact">.
+                Questions and requests: {{ about.controller.contact }}</template>
+              </dd>
+
+              <dt>What it is for</dt>
+              <dd><ul><li v-for="(x, i) in about.purposes" :key="i">{{ x }}</li></ul></dd>
+
+              <dt>What we hold</dt>
+              <dd><ul><li v-for="(x, i) in about.categories" :key="i">{{ x }}</li></ul></dd>
+
+              <dt>Who else sees it</dt>
+              <dd><ul><li v-for="(x, i) in about.recipients" :key="i">{{ x }}</li></ul></dd>
+
+              <dt>How long</dt>
+              <dd><ul><li v-for="(x, i) in about.retention" :key="i">{{ x }}</li></ul></dd>
+
+              <dt>Where it came from</dt>
+              <dd>{{ about.source }}</dd>
+
+              <dt>Automated decisions</dt>
+              <dd>{{ about.automated }}</dd>
+
+              <dt>Your rights</dt>
+              <dd><ul><li v-for="(x, i) in about.rights" :key="i">{{ x }}</li></ul></dd>
+
+              <!-- Erasure is a REQUEST rather than a button, and the page says so plainly
+                   rather than leaving it out. Deleting an account is also an enrolment
+                   decision - a student on a paid course who clears their own record destroys
+                   the evidence of what they were entitled to, and forget() removes the
+                   Cognito user first, so there is nobody left to ask what happened. -->
+              <dt>Being erased</dt>
+              <dd>
+                Ask <template v-if="about.controller.contact">{{ about.controller.contact
+                  }}</template><template v-else>your tutor</template>, or your tutor, and your
+                account and everything above is deleted. It is not a button here because
+                deleting your account also ends your enrolment, and that is a decision worth
+                a person reading.
+              </dd>
+
+              <dt>If we get it wrong</dt>
+              <dd>{{ about.complaint }}</dd>
+            </dl>
+          </template>
+        </template>
+
         <p v-else class="soon">Not built yet.</p>
       </section>
 
@@ -548,6 +648,17 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 /* The cohort's "(finished)" marker, matching the list's own aside rather than arriving as
    the browser's default italic. */
 .value em { font-style: normal; color: var(--ice-fg-muted); }
+
+/* A definition list again, but reading as prose rather than as fields: these are questions
+   and answers, so the label sits above its answer instead of beside it. Beside it, the
+   answers - which are lists of full sentences - would be squeezed into half the width. */
+.statement { margin: 20px 0 0; }
+.statement dt { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+                color: var(--ice-fg-muted); margin-top: 18px; }
+.statement dt:first-child { margin-top: 0; }
+.statement dd { margin: 6px 0 0; font-size: 13px; line-height: 1.65; max-width: 68ch; }
+.statement ul { margin: 0; padding-left: 18px; }
+.statement li { margin: 3px 0; }
 
 .gate { margin-top: 16px; }
 .gate label { display: block; margin: 16px 0 6px; text-transform: none; letter-spacing: 0;

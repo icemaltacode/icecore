@@ -103,6 +103,58 @@ const find = sub => people.find(p => p.sub === sub);
  * SIGN-OUT does, and preview state that outlived the tab would be a name still changed
  * after signing out and in again as somebody notionally else. `Ada Lovelace` is the name in
  * PREVIEW_TOKEN in auth.js, so an untouched preview and the top bar agree. */
+/* The Article 15 statement, copied from infra/lambda/account/index.mjs.
+ *
+ * THE ONE PLACE IN PREVIEW WHERE COPYING IS THE POINT. Everything else here stands in for a
+ * shape; this stands in for the WORDS, and words are what this feature is - a screen that
+ * rendered plausible placeholder prose would let us ship a statement nobody had read. If the
+ * two ever disagree, the Lambda is right and this is stale: it is the copy that gets sent to
+ * a person. */
+const ABOUT = {
+  controller: { name: 'ICE Campus (Institute of Computer Education Ltd.)', contact: 'keith@icecampus.com' },
+  purposes: [
+    'Giving you access to the courses you are enrolled on.',
+    'Recording what you have solved, so that your progress and XP survive between sessions'
+      + ' and across devices.',
+    'Answering your requests for a hint, which sends your code to an AI service.',
+    'Administering accounts - inviting you, enrolling you, and grouping you into a class.',
+  ],
+  categories: [
+    'Identity: your name and the email address you sign in with.',
+    'Enrolment: which courses you are on and which class you are in.',
+    'Learning record: which exercises you have solved, when, what XP each earned, where you'
+      + ' left off, and the code you wrote to solve them.',
+    'Hint usage: how many hints you asked for, on which day and which course, and the size'
+      + ' of each request.',
+  ],
+  recipients: [
+    'Amazon Web Services, which hosts this platform. Your data is stored in the EU'
+      + ' (eu-south-1, Milan).',
+    'OpenAI, when you ask for a hint. THE CODE YOU WROTE IS SENT WITH THE REQUEST, because'
+      + ' that is what the hint is about. OpenAI is in the United States, so this is a'
+      + ' transfer outside the EU.',
+  ],
+  retention: [
+    'Your account and your learning record are kept for as long as your account exists.',
+    'The daily hint counter is deleted automatically after three days - it is a limit rather'
+      + ' than history.',
+    'Operational logs, which record that you signed in but not what you did, are kept for one'
+      + ' month and then deleted automatically.',
+  ],
+  rights: [
+    'Rectification: you can change your name on this page. Ask your tutor about anything else.',
+    'Erasure: ask, and your account and everything above is deleted.',
+    'Restriction and objection: ask.',
+    'Portability: the download on this page is machine-readable JSON.',
+  ],
+  complaint: 'You can complain to the Information and Data Protection Commissioner in Malta'
+    + ' - idpc.org.mt - if you think we have got this wrong.',
+  source: 'From you, and from the tutor who created your account and enrolled you.',
+  automated: 'Nothing here makes an automated decision about you with legal or similarly'
+    + ' significant effects. Your exercises are marked automatically, but that marking is'
+    + ' formative - it tells you whether an answer is right, and nothing else follows from it.',
+};
+
 const NAME_KEY = 'ice-preview-name';
 const PREVIEW_NAME = () => sessionStorage.getItem(NAME_KEY) || 'Ada Lovelace';
 
@@ -139,6 +191,45 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
     const removed = Object.keys(store.earned(course)).length;
     store.forget(course);
     return { ok: true, course, removed };
+  }
+
+  /* The access request. Shaped exactly like the real one - both halves, grouped the same
+   * way - so that the screen's rendering of it, and the file a tutor is shown before this
+   * goes anywhere near a student, are the real thing rather than an approximation. */
+  if (route === 'account/export') {
+    const courses = (await loadManifest()).map(c => c.id);
+    const mine = role === 'admin' ? [] : courses;
+    const progress = [];
+    for (const id of mine) {
+      const rec = store.earned(id);
+      const codes = store.code(id);
+      for (const [exercise, xp] of Object.entries(rec))
+        progress.push({ course: id, exercise, xp, at: new Date().toISOString(),
+                        ...(codes[exercise] ? { code: codes[exercise] } : {}) });
+    }
+    return {
+      generated: new Date().toISOString(),
+      about: ABOUT,
+      identity: {
+        name: PREVIEW_NAME(), email: 'ada@example.com',
+        accountCreated: '2026-01-14T09:12:00.000Z', lastChanged: new Date().toISOString(),
+        enabled: true, status: 'CONFIRMED', administrator: role === 'admin',
+      },
+      data: {
+        enrolments: mine.map(course => ({ course, email: 'ada@example.com', name: PREVIEW_NAME() })),
+        cohorts: [{ cohort: 'sept-2026-evening', email: 'ada@example.com', name: PREVIEW_NAME() }],
+        progress,
+        place: mine.filter(id => store.place(id)).map(course => ({ course, exercise: store.place(course) })),
+        /* Present, and not empty. The whole argument about this file was whether hint spend
+         * belongs in it, so a preview that shows none is a preview of the version we
+         * decided against. */
+        hintsAsked: [
+          { day: '2026-09-01', course: mine[0] || 'a-course', n: 4, in: 5120, out: 890, model: 'gpt-5.6-luna' },
+          { day: '2026-09-02', course: mine[0] || 'a-course', n: 2, in: 2460, out: 410, model: 'gpt-5.6-luna' },
+        ],
+        hintCounters: [{ day: '2026-09-02', n: 6 }],
+      },
+    };
   }
 
   if (route === 'account') {
@@ -180,6 +271,7 @@ export async function previewApi(path, { method = 'GET', body } = {}) {
       /* Not zero. Zero is the state where nothing has been spent, which is the one state
        * that shows none of the wording this section exists to get right. */
       hints: { used: 6, limit: 40, left: 34 },
+      about: ABOUT,
     };
   }
 
