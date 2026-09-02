@@ -8,6 +8,7 @@ import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
+import { route as adminRoute, go as goAdmin, leave as leaveAdmin } from './route.js';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
@@ -32,7 +33,6 @@ const componentFor = { mcq: McqExercise, dragdrop: DragDropExercise, python: Pyt
 const playground = ref(null);
 const needsSignIn = ref(false);
 const authed = ref(false);
-const showAdmin = ref(false);
 const showSlides = ref(false);
 /* The deck belongs to the topic the current row sits in, so it follows the student through
  * the topic and swaps when they cross into the next one. Taken off the row rather than by
@@ -119,6 +119,10 @@ const slidesUrl = computed(() => {
 const allCourses = ref([]);   // unfiltered - an admin enrols people onto courses they aren't on
 const courseProgress = ref({});   // course id -> { done, xp }, for the cards on the grid
 const isAdmin = computed(() => session.admin);
+/* The admin area is a URL, not a flag - see route.js. A route is only a request: it is
+ * honoured here, once, so that a student who types `#/admin` is turned away in one place
+ * rather than in every screen that reads a section name. */
+const showAdmin = computed(() => isAdmin.value && !!adminRoute.value);
 
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
  * above exist to make 200-odd exercises navigable. */
@@ -260,7 +264,7 @@ async function loadCourses() {
 function backToCourses() {
   // The logo is the way home from anywhere, user management included - leaving that open
   // would make it look like it had done nothing.
-  showAdmin.value = false;
+  leaveAdmin();
   course.value = null;
   playground.value = null;
   currentId.value = null;
@@ -281,6 +285,12 @@ onMounted(async () => {
     authed.value = true;
   }
   await loadCourses();
+
+  /* A route nobody may follow is corrected rather than ignored, and REPLACED rather than
+   * pushed: it was not a step the student took, so Back must not walk into it. After the
+   * session, because `admin` is not known before it - and it covers an open deployment,
+   * where there are no admins at all. */
+  if (adminRoute.value && !isAdmin.value) leaveAdmin(true);
 });
 
 async function onAuthenticated(token) {
@@ -339,12 +349,12 @@ watch(currentId, id => {
     <TopBar
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
       :xp-today="xpToday"
-      @home="backToCourses" @admin="showAdmin = true" @signout="signOut" />
+      @home="backToCourses" @admin="goAdmin()" @signout="signOut" />
 
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
          use for the exercise nav, and it has to be reachable from the grid, where there is
          none. -->
-    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="showAdmin = false" />
+    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="leaveAdmin()" />
 
     <CourseGrid
       v-else-if="!course"

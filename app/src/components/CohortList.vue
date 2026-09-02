@@ -1,6 +1,11 @@
 <script setup>
 /* Managing the cohorts themselves: rename one, finish one, remove one.
  *
+ * A SECTION rather than a dialog, which is what it started as. The difference is not
+ * cosmetic: a modal is something you open, do one thing in and dismiss, and this is a place
+ * you can be - `#/admin/cohorts` addresses it, the nav shows you are in it, and it will
+ * carry a cohort's own page when there is one. A dialog cannot hold that.
+ *
  * Deliberately a small screen with no way to create anything. A cohort is named at the
  * moment somebody is put in it - in UserDialog, or in the import - because that is when a
  * tutor knows what to call it, and a create form here would be a second place to invent one
@@ -18,7 +23,7 @@ const props = defineProps({
   /** Every user, so a member count is a tally of what the listing already carried. */
   users: Array,
 });
-const emit = defineEmits(['done', 'close']);
+const emit = defineEmits(['done']);
 
 const busy = ref('');
 const error = ref('');
@@ -63,17 +68,12 @@ const destroy = c => run('delete', async () => {
 </script>
 
 <template>
-  <div class="scrim" @click.self="emit('close')">
-    <div class="dialog" role="dialog" aria-modal="true" @keydown.esc="emit('close')">
-      <header>
-        <h2>Cohorts</h2>
-        <button class="x" title="Close" @click="emit('close')">✕</button>
-      </header>
+  <section class="cohorts">
+    <p class="lead">A cohort is a class or an intake — a group of people, not a course.
+      New ones are named when you add or import somebody, which is when you know what to
+      call them.</p>
 
-      <p class="lead">A cohort is a class or an intake — a group of people, not a course.
-        New ones are named when you add or import somebody.</p>
-
-      <p v-if="error" class="err">{{ error }}</p>
+    <p v-if="error" class="err">{{ error }}</p>
 
       <ul class="list">
         <li v-for="c in listed" :key="c.id" :class="{ off: c.archived }">
@@ -104,27 +104,16 @@ const destroy = c => run('delete', async () => {
             <button class="link danger" type="button" @click="confirming = c.id">Delete</button>
           </template>
         </li>
-        <li v-if="!listed.length" class="none">No cohorts yet. Name one when you add or import
-          somebody, and it appears here.</li>
-      </ul>
-
-      <footer>
-        <button class="btn ghost" type="button" @click="emit('close')">Done</button>
-      </footer>
-    </div>
-  </div>
+      <li v-if="!listed.length" class="none">No cohorts yet. Name one when you add or import
+        somebody, and it appears here.</li>
+    </ul>
+  </section>
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; background: var(--ice-scrim); z-index: 60;
-         display: flex; align-items: flex-start; justify-content: center; padding: 40px 20px; overflow: auto; }
-.dialog { width: min(560px, 100%); background: var(--ice-bg); border: 1px solid var(--ice-border);
-          border-radius: var(--ice-radius); padding: 22px 24px 24px; }
-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-h2 { margin: 0; font-size: 18px; }
-.x { background: none; border: 0; color: var(--ice-fg-muted); font-size: 15px; cursor: pointer; padding: 4px 6px; }
-.x:hover { color: var(--ice-fg); }
-.lead { margin: 0 0 16px; font-size: 13px; color: var(--ice-fg-muted); line-height: 1.6; }
+.cohorts { max-width: 620px; }
+.lead { margin: 0 0 18px; font-size: 13px; color: var(--ice-fg-muted); line-height: 1.6;
+        max-width: 60ch; }
 .err { color: var(--ice-bad); font-size: 13px; margin: 0 0 12px; }
 
 .list { list-style: none; margin: 0 0 18px; padding: 0;
@@ -145,5 +134,4 @@ input[type=text] { flex: 1; font: inherit; font-size: 14px; padding: 7px 10px;
 input:focus { outline: none; border-color: var(--ice-primary); }
 .link.danger { color: var(--ice-bad); }
 .btn.danger { color: var(--ice-bad); border-color: var(--ice-bad-line); }
-footer { display: flex; justify-content: flex-end; }
 </style>

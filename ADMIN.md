@@ -8,12 +8,12 @@ This plan gives it three sections, and argues that the second of them — a cour
 page — is where nearly all the remaining value is, because it is the only one that can tell
 a tutor something they cannot already see by asking the student.
 
-Status: **steps 1 and 2 are built and not deployed.** Cohorts exist end to end, and the
-hint Lambda now writes the spend ledger and the per-exercise counter. Nothing reads either
-yet - which is the point of the ordering, see [Order](#order-i-would-build-it). What is
-built is listed under [Already done](#already-done); everything else is proposed. The two
-backlog lines this replaces are "track student progress in admin" and "remote-control the
-session of a logged in user".
+Status: **steps 1 to 3 are built.** 1 and 2 are deployed - cohorts end to end, and the
+hint Lambda writing the spend ledger and the per-exercise counter, which nothing reads yet
+and that is the ordering rather than an oversight. Step 3, the route and the shell, is
+built and not yet deployed. What is done is listed under [Already
+done](#already-done); everything else is proposed. The backlog line this replaces is
+"track student progress in admin"; remote control is still on it, pointed back here.
 
 ## Decisions taken
 
@@ -33,9 +33,17 @@ session of a logged in user".
 `showAdmin = true` in `App.vue` is a boolean over the course grid. That has three
 consequences, and only the first is cosmetic:
 
-- **There is no address.** The player has no top-level URL state at all — the only hash work
-  in the app is inside the slides iframe, on its own document. So an admin cannot link
-  anyone to a screen, cannot reload onto one, and cannot open two side by side.
+- **There is no address.** The player addresses which *course* is open — `?course=<id>`,
+  read on load — but nothing inside a screen. So an admin cannot link anyone to a person,
+  cannot reload onto one, and cannot open two side by side.
+
+  The admin area's own state went in the **fragment** rather than beside `?course=`, and
+  that is a split rather than a second mechanism: the query names which content is open and
+  is the thing worth sending somebody, while `#/admin/people/<sub>` is where you are inside
+  a screen only admins can reach. It stays out of a URL a student might be handed, and it
+  is a path, which the query would have to fake — `?admin=people&person=<sub>` says the same
+  thing worse and gets worse again one level down. The slides iframe patches `pushState` on
+  its *own* document, so the two never meet.
 - **Every new feature has to be a modal or a column.** The user dialog is already at the
   size where the next thing added to it makes it a page badly.
 - **The course is a filter over people, and never a thing to stand on.** "Who is on
@@ -385,7 +393,7 @@ without them is a day of students untagged and hints uncounted.
 
 1. ~~**Cohorts**~~ — done, see below.
 2. ~~**The spend ledger and the per-exercise hint counter.**~~ — done, see below.
-3. **The route and the three-section shell.** Everything after it has somewhere to go.
+3. ~~**The route and the shell.**~~ — done, see below.
 4. **The person page, with their submitted code.** Highest value per line in the plan, and
    no new data at all.
 5. **The course page: roster, position, completion**, pivotable by cohort. Gives `byCourse`
@@ -421,6 +429,24 @@ sent `course` and `exercise.id`, and the Lambda had always ignored them.
 
 Nothing reads either yet. That is deliberate: the screens can be built later against data
 that exists, and could not be built at all against data nobody recorded.
+
+**Step 3, the route and the shell.** `route.js` is the one definition of where you are:
+`#/admin`, `#/admin/<section>`, `#/admin/<section>/<id>`, parsed in one regex, every
+navigation a `pushState` so Back always means one step back. `AdminPanel` stopped being a
+boolean over the course grid and became a shell with a `SECTIONS` list, and `CohortDialog`
+became `CohortList`, a section rather than a modal — the difference being that a section is
+a place you can *be*, which a dialog cannot hold and a URL cannot name.
+
+- **A route is a request, not a permission.** `route.js` knows nothing about who is signed
+  in; `App.vue` honours it in one place, so a student who types `#/admin` is turned away
+  once rather than in every screen that reads a section name. The correction is a *replace*,
+  not a push - it was not a step they took, so Back must not walk into it.
+- **The nav draws only where there is a choice.** Courses and Platform are not in `SECTIONS`
+  because a tab with no screen behind it is an announcement of work not done. Adding them is
+  an entry in that list.
+- **`#/admin/people/<sub>` is real today**, opening that person's dialog - so step 4 changes
+  what is drawn rather than how it is addressed. Watched rather than read once, because on a
+  deep link the route arrives before the listing does.
 
 **And two corrections out of this plan, applied while writing it:**
 
