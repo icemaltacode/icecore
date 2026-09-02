@@ -339,8 +339,6 @@ h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
 .row:last-of-type { border-bottom: 0; }
 .row strong { font-size: 14px; font-weight: 500; }
 .row small { display: block; color: var(--ice-fg-muted); font-size: 12px; line-height: 1.45; }
-.btn.danger { color: var(--ice-bad); border-color: var(--ice-bad-line); }
-.btn.danger:hover:not(:disabled) { background: var(--ice-bad-fill); border-color: var(--ice-bad-line); }
 .confirm { background: var(--ice-bad-fill); border: 1px solid var(--ice-bad-line);
            border-radius: 8px; padding: 12px 14px; margin-top: 4px; }
 .confirm label { color: var(--ice-bad); text-transform: none; letter-spacing: 0; font-size: 12.5px; }

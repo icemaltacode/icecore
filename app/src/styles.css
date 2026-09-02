@@ -129,6 +129,12 @@ button { font-family: inherit; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.primary { background: var(--ice-primary); border-color: var(--ice-primary); color: var(--ice-on-primary); font-weight: 600; }
 .btn.primary:hover:not(:disabled) { background: var(--ice-primary-strong); border-color: var(--ice-primary-strong); }
+/* The third variant, beside the other two rather than in whichever component needed it
+   first. It was written twice - UserDialog and CohortList - and the copies had already
+   drifted: the cohort list's danger buttons did not react to hover at all, because only one
+   of the two ever got the hover rule. */
+.btn.danger { color: var(--ice-bad); border-color: var(--ice-bad-line); }
+.btn.danger:hover:not(:disabled) { background: var(--ice-bad-fill); border-color: var(--ice-bad-line); }
 
 /* THE URGE: a button asking to be pressed.
  *

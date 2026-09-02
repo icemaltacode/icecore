@@ -133,5 +133,4 @@ input[type=text] { flex: 1; font: inherit; font-size: 14px; padding: 7px 10px;
                    border: 1px solid var(--ice-border); border-radius: 8px; }
 input:focus { outline: none; border-color: var(--ice-primary); }
 .link.danger { color: var(--ice-bad); }
-.btn.danger { color: var(--ice-bad); border-color: var(--ice-bad-line); }
 </style>
