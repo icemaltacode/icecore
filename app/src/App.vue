@@ -193,7 +193,29 @@ const controlEnded = ref('');
  * Only for students. An admin's listing is every session in the school by design, so a band
  * over the grid would announce classes they have nothing to do with; the cohort screen is
  * where an admin already sees this, and it says more. */
-const invited = computed(() => (isAdmin.value ? null : invitation()));
+/* Pressed Join, and not yet in. `enterLive` fetches the session before `delivery.cohort` is
+ * set, so without this the band sits there through a whole round trip with a live button on
+ * it - which reads as the button having done nothing, and invites the second press that
+ * cannot work. */
+const joining = ref('');
+const invited = computed(() =>
+  (isAdmin.value || joining.value ? null : invitation()));
+
+/**
+ * Join the lesson being offered.
+ *
+ * IT RETRIES WHEN THE ROUTE IS ALREADY THERE. Navigating to the address you are already at
+ * changes nothing, so the watcher that calls `enterLive` never fires and a second press is a
+ * dead button - which is exactly what somebody does when the first press appeared to fail.
+ */
+function joinInvited(cohort) {
+  joining.value = cohort;
+  if (liveCohort.value === cohort) enterLive(cohort);
+  else goLiveArea(cohort);
+}
+// In, or thrown out. Either way the band has no more to say.
+watch(() => delivery.cohort, c => { if (c) joining.value = ''; });
+watch(liveCohort, c => { if (!c) joining.value = ''; });
 /* Where the tutor is, as the room reports it - which is the only way a student could know.
  * The tutor's own client reads its own position instead: it is the authority on that, and
  * asking the room where you are would be a round trip to be told what you already did. */
@@ -548,7 +570,11 @@ async function enterLive(cohort, driving = false) {
       : followedPosition()?.exercise ?? marks?.[s.course]?.exercise;
     if (at != null) {
       const row = flat.value.find(e => progressId(e.id) === progressId(at));
-      if (row) currentId.value = row.id;
+      /* THROUGH `applied`, because arriving somewhere is not striking out on your own.
+       * Without it, joining a lesson being taught anywhere other than where you happened to
+       * be left the student immediately told they had stopped following - on the strength of
+       * a move the app had just made for them. */
+      if (row) applied(() => { currentId.value = row.id; });
     }
 
     /* A CONTROL TAB REPORTS NOTHING AND OPENS NOWHERE IN PARTICULAR.
@@ -907,9 +933,18 @@ watch(currentId, () => {
     mySlide.value = null;
     return;
   }
-  /* A move of their own is a decision, and it ends the following. The tutor is exempt:
-   * they are the thing being followed, and there is nothing for them to stop. */
-  if (!applying && !delivery.mine && delivery.following) wandered();
+  /* A move of their own is a decision, and it ends the following. The educator is exempt:
+   * they are the thing being followed, and there is nothing for them to stop.
+   *
+   * LANDING WHERE THE CLASS ALREADY IS IS NOT WANDERING, whoever moved you and however you
+   * got there. `applied` covers the moves this file knows it made; this covers the rest -
+   * a race, a restored marker, a student who navigated to the very row being taught - and it
+   * is the honest definition anyway. You have stopped following when you are somewhere the
+   * lesson is not, not when a ref was assigned. */
+  if (!applying && !delivery.mine && delivery.following) {
+    const lead = followedPosition()?.exercise;
+    if (lead == null || progressId(lead) !== progressId(currentId.value)) wandered();
+  }
   mySlide.value = null;   // a new row starts a new range
   reportPosition();
 });
@@ -984,7 +1019,7 @@ watch(currentId, id => {
          guard. -->
     <LiveInvite v-if="invited" :session="invited"
                 :course-title="allCourses.find(c => c.id === invited.course)?.title"
-                @join="goLiveArea(invited.cohort)" />
+                @join="joinInvited(invited.cohort)" />
 
     <!-- ONE NOTICE, NEVER TWO. Each of these is a row of the shell's grid, and a second one
          appearing beside a band pushes the player out of the row that gives it its height -
