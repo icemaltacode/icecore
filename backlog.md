@@ -21,14 +21,19 @@ in a month.
   exercise rather than an event per press: the question is "how many tries before this class
   got it", not an audit log.
 
-- [x] **A cohort member who is not enrolled on the course being delivered.** Was reachable by
-  construction: a cohort was a group of *people* and enrolment was a separate per-person row,
+- [ ] **[TO TEST] A cohort member who is not enrolled on the course being delivered.** Was
+  reachable by construction: a cohort was a group of *people* and enrolment was a separate per-person row,
   so nothing stopped an intake taking one course together while one of them was not on it.
   Three answers were on the table — enrol them on the spot, refuse the invitation, or let
   them follow read-only for the hour — and the right one turned out to be none of them.
   **The cohort now carries the courses and enrolment is derived from it**, so the state
   cannot be expressed. Two independent facts that have to agree eventually do not, and the
   moment they did not was in front of a class. See [ADMIN.md](ADMIN.md).
+  Worth testing as a model change rather than as a bug fix, because it moved where enrolment
+  lives: a student's grid after signing in, the cohort screen's course list, the user
+  dialog's derived line, and an import into a cohort that takes nothing. The `ENROL#` rows
+  are still in the table and nothing reads them - they are the only copy of the old truth
+  until this is confirmed.
 
 - [ ] **[TO TEST] End a live session from the cohort screen.** Today the only End session button is on
   the live screen itself, which is fine until that screen is the thing that is broken - and
