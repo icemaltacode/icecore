@@ -800,15 +800,31 @@ async function message(event) {
           && position.exercise !== row.position?.exercise) {
         await ddb.send(new UpdateCommand({
           TableName: TABLE, Key: sessionKey(row.cohort),
+          /* WHERE THE LESSON IS, kept on the SESSION row and not only on the educator's
+           * connection.
+           *
+           * `end()` writes the bookmark from the position the ending client sends, falling
+           * back to the session's own - and that fallback was always null, because nothing
+           * ever wrote it. Which is fine while the only way to end a lesson is from the
+           * screen that knows where it is, and useless the moment a session is ended from
+           * anywhere else: the educator's browser is gone, and with it the only copy of
+           * where the class got to.
+           *
+           * In this update rather than one of its own because it changes exactly when
+           * `covered` does - the bookmark is a row and a title, so paging a deck does not
+           * move it. */
           UpdateExpression:
             'SET #cov = list_append(if_not_exists(#cov, :none), :one), '
-            + '#ex.#id = if_not_exists(#ex.#id, :seed)',
+            + '#ex.#id = if_not_exists(#ex.#id, :seed), #pos = :pos',
           ConditionExpression: 'attribute_exists(sk) AND size(#cov) < :cap',
-          ExpressionAttributeNames: { '#cov': 'covered', '#ex': 'ex', '#id': position.exercise },
+          ExpressionAttributeNames: {
+            '#cov': 'covered', '#ex': 'ex', '#id': position.exercise, '#pos': 'position',
+          },
           ExpressionAttributeValues: {
             ':none': [],
             ':one': [{ exercise: position.exercise, title: position.title, at: now }],
             ':seed': { title: position.title, tried: 0, right: 0, wrong: 0, err: 0 },
+            ':pos': { exercise: position.exercise, title: position.title },
             ':cap': COVERED_MAX,
           },
         })).catch(e => {

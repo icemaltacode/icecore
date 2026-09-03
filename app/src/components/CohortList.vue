@@ -28,7 +28,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { api } from '../auth.js';
-import { live as running, refreshRunning, whyNotLive, mineAlready } from '../delivery.js';
+import { live as running, refreshRunning, whyNotLive, mineAlready, end as endLive } from '../delivery.js';
 import Icon from './Icon.vue';
 import LiveStart from './LiveStart.vue';
 
@@ -46,6 +46,9 @@ const error = ref('');
 const renaming = ref('');
 const title = ref('');
 const confirming = ref('');
+/* Ending a lesson from HERE rather than from the live screen. The recovery path, not the
+ * ordinary one - see the menu item below. */
+const finishing = ref('');
 const menu = ref('');
 const starting = ref(null);   // the cohort whose course picker is open
 
@@ -90,6 +93,30 @@ const setArchived = (c, archived) => run(c.id, async () => {
   return archived ? `${c.title} archived.` : `${c.title} is active again.`;
 });
 
+/**
+ * End somebody's live session from the cohort list.
+ *
+ * THE RECOVERY PATH, NOT THE ORDINARY ONE. Ending normally happens on the live screen, which
+ * knows where the class got to and shows the summary afterwards. This exists for the case
+ * that screen is unavailable - a laptop that closed, a browser that crashed, a bug on the
+ * screen itself - where the alternative is a cohort whose lock is held until the `ttl` a day
+ * later and a class that cannot be taught in the meantime.
+ *
+ * NO POSITION IS SENT, deliberately: this side does not know where the lesson is. The Lambda
+ * falls back to the position the session row carries, which the educator's own moves keep up
+ * to date - so the bookmark still lands, just without this client having to invent it.
+ *
+ * The refusal is the Lambda's own sentence. Somebody else's running session with people
+ * connected to it is not ours to end, and the message names who to ask.
+ */
+const finish = c => run('end', async () => {
+  const s = await endLive(c.id);
+  finishing.value = '';
+  const at = s?.mark?.title || s?.mark?.exercise;
+  return `${c.title} is no longer live.`
+    + (at ? ` The next session opens on ${at}.` : ' No bookmark was moved.');
+});
+
 const destroy = c => run('delete', async () => {
   const r = await api(`admin/cohorts?id=${encodeURIComponent(c.id)}`, { method: 'DELETE' });
   confirming.value = '';
@@ -121,6 +148,14 @@ onUnmounted(() => removeEventListener('click', shut));
           <input v-model="title" type="text" @keydown.enter.prevent="rename(c)">
           <button class="btn" type="button" :disabled="!title.trim() || !!busy" @click="rename(c)">Save</button>
           <button class="link" type="button" @click="renaming = ''">Cancel</button>
+        </template>
+        <template v-else-if="finishing === c.id">
+          <!-- Said in terms of the people in it, because that is what ending a lesson does
+               to them - and the bookmark is the part that makes it safe. -->
+          <span class="warn">End this live session? Everyone following it goes back to
+            working on their own, and the class's place is kept for next time.</span>
+          <button class="btn danger" type="button" :disabled="!!busy" @click="finish(c)">End session</button>
+          <button class="link" type="button" @click="finishing = ''">Cancel</button>
         </template>
         <template v-else-if="confirming === c.id">
           <!-- Said in full, because "delete" beside a list of students reads as deleting
@@ -158,6 +193,13 @@ onUnmounted(() => removeEventListener('click', shut));
                 <Icon name="more" :size="16" />
               </button>
               <ul v-if="menu === c.id" class="menu">
+                <!-- FIRST, AND ONLY WHILE ONE IS RUNNING. It is the most consequential thing
+                     in this menu for exactly as long as it is there, and absent the rest of
+                     the time rather than disabled: a cohort that is not live has no session
+                     to end and no explanation to give. -->
+                <li v-if="held(c)"><button type="button" class="danger"
+                        @click="menu = ''; finishing = c.id">End session</button></li>
+                <li v-if="held(c)" class="rule"></li>
                 <li><button type="button" @click="startRename(c)">Rename</button></li>
                 <li><button type="button" :disabled="!!busy" @click="setArchived(c, !c.archived)">
                   {{ c.archived ? 'Restore' : 'Archive' }}</button></li>

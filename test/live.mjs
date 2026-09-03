@@ -696,14 +696,16 @@ try {
    * socket handlers above - two connections, a walk to `101`, a mark, and some chat. Ending
    * a session nobody joined would prove the shape and nothing else. */
   if (chatIn) {
+    /* ENDED WITHOUT A POSITION, deliberately: that is what ending from the cohort screen
+     * does, and it is the case the bookmark used to be lost in. The educator walked to `101`
+     * over the socket above, so the session row carries it and the mark should come from
+     * there - a browser that closed mid-lesson loses the advance, not the mark. */
     const done = await call(site, tokenA,
-      `live/session?cohort=${encodeURIComponent(chatIn)}`
-      + '&exercise=999&title=' + encodeURIComponent('Where we got to'),
-      { method: 'DELETE' });
+      `live/session?cohort=${encodeURIComponent(chatIn)}`, { method: 'DELETE' });
     const sum = done.body?.summary;
     check('ending hands back a summary', !!sum, JSON.stringify(done.body));
-    check('it says where the next session opens', sum?.mark?.exercise === '999',
-          JSON.stringify(sum?.mark));
+    check('it bookmarks where the lesson actually was, with no position sent',
+          sum?.mark?.exercise === '101', JSON.stringify(sum?.mark));
     /* The educator walked to `101` and paged inside it, so exactly one row was covered - a
      * second entry would mean paging a deck counted as covering something new. */
     check('it says what was covered', (sum?.covered || []).some(c => c.exercise === '101'),
