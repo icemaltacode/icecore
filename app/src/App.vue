@@ -25,6 +25,7 @@ import ControlBand from './components/ControlBand.vue';
 import ControlStart from './components/ControlStart.vue';
 import LiveInvite from './components/LiveInvite.vue';
 import SessionSummary from './components/SessionSummary.vue';
+import LiveLeave from './components/LiveLeave.vue';
 import ChatToast from './components/ChatToast.vue';
 import { chat, revealChat, hideToast } from './chat.js';
 import { live as channel } from './live.js';
@@ -797,8 +798,18 @@ function goLive(at) {
   if (row) currentId.value = row.id;
 }
 
+/* Asked before leaving, because leaving costs nothing and looks like it costs everything -
+ * see LiveLeave.vue. Only a student is ever asked: an educator's button is End session, which
+ * is a different act with a summary screen after it. */
+const leaving = ref(false);
+/* A lesson that ends while the question is on screen has answered it. Leaving nothing is not
+ * a decision anybody needs to confirm, and a dialog over a session that is gone is a dialog
+ * about nothing. */
+watch(() => delivery.cohort, c => { if (!c) leaving.value = false; });
+
 /** Leave one somebody else is running. The session carries on without us. */
 function leaveLiveHere() {
+  leaving.value = false;
   forgetLive();
   leaveArea();
 }
@@ -993,7 +1004,11 @@ watch(currentId, id => {
               :can-catch-up="!!followedPosition()"
               :leader-at="followedPosition()?.title"
               :shared-name="control.sharing ? control.name : ''"
-              @end="endLiveHere" @leave="leaveLiveHere" @catch-up="catchUpHere" />
+              @end="endLiveHere" @leave="leaving = true" @catch-up="catchUpHere" />
+
+    <LiveLeave v-if="leaving" :name="delivery.name"
+               :cohort-title="delivery.title"
+               @leave="leaveLiveHere" @close="leaving = false" />
 
     <!-- Floating rather than docked, and drawn HERE rather than inside the panel: the panel
          can be collapsed to a rail and a chat window that vanished with it would not be

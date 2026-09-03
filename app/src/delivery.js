@@ -134,10 +134,18 @@ const remember = (s, mine) => {
 };
 
 /** Forget the session and drop the socket. Called on End, on Leave, and on `ended`. */
+/**
+ * Forget the session and drop the socket. Called on End, on Leave, and on `ended`.
+ *
+ * IT NO LONGER FORGETS THAT THE SESSION IS RUNNING, and the difference is the whole of a bug:
+ * leaving a lesson is a fact about this client and not about the lesson. Deleting the entry
+ * here meant a student who left watched the invitation vanish and then reappear on the next
+ * poll - the banner offering them the way back in blinking out of existence at the exact
+ * moment it became useful. Ending a session removes it, and `ended` removes it, because those
+ * are the two times it is actually gone.
+ */
 export function forget() {
-  const was = delivery.cohort;
   remember(null, false);
-  if (was) delete live.running[was];
   room.members = []; room.here = {};
   for (const k of Object.keys(marks)) delete marks[k];
   setControl(null);
@@ -235,7 +243,11 @@ export function reportMark(v) {
 /* Somebody else ended it. The band has to go on its own rather than waiting for the next
  * navigation, or a student sits in a room that is not there any more. Registered once, at
  * module load: the listener outlives any component that shows the band. */
-on('ended', () => forget());
+on('ended', () => {
+  // Read before `forget` clears it: this is one of the two times the session really is gone.
+  if (delivery.cohort) delete live.running[delivery.cohort];
+  forget();
+});
 
 /* ---- the room -------------------------------------------------------------
  *
@@ -455,13 +467,16 @@ export function presenceOf(sub, now = Date.now()) {
  * with no session to be invited to is the ordinary case that should cost nothing beyond the
  * poll itself.
  */
-/* FIFTEEN SECONDS, NOT SIXTY. A minute was chosen on the reasoning that nobody is waiting on
- * this to the second - which is true of the fact and false of the moment. An educator starts
- * a lesson and says "join now"; a class that sits looking at an unchanged dashboard for the
- * next fifty seconds concludes the thing is broken, and half of them will have reloaded
- * before it arrives. The cost is one query per student per fifteen seconds, which for a class
- * of thirty is two requests a second against a table billed per request. */
-const ASK_EVERY = 15 * 1000;
+/* EIGHT SECONDS. This began at sixty, on the reasoning that nobody is waiting on this to the
+ * second - which is true of the fact and false of the moment. An educator starts a lesson and
+ * says "join now"; a class watching an unchanged dashboard concludes the thing is broken, and
+ * half of them reload before it arrives. Fifteen was still a wait you could notice.
+ *
+ * The cost is one query per student per eight seconds - for a class of thirty, under four
+ * requests a second against a table billed per request. The floor under this is not money but
+ * the shape: genuinely instant needs every signed-in student holding a socket all day, and a
+ * socket belongs to one cohort while a student can be in several. */
+const ASK_EVERY = 8 * 1000;
 let asking = null;
 
 const ask = () => { if (!delivery.cohort) refreshRunning().catch(() => {}); };
