@@ -46,6 +46,13 @@ export function walkTopic(topic) {
     id: slideId(topic.topic),
     topicId: topic.topic,
     title: topic.title,
+    /* THE DECK RIDES ON THE ROW, like every other fact the slide step needs.
+     *
+     * It was looked up separately - find the topic this row belongs to, read its `slides` -
+     * which is one more chance to come back empty than a row that simply carries it. And
+     * empty is not harmless: an iframe whose src misses is answered by the SPA fallback with
+     * index.html, so the player renders INSIDE ITSELF where the slides should be. */
+    deck: topic.slides,
     slide: topic.slide,
     end: topic.end,
     /* The composed deck's length, carried so a slide step can number itself the way the

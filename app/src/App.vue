@@ -1200,7 +1200,7 @@ watch(currentId, id => {
         <SlidesStep
           v-else-if="current?.kind === 'slides'"
           :key="current.id"
-          :deck="currentTopic?.slides"
+          :deck="current.deck"
           :course-id="course.id"
           :note-count="currentTopic?.notes"
           :goto="followSlide"

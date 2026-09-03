@@ -37,10 +37,24 @@ const props = defineProps({
   noteCount: Number,
 });
 
-const base = computed(() => /^https?:\/\//.test(props.deck || '')
+const base = computed(() => (/^https?:\/\//.test(props.deck || '')
   ? props.deck
-  : `${import.meta.env.BASE_URL}${props.deck}`);
-const src = computed(() => `${base.value}#/${props.row.slide}`);
+  : `${import.meta.env.BASE_URL}${props.deck}`));
+/**
+ * The frame's URL, or null when there is no deck to point it at.
+ *
+ * NULL RATHER THAN A URL BUILT OUT OF NOTHING, and this is the whole of a bug worth naming.
+ * A missing `deck` used to compose `/undefined#/12` - a path the site answers with its own
+ * `index.html`, because that is what an SPA fallback is for. So the iframe loaded the PLAYER,
+ * and a student watching slides was shown the entire application nested inside the pane where
+ * the deck belonged: a broken link rendered as a working page.
+ *
+ * It is the same rule `icecore dev` already enforces from the other side - a missing asset
+ * must 404 rather than come back as the app's own index page - and this is where the site
+ * itself cannot enforce it, so the component has to. Fail in the direction that shows.
+ */
+const src = computed(() =>
+  (props.deck ? `${base.value}#/${props.row.slide}` : null));
 const count = computed(() => (props.row.end - props.row.slide) + 1);
 /* Numbered the way the deck's own paginator numbers it, because both are on screen at
  * once. The frame shows 13/31 - the COMPOSED deck, module frame and unit title included -
@@ -225,6 +239,11 @@ const onLoad = () => {
   stopDriving?.();
   stopDriving = watch(() => props.goto, n => {
     if (!n || n === at()) return;
+    /* AGAINST THIS FRAME'S WINDOW AND NO OTHER. The iframe is keyed on `src`, so a new one is
+     * built whenever the deck or the topic changes - and this watcher is not torn down until
+     * the replacement has finished loading. A drive arriving in that gap would be written
+     * into a window the browser has already discarded. */
+    if (frame.value?.contentWindow !== win) return;
     win.location.replace(`#/${n}`);
   }, { immediate: true });
 };
@@ -273,7 +292,9 @@ const onLoad = () => {
           <!-- Keyed on src so moving between two topics of the same deck reloads the frame
                at the new hash. Without it the iframe keeps its old location: same document,
                and the router has already consumed the hash it booted with. -->
-          <iframe ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
+          <p v-if="!src" class="nodeck">These slides could not be found. The topic is here and
+            its exercises still work — it is the deck itself that is missing.</p>
+          <iframe v-else ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
                   @load="onLoad"></iframe>
           </div>
         </div>
@@ -298,6 +319,9 @@ const onLoad = () => {
 </template>
 
 <style scoped>
+/* Said plainly rather than drawn as an error: a missing deck is a content problem somebody
+   has to fix in the course repo, and nothing the student did or can do anything about. */
+.nodeck { margin: 24px; font-size: 13px; line-height: 1.6; color: var(--ice-fg-muted); }
 /* THE ROOT CLASS HAS TO BE UNIQUE ACROSS THE WHOLE APP, not just unique in here.
  *
  * Vue's scoped CSS still reaches a child component's ROOT element - that is deliberate, so
