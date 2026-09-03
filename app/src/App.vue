@@ -3,15 +3,30 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session, api } from './auth.js';
 import { progressId } from './progress.js';
-import { me as mySubject, watching } from './subject.js';
+import { me as mySubject, watching, driving } from './subject.js';
 import CodingExercise from './components/CodingExercise.vue';
 import McqExercise from './components/McqExercise.vue';
 import DragDropExercise from './components/DragDropExercise.vue';
 import PythonExercise from './components/PythonExercise.vue';
 import AdminPanel from './components/AdminPanel.vue';
 import * as store from './progress-store.js';
-import { route as appRoute, go as goAdmin, account as goAccount, watch as goWatch, leave as leaveArea } from './route.js';
+import { route as appRoute, go as goAdmin, account as goAccount, watch as goWatch, control as controlUrl, live as goLiveArea, leave as leaveArea } from './route.js';
+import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as forgetLive,
+         reportActivity, reportPosition, reportMark, followedPosition, followedName,
+         catchUp, wandered, marksAt, previewRows,
+         control, driven, drive, takeControl, setSharing, releaseControl,
+         drivingSomebody, beingDriven, sendBuffer, borrowed,
+         watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
 import WatchBanner from './components/WatchBanner.vue';
+import LiveBand from './components/LiveBand.vue';
+import LivePanel from './components/LivePanel.vue';
+import LiveChat from './components/LiveChat.vue';
+import ControlBand from './components/ControlBand.vue';
+import ControlStart from './components/ControlStart.vue';
+import LiveInvite from './components/LiveInvite.vue';
+import SessionSummary from './components/SessionSummary.vue';
+import { chat } from './chat.js';
+import { live as channel } from './live.js';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
 import TopBar from './components/TopBar.vue';
@@ -102,7 +117,7 @@ const outside = e => {
   if (!pinned.value && peek.value && !e.target.closest('.dock')) peek.value = false;
 };
 onMounted(() => addEventListener('pointerdown', outside));
-onBeforeUnmount(() => removeEventListener('pointerdown', outside));
+onBeforeUnmount(() => { removeEventListener('pointerdown', outside); stopWatchingForSessions(); });
 
 const topicIndex = computed(() => topics.value.indexOf(currentTopic.value));
 const goTopic = d => {
@@ -139,9 +154,113 @@ const showAccount = computed(() => authed.value && appRoute.value?.area === 'acc
  *
  * Held here because this is the only component that asks about progress at all. */
 const subject = ref(mySubject());
-const watchingSub = computed(() =>
-  (isAdmin.value && appRoute.value?.area === 'watch' ? appRoute.value.id : ''));
+/* WATCHING AND CONTROLLING SHOW THE SAME THING, so they resolve to the same subject. The
+ * difference is not what is rendered but what this tab then does with it: one is read-only
+ * and the other drives. Folding them here rather than at every call site is the whole point
+ * of subject.js being a value. */
+const watchingSub = computed(() => (isAdmin.value
+  && (appRoute.value?.area === 'watch' || appRoute.value?.area === 'control')
+  ? appRoute.value.id : ''));
 const watched = ref(null);   // { sub, name, email } - who the banner names
+
+/* A live session is a place, so which one you are in comes from the URL rather than from a
+ * button having been pressed - a reload during a lesson lands back in the lesson, and a
+ * link is how a student joins one at all. `delivery` holds what it IS; this holds where we
+ * are pointed. */
+const liveCohort = computed(() => (appRoute.value?.area === 'live' ? appRoute.value.id : null));
+const liveError = ref('');
+
+/* A CONTROL TAB IS ITS OWN PLACE, and it carries both halves: whose screen, and which
+ * session it is happening inside. It is a tab rather than a mode of the live screen because
+ * an educator needs to keep watching the class while they help one person - the panel, the
+ * chat and the results are all still worth having on the other screen. */
+const controlCohort = computed(() =>
+  (isAdmin.value && appRoute.value?.area === 'control' ? appRoute.value.section : null));
+const controlSub = computed(() =>
+  (isAdmin.value && appRoute.value?.area === 'control' ? appRoute.value.id : null));
+/* Who the panel is about to take control of - the sharing prompt's subject, and null when
+ * it is closed. */
+const takingOver = ref(null);
+/* A control tab whose control has ended. It does NOT become an ordinary live tab: this
+ * browser would then be reporting the educator's position from two places at once, and the
+ * class would follow whichever tab moved last. So it says so and stops. */
+const controlEnded = ref('');
+
+/* WHAT THIS CLIENT IS BEING INVITED TO. Null while there is nothing, and null while we are
+ * already in one - that is where they are, not somewhere to be asked to go.
+ *
+ * Only for students. An admin's listing is every session in the school by design, so a band
+ * over the grid would announce classes they have nothing to do with; the cohort screen is
+ * where an admin already sees this, and it says more. */
+const invited = computed(() => (isAdmin.value ? null : invitation()));
+/* Where the tutor is, as the room reports it - which is the only way a student could know.
+ * The tutor's own client reads its own position instead: it is the authority on that, and
+ * asking the room where you are would be a round trip to be told what you already did. */
+/* The panel owns whether it is open; the shell owns the column it sits in. It is reported
+ * upwards rather than decided here because the default depends on the role and the answer
+ * is remembered per browser - both of which are the panel's business, and neither of which
+ * the grid should have a second opinion about. */
+const panelOpen = ref(true);
+const leaderAt = computed(() => (delivery.mine
+  ? currentId.value
+  : followedPosition()?.exercise ?? null));
+
+/* Which slide inside a slides step, in both directions: what this client reports when it is
+ * the tutor, and what it is driven to when it is following. A slides step is a range, so
+ * without it a follower lands at the top of a topic the tutor is nine slides into - which
+ * looks exactly like following not working. */
+const mySlide = ref(null);
+const followSlide = computed(() => (delivery.cohort && !delivery.mine && delivery.following
+  ? followedPosition()?.slide || null
+  : null));
+
+/* HOW THE CLASS DID ON THE THING ON SCREEN. Only for the tutor, and only on a row that can
+ * be answered - the Lambda already refuses to send anybody else a mark, so this is about
+ * what is drawn rather than about what is known.
+ *
+ * Two readers, deliberately from one computed: the panel groups people by it and an MCQ
+ * draws it into its own options. Two lookups would be two chances to disagree about which
+ * exercise the numbers belong to, on a screen whose whole job is to answer that. */
+const gradableHere = computed(() => !!current.value && current.value.kind !== 'slides');
+const marksHere = computed(() => (delivery.mine && gradableHere.value
+  ? marksAt(currentId.value)
+  : {}));
+
+/**
+ * The class's answers to a multiple-choice question, by option index.
+ *
+ * Null rather than an empty tally when it does not apply, so the exercise can tell "nobody
+ * has answered yet" from "this is not a live delivery" - the first is worth drawing and the
+ * second must leave the exercise exactly as every student sees it.
+ */
+const classAnswers = computed(() => {
+  if (!delivery.mine || current.value?.type !== 'mcq') return null;
+  const tally = {};
+  let answered = 0;
+  for (const m of Object.values(marksHere.value)) {
+    if (m.choice == null) continue;
+    tally[m.choice] = (tally[m.choice] || 0) + 1;
+    answered += 1;
+  }
+  return { tally, answered };
+});
+
+/* MOVING BECAUSE WE FOLLOWED IS NOT NAVIGATING. Every position this client applies from the
+ * tutor also runs through the same watcher that decides somebody has struck out on their
+ * own, so without a flag the first followed move would immediately stop the following. A
+ * counter rather than a boolean: two applications can overlap - the row and the slide
+ * arrive together - and a boolean cleared by the first would leave the second looking like
+ * a student's own move. */
+let applying = 0;
+const applied = fn => { applying++; fn(); nextTick(() => { applying--; }); };
+
+/* The tutor moved. Only their moves, and only while following: everybody else's positions
+ * are for the panel to draw, not for this screen to obey. */
+watch(() => followedPosition()?.exercise, at => {
+  if (!delivery.cohort || delivery.mine || !delivery.following || at == null) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
+});
 
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
  * above exist to make 200-odd exercises navigable. */
@@ -341,18 +460,287 @@ async function switchSubject(sub) {
   /* Named from the listing rather than from the URL. A banner reading `preview-3` names
    * nobody, and this screen's whole job is to say unmistakably whose session this is - so
    * the identity is fetched before the player is drawn against it. */
-  subject.value = watching(sub, null);
+  /* WATCHING OR DRIVING, decided by which area we are in and nothing else. `driving` is
+   * built from `watching`, so the reads are identical and only the writes differ - which is
+   * what stops one student being rendered while another is recorded against.
+   *
+   * It is constructed before control has actually been claimed, and that is fine: the write
+   * carries the cohort and the Lambda refuses unless this caller is the one currently driving
+   * that student, so a write attempted a moment too early is turned away rather than landing
+   * somewhere it should not. */
+  const as = controlCohort.value
+    ? who => driving(sub, who, controlCohort.value)
+    : who => watching(sub, who);
+  subject.value = as(null);
   watched.value = { sub, name: '', email: '' };
   try {
     const who = await api(`admin/users?sub=${encodeURIComponent(sub)}`);
     watched.value = { sub, name: who.name, email: who.email, courses: who.enrolled || [] };
-    subject.value = watching(sub, who);
+    subject.value = as(who);
   } catch { /* the banner falls back to the sub, which is still a banner */ }
   // The grid was filtered for whoever was being shown a moment ago.
   manifest.value = visible(allCourses.value);
   fillProgress();
 }
 watch(watchingSub, switchSubject);
+
+/**
+ * Arrive in - or leave - a live session.
+ *
+ * The session is fetched rather than assumed, because this runs on a pasted link and a
+ * reload as well as on a button: the cohort in the URL may have no session at all, and
+ * landing in an empty room is worse than being told there is nothing there.
+ *
+ * OPENING THE COURSE IS PART OF ARRIVING. A session names one, and the whole point of the
+ * screen is to be in it - a band above the grid would say a lesson was running and leave
+ * the student to find it.
+ */
+async function enterLive(cohort, driving = false) {
+  liveError.value = '';
+  if (!cohort) { forgetLive(); return; }
+  try {
+    const { session: s, marks } = await sessionFor(cohort);
+    if (!s) {
+      // Replaced, not pushed: nobody chose to come here, so Back must not walk into it.
+      liveError.value = 'That session has ended.';
+      leaveArea(true);
+      forgetLive();
+      return;
+    }
+    joinLive(s);
+    if (course.value?.id !== s.course) await open(s.course);
+    /* WHERE THE CLASS LEFT OFF BEATS WHERE YOU LEFT OFF. `open()` has just resumed this
+     * person's own `LAST#` marker, which is right everywhere else and wrong here: a lesson
+     * opens where the lesson stopped, not where each person separately wandered to. The two
+     * are indistinguishable on screen, which is exactly why this has to be deliberate.
+     *
+     * Through `progressId` on both sides, because a mark comes back from DynamoDB as a
+     * string and an exercise id is a number - compared raw it never matches, and the lesson
+     * would silently open at the top of the course every time. */
+    const mark = driving ? null : marks?.[s.course]?.exercise;
+    if (mark != null) {
+      const row = flat.value.find(e => progressId(e.id) === progressId(mark));
+      if (row) currentId.value = row.id;
+    }
+
+    /* A CONTROL TAB REPORTS NOTHING AND OPENS NOWHERE IN PARTICULAR.
+     *
+     * Not reporting is the load-bearing half. An educator with a control tab open has TWO
+     * connections in the room under one sub, and if both said where they were, the room's
+     * idea of where the educator is would flap between them - so the whole class would
+     * follow whichever of the educator's tabs moved last. This tab is driving somebody
+     * else's screen; it is not anywhere itself.
+     *
+     * And it opens on the STUDENT, not on the class's bookmark: the point of taking control
+     * is to see what they are seeing, and landing on the lesson's bookmark would silently
+     * drag them off whatever they were stuck on the moment control began. That position
+     * arrives with the roster rather than now, so it is applied by a watcher.
+     *
+     * Control itself is claimed when the SOCKET opens, not here: `joinLive` has only just
+     * asked for a ticket, so a `control` sent now goes nowhere at all - `send` drops
+     * silently when there is nothing to send on, which is right for a channel and would
+     * have made this the one call that never happened. */
+    if (driving) return;
+    /* Where we are travels with "still here", because the two facts arrive together and a
+     * second message for the position would be a second thing to keep in step. A callback
+     * rather than a value: delivery.js has no business watching the player's state, and the
+     * player already knows. */
+    reportActivity(() => (current.value
+      ? { at: current.value.id, title: current.value.title, slide: mySlide.value }
+      : null));
+  } catch (e) {
+    liveError.value = e.message;
+    leaveArea(true);
+    forgetLive();
+  }
+}
+watch(liveCohort, c => enterLive(c));
+
+/* The control tab, arriving. Same session, same channel, different job - so it goes through
+ * the same door with `driving` set rather than through a second one that would have to be
+ * kept in step with this one. */
+watch(controlCohort, c => { controlEnded.value = ''; enterLive(c, true); });
+
+/* CLAIMED WHEN THE SOCKET OPENS, and again after every reconnection. Re-taking your own
+ * control is idempotent by construction - the conditional write allows it when `by` is
+ * already you - so a tunnel or API Gateway's two-hour cap restores the claim rather than
+ * dropping the educator into a tab that looks like it is driving and is not. */
+watch(() => channel.status, st => {
+  if (st !== 'open' || !controlSub.value || controlEnded.value) return;
+  if (control.sub === controlSub.value && control.by === session.sub) return;
+  takeControl(controlSub.value, false);
+});
+
+/* ONCE, when the room first says where they are. A control tab opens on the student, and
+ * their position is not known until the roster lands - so this is a watcher rather than a
+ * line in `enterLive`, and it stops the moment it has done its job or the educator would be
+ * dragged back to the student every time the student moved.
+ *
+ * Applied, so it is not mistaken for the educator striking out on their own. */
+const landed = ref(false);
+watch(() => (controlSub.value ? room.here[controlSub.value]?.position?.exercise : null), at => {
+  if (!controlSub.value || landed.value || at == null) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (!row) return;
+  landed.value = true;
+  applied(() => { currentId.value = row.id; });
+});
+watch(controlSub, () => { landed.value = false; });
+
+/* BEING DRIVEN. The instruction rather than the destination - `at` changes on every drive,
+ * including one back to where the screen already is, and watching the position would drop
+ * the second of two drives to the same row. That is what paging back and forth in a deck
+ * looks like.
+ *
+ * Through `applied` for the same reason a followed move is: this is not the student
+ * navigating, and treating it as one would end their following on the first drive. */
+watch(() => driven.at, () => {
+  if (!beingDriven()) return;
+  const at = driven.position?.exercise;
+  if (at == null) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
+  if (driven.position?.slide != null) applied(() => { mySlide.value = driven.position.slide; });
+});
+
+/* Control ending, from either side. The educator's tab says so and stops rather than
+ * quietly becoming a second live tab - see `controlEnded`. */
+watch(() => control.sub, (now_, was) => {
+  if (!controlSub.value) return;
+  if (was && !now_) controlEnded.value = 'Control has ended.';
+});
+
+/* The prompt's answer, held until the new tab has actually taken control - `sharing` is a
+ * field on the control row and there is no row to set it on until then. */
+const pendingShare = ref('');
+watch(() => control.sub, sub => {
+  if (sub && sub === pendingShare.value) { setSharing(true); pendingShare.value = ''; }
+});
+
+/** Open a tab that drives one student's screen. */
+function startControl(sharing) {
+  const who = takingOver.value;
+  takingOver.value = null;
+  if (!who || !delivery.cohort) return;
+  /* A TAB, as the brief asks, and the reason is that the live screen is still worth
+   * watching: the panel, the chat and the class's answers are all on it, and an educator
+   * helping one person has not stopped running the lesson. `sharing` travels in the URL's
+   * absence - the new tab takes control itself, and then this one sets the flag, so the
+   * choice made in the prompt is applied by the tab that made it. */
+  window.open(location.pathname + location.search + controlUrl(delivery.cohort, who.sub),
+              '_blank', 'noopener');
+  if (sharing) pendingShare.value = who.sub;
+}
+
+/* ---- the editor, across the channel --------------------------------------
+ *
+ * ONE FIELD IN EACH DIRECTION AND NO MERGE. While control is on, the student's editor is
+ * read-only and the educator's is the live one - two people typing into one buffer is not
+ * something this can do, and a half-built merge is worse than the rule.
+ */
+
+/** What this client currently has in its editor, from whichever exercise is on screen. */
+const myCode = ref('');
+
+/* Driving: every change goes with the position, because they change together - moving to an
+ * exercise is also arriving at its starter code, and two messages would show one exercise's
+ * prompt over another's buffer for as long as the second took to arrive. Already debounced
+ * inside the exercise component. */
+watch(myCode, v => {
+  if (controlSub.value && drivingSomebody()) {
+    drive({ at: current.value?.id ?? null, title: current.value?.title,
+            slide: mySlide.value, code: v });
+  }
+});
+
+/* Being driven: send what we have, ONCE, the moment control begins. This is the half that
+ * actually helps - a progress row only ever holds the code that SOLVED an exercise, so a
+ * student in the middle of getting one wrong has nothing recorded anywhere for an educator
+ * to look at. After this the editor is read-only, so there is nothing further that could
+ * have changed. */
+watch(() => control.sub, sub => {
+  if (sub && sub === session.sub) sendBuffer(current.value?.id ?? null, myCode.value);
+});
+
+/* And the educator applying it. Only for the exercise it was written against: control can be
+ * taken while the tab is still landing on the student's position, and dropping somebody's
+ * half-finished query into the wrong exercise is worse than not showing it. */
+const shownCode = computed(() => {
+  if (beingDriven()) return driven.code ?? undefined;
+  if (controlSub.value && borrowed.code != null
+      && progressId(borrowed.at) === progressId(currentId.value)) return borrowed.code;
+  return undefined;
+});
+
+/** Stop driving, from the educator's tab. */
+function stopControl() {
+  releaseControl();
+  controlEnded.value = 'Control has ended.';
+  /* Opened by `window.open`, so a script may close it. Browsers that refuse are left on the
+   * notice above rather than dropped into a second live session. */
+  setTimeout(() => window.close(), 60);
+}
+
+/** Stop being driven, from the student's. The session carries on. */
+const stopBeingDriven = () => releaseControl();
+
+/**
+ * End it for everyone, and come back out to the cohort list where it was started.
+ *
+ * Where the class finished travels with the ending, because this is the only side that
+ * knows it: the session row carries no position until step 4 broadcasts one. The title
+ * goes too - a bookmark that can only say `2.4.1` makes the picker quote a number at a
+ * tutor deciding which course to resume.
+ */
+/* An hour of a class, kept for as long as the screen showing it is open. Not a route: it is
+ * a consequence of a button rather than a place, a reload has nothing to reload, and the
+ * durable copy is a row somebody can read back later. */
+const summary = ref(null);
+
+async function endLiveHere() {
+  const cohort = delivery.cohort;
+  const at = current.value;
+  const was = { cohort: delivery.title || cohort, course: delivery.course };
+  try {
+    /* The digest comes back WITH the ending - it is built from tallies on the row being
+     * deleted, so this is the last moment anything can produce it without a second read. A
+     * spinner here would be one over an answer we already had. */
+    const s = await endLive(cohort, at ? { exercise: at.id, title: at.title } : null);
+    if (s) { summary.value = { ...s, ...was }; return; }
+  } catch (e) { liveError.value = e.message; return; }
+  // Nothing came back - an older deployment, or a session already gone. Straight out.
+  goAdmin('cohorts');
+}
+
+/** Back to where the tutor is, and following again from there. */
+function catchUpHere() {
+  catchUp();
+  const at = followedPosition()?.exercise;
+  if (at == null) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (row) applied(() => { currentId.value = row.id; });
+}
+
+/**
+ * Go to where a chat message was sent from.
+ *
+ * DELIBERATELY NOT THROUGH `applied()`. Opening somebody's question is a decision to go and
+ * look at it, so it should stop the follow exactly as any other navigation does - the band
+ * then says so and Catch up brings them back. Wrapping it would make this the one move in
+ * the app that silently takes a student off the tutor's page while still claiming to be on
+ * it.
+ */
+function goLive(at) {
+  if (at == null) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (row) currentId.value = row.id;
+}
+
+/** Leave one somebody else is running. The session carries on without us. */
+function leaveLiveHere() {
+  forgetLive();
+  leaveArea();
+}
 
 /** Back to the grid. Drops ?course= as well, or a reload would walk straight past it. */
 function backToCourses() {
@@ -369,6 +757,18 @@ function backToCourses() {
 }
 
 /** Signed in already, or auth is switched off entirely: go straight to the content. */
+/* Preview's scripted tutor needs somewhere to walk, and only this file knows what rows the
+ * open course has. Registered once; `flat` is read at the moment it is asked. */
+/* Only preview.js reads this, which is why it may carry more than a position: a scripted
+ * class has to answer COHERENTLY - three people choosing C when C is not an option, or
+ * being marked correct while the panel says they chose the wrong one, is a stand-in that
+ * teaches you to distrust the screen. */
+previewRows(() => flat.value.map(r => ({
+  at: r.id, title: r.title,
+  answer: r.answer ?? null,
+  options: r.options?.length ?? 0,
+})));
+
 onMounted(async () => {
   await loadAuthConfig();
   if (isEnabled()) {
@@ -382,7 +782,12 @@ onMounted(async () => {
    * pushed: it was not a step the student took, so Back must not walk into it. After the
    * session, because `admin` is not known before it - and it covers an open deployment,
    * where there are no admins at all. */
-  if (appRoute.value && appRoute.value.area !== 'account' && !isAdmin.value) leaveArea(true);
+  /* `live` is in the exempt list beside `account`: a session is the one area a student is
+   * SUPPOSED to be in, and it is where the invitation sends them. What differs between a
+   * tutor and a student there is which half of the band they get, not whether they may be
+   * there at all - and that is decided by the session's own `by`, not by this check. */
+  if (appRoute.value && !['account', 'live'].includes(appRoute.value.area) && !isAdmin.value)
+    leaveArea(true);
   /* The account area's own version of the same correction: signed out, or an open
    * deployment with no accounts at all. Separate rather than folded into the line above,
    * because they turn away different people for different reasons and a single condition
@@ -395,6 +800,14 @@ onMounted(async () => {
   else if (watchingSub.value) await switchSubject(watchingSub.value);
 
   await loadCourses();
+  /* After the courses, unlike watching: entering a session opens the course it names, and
+   * `open()` needs the catalogue to have arrived to find it. */
+  if (liveCohort.value) await enterLive(liveCohort.value);
+  if (controlCohort.value) await enterLive(controlCohort.value, true);
+  /* Asked once now and then once a minute. Started AFTER the session is restored, so a
+   * student who reloaded inside a lesson is not offered an invitation to the lesson they are
+   * already in for the second it would take the first answer to arrive. */
+  if (authed.value && !isAdmin.value) watchForSessions();
 });
 
 async function onAuthenticated(token) {
@@ -403,6 +816,9 @@ async function onAuthenticated(token) {
   try { await startSession(token); authed.value = true; }
   catch (e) { loadError.value = e.message; loading.value = false; return; }
   await loadCourses();
+  // Signing in during a lesson is the commonest way to meet one - a student told the class
+  // has started opens the site, and the first thing they should see is the way in.
+  if (!isAdmin.value) watchForSessions();
 }
 
 /* A solve carries the code that did it, so an exercise a student comes back to shows their
@@ -446,6 +862,22 @@ const go = d => { const n = flat.value[index.value + d]; if (n) currentId.value 
  * A move is also the answer to Next's nudge, whichever way it went and however it was made
  * - the footer, the sidebar, Contents. Having gone somewhere, the student does not need to
  * be told where to go. */
+watch(currentId, () => {
+  if (!delivery.cohort) return;
+  /* A control tab DRIVES rather than reports - see `enterLive`. Returned early, because
+   * falling through would also call `reportPosition`, and the educator's two tabs would
+   * then take turns telling the room where the educator is. */
+  if (controlSub.value) {
+    if (drivingSomebody()) drive({ at: current.value?.id ?? null, title: current.value?.title, slide: null });
+    mySlide.value = null;
+    return;
+  }
+  /* A move of their own is a decision, and it ends the following. The tutor is exempt:
+   * they are the thing being followed, and there is nothing for them to stop. */
+  if (!applying && !delivery.mine && delivery.following) wandered();
+  mySlide.value = null;   // a new row starts a new range
+  reportPosition();
+});
 watch(currentId, id => {
   urgeNext.value = false;
   if (course.value && id) subject.value.remember(course.value.id, id);
@@ -455,7 +887,7 @@ watch(currentId, id => {
 <template>
   <SignIn v-if="needsSignIn" @authenticated="onAuthenticated" />
 
-  <div v-else class="app" :class="{ watching: !!watched }">
+  <div v-else class="app" :class="{ watching: !!watched || !!delivery.cohort || !!invited }">
     <TopBar
       :name="session.name" :email="session.email" :admin="isAdmin" :authed="authed"
       :avatar="session.avatar"
@@ -466,13 +898,77 @@ watch(currentId, id => {
     <!-- Above everything, always, for as long as the session is open. The screens below it
          are the ordinary player, so this band is the only thing distinguishing a student's
          work from your own. -->
-    <WatchBanner v-if="watched" :name="watched.name" :email="watched.email"
+    <!-- CONTROL OUTRANKS BOTH, on either side of it. A tab that is driving somebody's
+         screen must not describe itself as merely viewing them, and a student being driven
+         must not be shown the ordinary following band - in both cases the milder statement
+         is the one that would be believed. -->
+    <ControlBand v-if="controlSub && drivingSomebody()" side="driving"
+                 :name="control.name" :sharing="control.sharing"
+                 @stop="stopControl" @sharing="setSharing" />
+    <ControlBand v-else-if="beingDriven()" side="driven"
+                 :by-name="control.byName" :sharing="control.sharing"
+                 @stop="stopBeingDriven" />
+
+    <WatchBanner v-else-if="watched" :name="watched.name" :email="watched.email"
                  @exit="goAdmin('people', watched.sub)" />
+
+    <!-- Never both. Watching somebody's session and leading a live one are two different
+         answers to "whose screen is this", and a screen claiming both is a screen that has
+         answered neither. -->
+    <LiveBand v-else-if="delivery.cohort" :session="delivery" :mine="delivery.mine"
+              :cohort-title="delivery.title || delivery.cohort"
+              :course-title="allCourses.find(c => c.id === delivery.course)?.title"
+              :here="Object.keys(room.here).length"
+              :following="delivery.following"
+              :can-catch-up="!!followedPosition()"
+              :leader-at="followedPosition()?.title"
+              :shared-name="control.sharing ? control.name : ''"
+              @end="endLiveHere" @leave="leaveLiveHere" @catch-up="catchUpHere" />
+
+    <!-- Floating rather than docked, and drawn HERE rather than inside the panel: the panel
+         can be collapsed to a rail and a chat window that vanished with it would not be
+         undocked, it would be hidden. Out of flow, so it takes no row of this grid. -->
+    <LiveChat v-if="delivery.cohort && chat.popped && !controlSub" popped :here-at="currentId"
+              @goto="goLive" />
 
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
          use for the exercise nav, and it has to be reachable from the grid, where there is
          none. -->
-    <AdminPanel v-if="showAdmin" :courses="allCourses" @close="leaveArea()" />
+    <!-- A session that had already ended when the link was opened. On the grid rather than
+         in a dialog: there is nothing to dismiss and nowhere to go back to, and the student
+         is already where they would have ended up anyway. -->
+    <!-- LAST OF THE BANDS AND FIRST IN IMPORTANCE TO SOMEBODY NOT YET IN A LESSON. It can
+         only appear when none of the others has, because `invitation()` is null while this
+         client is in a session - so the ordering here is documentation rather than a
+         guard. -->
+    <LiveInvite v-if="invited" :session="invited"
+                :course-title="allCourses.find(c => c.id === invited.course)?.title"
+                @join="goLiveArea(invited.cohort)" />
+
+    <!-- ONE NOTICE, NEVER TWO. Each of these is a row of the shell's grid, and a second one
+         appearing beside a band pushes the player out of the row that gives it its height -
+         so they share an element rather than each taking their chances.
+         A control tab whose control has ended says so and STOPS: it must not quietly become
+         a second live tab, or this browser would report the educator's position from two
+         places and the class would follow whichever moved last. A refusal always names its
+         reason, because both of them - somebody else already has them, they are not
+         connected - are things an educator can act on and neither is guessable from a button
+         that appeared to do nothing. -->
+    <p v-if="liveError || controlEnded || control.refused" class="livegone" role="status">
+      {{ liveError || controlEnded || control.refused }}<template
+        v-if="controlEnded && !liveError"> You can close this tab.</template>
+    </p>
+
+    <!-- BEFORE THE ADMIN PANEL AND BEFORE THE GRID, because it is a mode: the lesson is over
+         and this is what there is to look at. Leaving it is the Done button, which is also
+         the only way out - the alternative is a screen somebody navigates away from and can
+         never get back to, having read none of it. -->
+    <SessionSummary v-if="summary" :summary="summary"
+                    :cohort-title="summary.cohort"
+                    :course-title="allCourses.find(c => c.id === summary.course)?.title"
+                    @done="summary = null; goAdmin('cohorts')" />
+
+    <AdminPanel v-else-if="showAdmin" :courses="allCourses" @close="leaveArea()" />
 
     <!-- Before the grid and after the admin panel, in the same run of alternatives: it is a
          mode, not a pane. Ordered so that a student who is somehow both cannot be, rather
@@ -494,7 +990,8 @@ watch(currentId, id => {
       v-else-if="playground"
       :manifest="playground" :published="manifest" />
 
-    <div v-else class="shell" :class="{ railed: !pinned }">
+    <div v-else class="shell"
+         :class="{ railed: !pinned, live: !!delivery.cohort && !controlSub, tucked: !panelOpen }">
       <!-- One hover target covering the rail and the panel that floats out of it, so
            crossing between the two is not a leave followed by a re-enter. -->
       <div class="dock" @pointerenter="hoverIn" @pointerleave="hoverOut">
@@ -586,7 +1083,11 @@ watch(currentId, id => {
           :deck="currentTopic?.slides"
           :course-id="course.id"
           :note-count="currentTopic?.notes"
-          :row="current" />
+          :goto="followSlide"
+          :row="current"
+          @slide="n => { mySlide = n;
+                         if (controlSub) { if (drivingSomebody()) drive({ at: current?.id ?? null, title: current?.title, slide: n }); }
+                         else if (delivery.cohort) reportPosition(); }" />
         <component
           v-else-if="current"
           :is="componentFor[current.type] || CodingExercise"
@@ -595,7 +1096,12 @@ watch(currentId, id => {
           :exercise="current"
           :done="isSolved(current.id)"
           :saved="savedCode[current.id]"
-          @solved="markSolved" />
+          :class-answers="classAnswers"
+          :frozen="beingDriven()"
+          :driven-code="shownCode"
+          @solved="markSolved"
+          @checked="(id, v) => reportMark({ at: id, ...v })"
+          @code="v => myCode = v" />
 
         <footer v-if="total">
           <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>
@@ -619,6 +1125,19 @@ watch(currentId, id => {
         :src="slidesUrl" :label="currentTopic?.label"
         @close="showSlides = false" />
 
+      <!-- Last in the row, so the deck and the exercise keep the middle. It is the room
+           rather than the lesson: a tutor glances at it, and a student mostly does not. -->
+      <LivePanel v-if="delivery.cohort && !controlSub" :leader-at="leaderAt" :can-control="delivery.mine"
+                 :here-at="currentId"
+                 :marks="marksHere" :grading="delivery.mine && gradableHere"
+                 :controlled="control.sub || ''"
+                 @width="w => panelOpen = w" @goto="goLive"
+                 @control="who => takingOver = who" />
+
+      <ControlStart v-if="takingOver" :name="takingOver.name"
+                    :others="Math.max(0, Object.keys(room.here).length - 2)"
+                    @take="startControl" @close="takingOver = null" />
+
         <ContentsModal
           v-if="showContents"
           :course="course" :current-id="currentId" :solved="solved" :current-unit="unitOfCurrent?.unit"
@@ -637,10 +1156,42 @@ watch(currentId, id => {
    player; the banner is a third child, so without this it takes the `1fr` row - stretching
    to fill the whole screen - and the player is pushed into an implicit row underneath. */
 .app.watching { grid-template-rows: auto auto minmax(0, 1fr); }
+/* Same reason as the line above: the notice is a fourth child, so without a row of its own
+   it would take the `1fr` and push the player out of the grid. `auto` collapses to nothing
+   while it is absent, which is why it can be declared unconditionally. */
+/* A BAND AND A NOTICE IS FOUR CHILDREN. This said three for both cases, which was only ever
+   right because the one notice that existed - a session that had already ended - could not
+   co-occur with a band for the session it was about. A control tab can show both, and the
+   fourth child would take an implicit row and leave the player without the `1fr` that gives
+   it its height. */
+.app.watching:has(> .livegone) { grid-template-rows: auto auto auto minmax(0, 1fr); }
+.app:has(> .livegone) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.livegone { margin: 0; padding: 8px 16px; font-size: 13px; color: var(--ice-bad);
+            background: var(--ice-bad-fill); border-bottom: 1px solid var(--ice-border); }
 .shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
 .shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
 .shell.railed { grid-template-columns: 44px minmax(0, 1fr); }
 .shell.railed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
+/* The room, as a fixed last column. Fixed rather than a fraction because it is a list of
+   names: it does not get more useful with more room, and every pixel it took would come
+   off the exercise, which does. The slides pane gives up the width instead - it is the one
+   thing on screen that can be scrolled and re-read.
+
+   336 rather than 300 because it holds the chat as well now, and a message wrapping every
+   four words is a log nobody reads. That is also the width the mock screens were drawn at. */
+.shell.live { grid-template-columns: 272px minmax(0, 1fr) 336px; }
+.shell.live:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 30%) 336px; }
+.shell.railed.live { grid-template-columns: 44px minmax(0, 1fr) 336px; }
+.shell.railed.live:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 30%) 336px; }
+/* Collapsed, it is the same 44px rail the sidebar leaves - and it gives its width back to
+   the exercise rather than to the slides, because the exercise is what a student collapsed
+   it to make room for. */
+.shell.live.tucked { grid-template-columns: 272px minmax(0, 1fr) 44px; }
+.shell.live.tucked:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%) 44px; }
+.shell.railed.live.tucked { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+.shell.railed.live.tucked:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%) 44px; }
 
 /* The hover target. Unpinned it is only as wide as the rail, and the panel floats out of
    it over the exercise - hovering an edge must never reflow the page under the pointer. */

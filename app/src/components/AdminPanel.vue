@@ -210,6 +210,7 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
       </ul>
 
       <CohortList v-else-if="section === 'cohorts'" :cohorts="cohorts" :users="users"
+                  :courses="courses"
                   @done="m => { notice = m || ''; refresh(); }" />
 
       <template v-else>

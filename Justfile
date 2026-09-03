@@ -267,12 +267,16 @@ deploy-content: build
 _auth-json:
     #!/usr/bin/env bash
     set -euo pipefail
-    read -r pool client < <(aws cloudformation describe-stacks --stack-name Icecore \
+    # The socket URL comes from the stack for the reason the pool ids do. It is not behind
+    # the distribution - see the Socket comment in icecore-stack.js - so it is the one thing
+    # the app talks to that is not same-origin, and the only way it can learn the hostname.
+    read -r pool client live < <(aws cloudformation describe-stacks --stack-name Icecore \
       --query "Stacks[0].[Outputs[?OutputKey=='UserPoolId'].OutputValue|[0],\
-                          Outputs[?OutputKey=='UserPoolClientId'].OutputValue|[0]]" \
+                          Outputs[?OutputKey=='UserPoolClientId'].OutputValue|[0],\
+                          Outputs[?OutputKey=='LiveSocketUrl'].OutputValue|[0]]" \
       --output text)
-    printf '{"userPoolId":"%s","clientId":"%s","region":"%s"}\n' \
-      "$pool" "$client" "$(aws configure get region)" > dist/auth.json
+    printf '{"userPoolId":"%s","clientId":"%s","region":"%s","live":"%s"}\n' \
+      "$pool" "$client" "$(aws configure get region)" "$live" > dist/auth.json
     echo "wrote dist/auth.json for user pool $pool"
 
 # Where to publish. Read from the stack rather than asked for: they are outputs of the

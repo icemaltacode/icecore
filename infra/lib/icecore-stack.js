@@ -32,8 +32,9 @@ import {
   aws_cloudwatch as cw,
   aws_cloudwatch_actions as cwActions,
 } from 'aws-cdk-lib';
-import { HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
-import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import { HttpApi, HttpMethod, WebSocketApi, WebSocketStage } from 'aws-cdk-lib/aws-apigatewayv2';
+import { HttpLambdaIntegration, WebSocketLambdaIntegration }
+  from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { HttpJwtAuthorizer } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from 'aws-cdk-lib/custom-resources';
 
@@ -429,6 +430,22 @@ export class IcecoreStack extends Stack {
       resources: [users.userPoolArn],
     }));
 
+    /* The live channel - ONE MODULE, TWO FUNCTIONS, and the split is forced rather than
+     * chosen. See the `managementFor` comment in infra/lambda/live/index.mjs: posting to a
+     * socket needs the socket API's endpoint, a socket event carries it, an HTTP event does
+     * not, and handing it to the function the socket API points at is a CloudFormation
+     * cycle. So the HTTP half is a second function that nothing in the socket API
+     * references, and it can be told outright.
+     *
+     * Fifteen seconds rather than ten: a fan-out is one query plus a post per connection,
+     * and the slow case is a room where several sockets have gone stale at once and each
+     * post has to fail before its row can be deleted.
+     */
+    const live = fn('Live', 'live', {}, { timeout: Duration.seconds(15) });
+    table.grantReadWriteData(live);
+    const liveApi = fn('LiveApi', 'live', {}, { timeout: Duration.seconds(15) });
+    table.grantReadWriteData(liveApi);
+
     const api = new HttpApi(this, 'Api', {
       apiName: 'icecore',
       defaultAuthorizer: new HttpJwtAuthorizer('Cognito', users.userPoolProviderUrl, {
@@ -483,11 +500,78 @@ export class IcecoreStack extends Stack {
       methods: [HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('AccountProgressIntegration', account),
     });
+    /* Progress written for somebody else, during remote control. Its own path rather than a
+       shape of `/users`, because it is the only thing this function does that changes what a
+       STUDENT has done rather than who they are - and the function checks that the caller is
+       currently driving them, so being an admin is not on its own enough to reach it. */
+    api.addRoutes({
+      path: '/api/admin/progress',
+      methods: [HttpMethod.PUT],
+      integration: new HttpLambdaIntegration('AdminIntegration', admin),
+    });
     api.addRoutes({
       path: '/api/admin/cohorts',
       methods: [HttpMethod.POST, HttpMethod.PUT, HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('AdminIntegration', admin),
     });
+    // Minting the ticket is an ordinary authorized call; the socket below has no authorizer
+    // of its own and does not need one, because the ticket IS the credential.
+    api.addRoutes({
+      path: '/api/live/ticket',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('LiveTicketIntegration', liveApi),
+    });
+    /* Starting, ending, and asking who is live. GET is not admin-only - a student's client
+     * has to know a session exists before it can offer to join one - and the group check
+     * for the other two is inside the function, because a JWT authorizer cannot see groups.
+     */
+    api.addRoutes({
+      path: '/api/live/session',
+      methods: [HttpMethod.GET, HttpMethod.POST, HttpMethod.DELETE],
+      integration: new HttpLambdaIntegration('LiveSessionIntegration', liveApi),
+    });
+
+    /* ---- the socket -------------------------------------------------------
+     *
+     * NO AUTHORIZER, and that is the design rather than an omission. There is no
+     * `WebSocketJwtAuthorizer` - a WebSocket API takes a Lambda or IAM authorizer and
+     * nothing else - and a browser cannot set headers on a handshake, so a token would have
+     * to ride in the query string where tokens end up in logs. The client spends a
+     * single-use ticket instead, `$connect` consumes it with a conditional delete, and a
+     * non-2xx from that route refuses the handshake. An authorizer would be a second
+     * function in front of this one doing the same delete.
+     *
+     * IT IS NOT BEHIND THE DISTRIBUTION, unlike /api/*. A WebSocket API's URL is
+     * `wss://<host>/<stage>` with nothing below it, so a CloudFront behaviour at /ws would
+     * forward `/<stage>/ws` and be refused - routing it through would need a CloudFront
+     * Function rewriting the path on every connection. Same-origin buys nothing here
+     * either: a WebSocket handshake has no CORS and carries no signed cookie. So the client
+     * learns this URL from auth.json, exactly as it learns the user pool.
+     */
+    const socket = new WebSocketApi(this, 'Socket', {
+      apiName: 'icecore-live',
+      /* Everything lands on $default, which is what the client expects: its messages carry
+       * a `type`, and API Gateway selects routes on `$request.body.action` by default. Add
+       * a named route later and it will never be reached until the client sends `action`
+       * too - a message that silently falls through to the default handler instead. */
+      connectRouteOptions: { integration: new WebSocketLambdaIntegration('LiveConnect', live) },
+      disconnectRouteOptions: { integration: new WebSocketLambdaIntegration('LiveDisconnect', live) },
+      defaultRouteOptions: { integration: new WebSocketLambdaIntegration('LiveDefault', live) },
+    });
+    const socketStage = new WebSocketStage(this, 'SocketStage', {
+      webSocketApi: socket,
+      stageName: 'live',
+      autoDeploy: true,
+    });
+    // execute-api:ManageConnections, scoped to this stage - the grant exists so that the
+    // policy is not written by hand against an ARN nobody would notice going wrong.
+    socketStage.grantManagementApiAccess(live);
+    /* The HTTP half posts to sockets too - ending a session tells the room - and is handed
+     * the endpoint here, AFTER the stage exists. This is the direction that has no cycle in
+     * it: nothing in the socket API references `liveApi`. */
+    socketStage.grantManagementApiAccess(liveApi);
+    liveApi.addEnvironment('WS_ENDPOINT', socketStage.callbackUrl);
+
 
     // ---- the one front door ----------------------------------------------
     const s3Origin = origins.S3BucketOrigin.withOriginAccessControl(site);
@@ -654,6 +738,9 @@ export class IcecoreStack extends Stack {
     });
     new CfnOutput(this, 'UserPoolClientId', { value: client.userPoolClientId });
     new CfnOutput(this, 'TableName', { value: table.tableName });
+    // Read by `just deploy` into auth.json: the app cannot reach the socket without it,
+    // and a hand-typed wss:// URL is one typo from a feature that silently never connects.
+    new CfnOutput(this, 'LiveSocketUrl', { value: socketStage.url });
     new CfnOutput(this, 'PublisherRoleArn', { value: publisher.roleArn });
   }
 }

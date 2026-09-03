@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import CodeEditor from './CodeEditor.vue';
 import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
@@ -13,11 +13,20 @@ import * as store from '../progress-store.js';
 import { progressId } from '../progress.js';
 
 const props = defineProps({
+  /* REMOTE CONTROL, both directions. `frozen` makes the editor read-only for a student whose
+   * screen an educator is driving - two people typing into one buffer is not a thing this can
+   * do, and the band says so. `drivenCode` is what to put in it.
+   *
+   * `code` is emitted so the other end can SEE what was written: a student in the middle of
+   * getting an exercise wrong has nothing recorded anywhere, because a progress row only ever
+   * holds the code that solved one. It is the half of control that actually helps. */
+  frozen: Boolean,
+  drivenCode: String,
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved']);
+const emit = defineEmits(['solved', 'checked', 'code']);   // see McqExercise
 
 // Figures and embedded apps are named bare in the markdown - a filename, an app
 // directory - and this is what turns them into URLs under the course's content.
@@ -28,6 +37,23 @@ const mdx = text => md(text, {
 
 const stepIndex = ref(0);
 const code = ref('');
+
+/* Driven from outside. Guarded on a difference, or applying it would fire the emit below and
+ * bounce the same text back to whoever sent it. */
+watch(() => props.drivenCode, v => {
+  if (typeof v === 'string' && v !== code.value) code.value = v;
+});
+
+/* Debounced, because this is every keystroke and the other end is a socket. Long enough that
+ * a burst of typing is one message and short enough that an educator does not appear to have
+ * stopped typing mid-word. */
+let beat;
+watch(code, v => {
+  clearTimeout(beat);
+  beat = setTimeout(() => emit('code', v), 300);
+});
+onBeforeUnmount(() => clearTimeout(beat));
+
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
  * exercise completes, because that is the moment there is an answer worth keeping. A step
  * solved in a session that was abandoned half way is not a solution to anything. */
@@ -115,6 +141,11 @@ async function doCheck() {
   try {
     const v = isMcqStep.value ? checkChoice() : await gradeQuery();
     verdict.value = v;
+    emit('checked', props.exercise.id, {
+      pass: !!v.pass, error: !!v.error, step: stepIndex.value,
+      // Only a step that IS a choice has one; a query has no option to report.
+      choice: isMcqStep.value ? picked.value : null,
+    });
     if (v.error) urgeHelp.value = true;
     if (v.pass) {
       // An MCQ step has no editor and so nothing to keep - the choice is not a solution.
@@ -251,7 +282,7 @@ async function doReset() {
           <span class="tab active">query.sql</span>
           <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
         </div>
-        <CodeEditor v-model="code" @run="doRun" />
+        <CodeEditor v-model="code" :readonly="frozen" @run="doRun" />
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>

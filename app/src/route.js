@@ -14,15 +14,17 @@
  * decides whether to honour it, so that a student who types the URL is turned away in one
  * place rather than in every component that reads a section name.
  *
- * Not vue-router. Five routes and no nesting, guards, transitions or lazy chunks - the
- * dependency would be bought for `location.hash`, and the app has managed without one.
+ * Not vue-router. A handful of routes and no nesting, guards, transitions or lazy chunks -
+ * the dependency would be bought for `location.hash`, and the app has managed without one.
  */
 import { ref } from 'vue';
 
-/* Three areas, and a route says which.
+/* Five areas, and a route says which.
  *
  *   #/admin, #/admin/<section>, #/admin/<section>/<id>
  *   #/watch/<sub>                 the player, rendered as that student sees it
+ *   #/live/<cohort>               a live delivery session, leading it or following it
+ *   #/control/<cohort>/<sub>      driving one student's screen inside that session
  *   #/account                     the student's own account
  *
  * Watching is a URL rather than a flag for the reason the rest of this file exists: it is
@@ -30,8 +32,9 @@ import { ref } from 'vue';
  * your own session, and Back is the natural way out. It being addressable is also half of
  * what remote control will need - a session somebody else can point at.
  *
- * THE AREA SAYS NOTHING ABOUT WHO MAY BE THERE. Two of these are for admins and the third
- * is for everybody, and that difference lives in App.vue with the rest of the honouring -
+ * THE AREA SAYS NOTHING ABOUT WHO MAY BE THERE. Some of these are for admins, some for
+ * everybody, and one - a live session - is for an admin and a student in different ways;
+ * all of that difference lives in App.vue with the rest of the honouring -
  * a route is a request. Putting it here would mean this file needed to know about the
  * session, and every screen would then have two places to ask the same question. */
 function parse() {
@@ -47,6 +50,25 @@ function parse() {
   }
   const watch = /^#\/watch\/(.+)$/.exec(hash);
   if (watch) return { area: 'watch', section: null, id: decodeURIComponent(watch[1]) };
+  /* A session is a place, for the same reasons watching is: a reload during a lesson has to
+   * land back in the lesson, Back is the way out, and a link to it is how a student joins
+   * one. The cohort is the address because the cohort is what a session belongs to - one
+   * per cohort, which is the rule the conditional write enforces. */
+  const live = /^#\/live\/(.+)$/.exec(hash);
+  if (live) return { area: 'live', section: null, id: decodeURIComponent(live[1]) };
+  /* CONTROL NEEDS BOTH: whose screen, and which session it is happening inside. The cohort
+   * is not decoration - it is the channel this tab has to join, and without it a control tab
+   * opened from a link would know who to drive and have no way to reach them. It comes
+   * FIRST because that is the containment: a control happens inside a session, and the URL
+   * reading the other way round would suggest a student can be driven without one. */
+  const control = /^#\/control\/([^/]+)\/(.+)$/.exec(hash);
+  if (control) {
+    return {
+      area: 'control',
+      section: decodeURIComponent(control[1]),
+      id: decodeURIComponent(control[2]),
+    };
+  }
   return null;
 }
 
@@ -82,6 +104,16 @@ export function account() {
 /** Open a student's session, read-only. */
 export function watch(sub) {
   navigate('#/watch/' + encodeURIComponent(sub), false);
+}
+
+/** Open a cohort's live session - leading it or following it, the same address either way. */
+export function live(cohort) {
+  navigate('#/live/' + encodeURIComponent(cohort), false);
+}
+
+/** Drive one student's screen, inside a cohort's session. Opened in a tab of its own. */
+export function control(cohort, sub) {
+  return '#/control/' + encodeURIComponent(cohort) + '/' + encodeURIComponent(sub);
 }
 
 /** Leave it. Pushes a hash-less URL rather than clearing the hash, which would leave a

@@ -27,6 +27,17 @@ const PATHS = {
         + ' 0 0 0 0 6.8Z',
   // an arrow leaving a pane: the standard "opens elsewhere", not a plus or a window
   tab: 'M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+  // the same pane with the arrow coming back INTO it. Deliberately `tab` mirrored rather
+  // than a different glyph: popping out and docking are one control in two states, and two
+  // unrelated shapes would read as two unrelated actions.
+  dock: 'M12 12h6M12 12V6M12 12l8-8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5',
+  // a cursor arrow over a small screen: driving someone else's. Not a hand and not a
+  // gamepad - the thing being taken over is a pointer, and the frame is what says it is
+  // somebody else's pointer rather than your own.
+  remote: 'M3 5h18v10H3zM3 19h8M13 12l7 3-3 1-1 3-3-7Z',
+  // a bubble with a tail. The tail is the whole glyph at 15px - without it this is `table`
+  // without its rules.
+  chat: 'M4 5h16a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z',
   // an arrow INTO a tray. The arrow alone is indistinguishable from a collapse or a
   // sort-descending at 15px; the tray under it is the half that says "to a file".
   download: 'M12 3v11M8 10l4 4 4-4M4 18v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2',
@@ -44,6 +55,19 @@ const PATHS = {
   // a grid with a heavier first row: a table, distinguishable from `rows` at 13px because
   // this one has a header and that one is two panes
   table: 'M4 5h16v14H4zM4 9.5h16M10 9.5V19M16 9.5V19',
+  // two figures, the second behind and cropped. A single head-and-shoulders reads as
+  // "account"; the second one is what makes it a group.
+  people: 'M16 19v-1.5a3.5 3.5 0 0 0-3.5-3.5h-5A3.5 3.5 0 0 0 4 17.5V19M10 11a3.5 3.5 0 1 0 '
+        + '0-7 3.5 3.5 0 0 0 0 7M20 19v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.2a3.5 3.5 0 0 1 0 6.6',
+  // a dial with two hands. The short hand is what says clock rather than target.
+  clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM12 7v5l3.5 2',
+  // broadcast: a point with arcs radiating either side. Not a dot in a circle, which at
+  // 14px is the record button on every piece of hardware anyone has ever used.
+  live: 'M12 12h.01M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13'
+      + 'M18.5 5.5a9 9 0 0 1 0 13',
+  // three dots. Drawn as zero-length strokes with a round cap rather than as circles, so
+  // they take the same stroke-width and the same colour as everything else in the set.
+  more: 'M12 5.5h.01M12 12h.01M12 18.5h.01',
   // a pencil, tip down-left, with the ferrule drawn as its own stroke. The ferrule is what
   // makes it a pencil rather than an arrow at 15px - without it the body is just a
   // diagonal, which is why the plain "slash" edit glyphs read as a share or a link.

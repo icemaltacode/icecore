@@ -25,7 +25,7 @@ const PREVIEW_OUT = 'ice-preview-signed-out';
 /* A real-shaped id token, so the name in the top bar comes from the same code path it will
  * on a deployment rather than from a preview-only special case. Header and signature are
  * junk on purpose: nothing here verifies it, and nothing here should be able to. */
-const PREVIEW_TOKEN = `x.${btoa(JSON.stringify({ name: 'Ada Lovelace', email: 'ada@example.com' }))
+const PREVIEW_TOKEN = `x.${btoa(JSON.stringify({ sub: 'preview-1', name: 'Ada Lovelace', email: 'ada@example.com' }))
   .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}.x`;
 
 let config = null;   // { userPoolId, clientId } or null when auth is switched off
@@ -38,7 +38,11 @@ let token = null;    // the current id token, for calls to /api/*
  * Reactive because components read it through computed(); as a plain object the admin
  * flag was read once as false before sign-in and never looked at again.
  */
-export const session = reactive({ courses: null, admin: false, expires: null, name: '', email: '', avatar: '' });
+/* `sub` is here because something has to be able to ask "is that mine?" about a row written
+ * by somebody. A live session names the admin who started it, and the difference between
+ * Rejoin and a refusal is exactly that comparison. Read from the token, never used to grant
+ * anything - every check that matters happens server-side against the token itself. */
+export const session = reactive({ courses: null, admin: false, expires: null, sub: '', name: '', email: '', avatar: '' });
 
 /**
  * The display name and email out of the id token.
@@ -57,6 +61,17 @@ function claims(jwt) {
 }
 
 export const isEnabled = () => !!config || !!PREVIEW;
+
+/**
+ * Where the live channel is, or null when this deployment has no socket.
+ *
+ * The ONE thing the app talks to that is not same-origin. Everything else goes through the
+ * distribution; a WebSocket API's URL is `wss://<host>/<stage>` with nothing below it, so
+ * putting it behind a path would need a rewrite on every connection to buy a same-origin
+ * property that a handshake - no CORS, no cookies - makes no use of. So it is deployed
+ * config like the user pool, and its absence means the feature is simply not there.
+ */
+export const socketUrl = () => config?.live || null;
 
 /** Read auth.json. A 404 means "no auth on this deployment", not an error. */
 export async function loadAuthConfig() {
@@ -230,6 +245,7 @@ export async function signOutEverywhere() {
 export async function startSession(idJwt) {
   token = idJwt;
   const who = claims(idJwt);
+  session.sub = who.sub || '';
   session.name = who.name || '';
   session.email = who.email || '';
   // The session endpoint cannot work out which site to sign cookies for — CloudFront gives
@@ -265,7 +281,7 @@ export function signOut() {
   pool?.getCurrentUser()?.signOut();
   token = null;
   session.courses = null; session.admin = false; session.expires = null;
-  session.name = ''; session.email = ''; session.avatar = '';
+  session.sub = ''; session.name = ''; session.email = ''; session.avatar = '';
   location.reload();   // drops in-memory state and the stale cookies with it
 }
 

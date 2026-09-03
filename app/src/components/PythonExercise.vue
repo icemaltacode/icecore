@@ -12,7 +12,7 @@
  * What is shared IS shared: the editor, the markdown renderer, the hint affordances and
  * the help pane are all the same components.
  */
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import CodeEditor from './CodeEditor.vue';
 import { gradePython, runPython, pythonReady } from '../py.js';
 import { md } from '../md.js';
@@ -24,11 +24,20 @@ import * as store from '../progress-store.js';
 import { progressId } from '../progress.js';
 
 const props = defineProps({
+  /* REMOTE CONTROL, both directions. `frozen` makes the editor read-only for a student whose
+   * screen an educator is driving - two people typing into one buffer is not a thing this can
+   * do, and the band says so. `drivenCode` is what to put in it.
+   *
+   * `code` is emitted so the other end can SEE what was written: a student in the middle of
+   * getting an exercise wrong has nothing recorded anywhere, because a progress row only ever
+   * holds the code that solved one. It is the half of control that actually helps. */
+  frozen: Boolean,
+  drivenCode: String,
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved']);
+const emit = defineEmits(['solved', 'checked', 'code']);   // see McqExercise
 
 const mdx = text => md(text, {
   base: imageBase(props.courseId, props.exercise.topicId),
@@ -37,6 +46,23 @@ const mdx = text => md(text, {
 
 const stepIndex = ref(0);
 const code = ref('');
+
+/* Driven from outside. Guarded on a difference, or applying it would fire the emit below and
+ * bounce the same text back to whoever sent it. */
+watch(() => props.drivenCode, v => {
+  if (typeof v === 'string' && v !== code.value) code.value = v;
+});
+
+/* Debounced, because this is every keystroke and the other end is a socket. Long enough that
+ * a burst of typing is one message and short enough that an educator does not appear to have
+ * stopped typing mid-word. */
+let beat;
+watch(code, v => {
+  clearTimeout(beat);
+  beat = setTimeout(() => emit('code', v), 300);
+});
+onBeforeUnmount(() => clearTimeout(beat));
+
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
  * exercise completes, because that is the moment there is an answer worth keeping. A step
  * solved in a session that was abandoned half way is not a solution to anything. */
@@ -143,6 +169,8 @@ async function doCheck() {
    * argument you got wrong. It arrives as HTML with <code> in it, from the SCT, which is
    * course content and carries exactly the trust an exercise prompt does. */
   verdict.value = { pass: r.correct, reason: r.message || (r.correct ? 'Correct.' : 'Not quite.') };
+  emit('checked', props.exercise.id,
+       { pass: !!r.correct, error: !!r.error, step: stepIndex.value });
   if (r.correct) {
     passed.value[stepIndex.value] = code.value;
     if (stepIndex.value < steps.value.length - 1) setTimeout(() => stepIndex.value++, 900);
@@ -253,7 +281,7 @@ const ranQuietly = computed(() =>
     <section class="work">
       <div class="editor-pane">
         <div class="tabbar"><span class="tab active">script.py</span></div>
-        <CodeEditor v-model="code" language="python" @run="doRun" />
+        <CodeEditor v-model="code" language="python" :readonly="frozen" @run="doRun" />
         <div class="actions">
           <span v-if="booting" class="muted kbd">Starting Python…</span>
           <span v-else-if="verdict" class="verdict prose inline"

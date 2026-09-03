@@ -39,7 +39,13 @@
  * be the thing that reaches.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand, GetCommand, PutCommand, UpdateCommand, DeleteCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+/* THE WRITE ITSELF LIVES NEXT DOOR, because the admin function performs the same one during
+ * remote control and two copies of these rules would drift exactly where it mattered - a
+ * student's XP recorded one way by their own browser and another way by an educator's. What
+ * stays here is who may write, which is the half that must never be shared: this function
+ * keys on the caller's own sub and there is no sub parameter in the file. */
+import { writeProgress } from '../shared/progress-rows.mjs';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE;
@@ -47,29 +53,6 @@ const TABLE = process.env.TABLE;
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
-
-/* A whole number of XP, and not an absurd one. Anything unreadable is worth nothing rather
- * than failing the call: the solve itself is the thing being recorded, and refusing to
- * record it because the amount beside it was malformed loses the more important fact. */
-const CAP = 10000;
-const amount = xp => Math.min(CAP, Math.max(0, Math.round(Number(xp) || 0)));
-
-/* A submission per step, and nothing else: keys are step indices, values are source.
- * Anything longer than a very long answer is dropped rather than truncated - half a query
- * restored into an editor is worse than an empty one, because it looks like work that was
- * lost rather than work that was never kept. */
-const STEP_LIMIT = 20000, TOTAL_LIMIT = 60000;
-function submissions(code) {
-  if (!code || typeof code !== 'object' || Array.isArray(code)) return null;
-  const kept = {};
-  for (const [step, source] of Object.entries(code)) {
-    if (typeof source !== 'string' || source.length > STEP_LIMIT) continue;
-    if (!/^\d+$/.test(step)) continue;
-    kept[step] = source;
-  }
-  if (!Object.keys(kept).length) return null;
-  return JSON.stringify(kept).length > TOTAL_LIMIT ? null : kept;
-}
 
 const xpIn = items => (items || []).reduce((n, i) => n + (Number(i.xp) || 0), 0);
 
@@ -137,53 +120,14 @@ export async function handler(event) {
   }
 
   if (method === 'PUT') {
-    const { course, exercise, solved = true, last, xp, code } = JSON.parse(event.body || '{}');
-    if (!course) return json(400, { error: 'course is required' });
-
-    // Where they were, so the next visit resumes instead of restarting. One row per
-    // course, overwritten - it is a bookmark, not a history.
-    if (last) {
-      await ddb.send(new PutCommand({
-        TableName: TABLE,
-        Item: { pk, sk: `LAST#${course}`, course, exercise: last, at: new Date().toISOString() },
-      }));
-      return json(200, { ok: true });
+    /* `sub` from the CLAIMS and never from the body, which is the whole of this function's
+     * boundary. Unattributed, because a write that reached here was made by the person whose
+     * rows they are. */
+    try {
+      return json(200, await writeProgress(ddb, TABLE, sub, JSON.parse(event.body || '{}')));
+    } catch (e) {
+      return json(400, { error: e.message });
     }
-
-    if (!exercise) return json(400, { error: 'exercise or last is required' });
-    const sk = `PROG#${course}#${exercise}`;
-    if (!solved) {
-      await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk, sk } }));
-      return json(200, { ok: true });
-    }
-    /* An update rather than a put, for `at` alone: the row has to keep the moment the
-     * exercise was FIRST solved, or a student re-running something they finished last week
-     * would see it counted in today's XP. `at` is a DynamoDB reserved word, and `code` may
-     * become one, hence the names throughout. */
-    const sets = ['#course = :course', '#exercise = :exercise', '#at = if_not_exists(#at, :now)'];
-    const names = { '#course': 'course', '#exercise': 'exercise', '#at': 'at' };
-    const values = { ':course': course, ':exercise': exercise, ':now': new Date().toISOString() };
-
-    if (xp != null) {
-      sets.push('#xp = :xp');
-      names['#xp'] = 'xp';
-      values[':xp'] = amount(xp);
-    }
-    const kept = submissions(code);
-    if (kept) {
-      sets.push('#code = :code');
-      names['#code'] = 'code';
-      values[':code'] = kept;
-    }
-
-    await ddb.send(new UpdateCommand({
-      TableName: TABLE,
-      Key: { pk, sk },
-      UpdateExpression: 'SET ' + sets.join(', '),
-      ExpressionAttributeNames: names,
-      ExpressionAttributeValues: values,
-    }));
-    return json(200, { ok: true });
   }
 
   return json(405, { error: `${method} not allowed` });

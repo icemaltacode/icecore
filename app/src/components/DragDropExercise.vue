@@ -9,7 +9,7 @@ import * as store from '../progress-store.js';
 import { progressId } from '../progress.js';
 
 const props = defineProps({ courseId: String, exercise: Object, done: Boolean });
-const emit = defineEmits(['solved']);
+const emit = defineEmits(['solved', 'checked']);   // see McqExercise
 
 // Figures and embedded apps are named bare in the markdown - a filename, an app
 // directory - and this is what turns them into URLs under the course's content.
@@ -95,6 +95,7 @@ function submit() {
     : Object.fromEntries(columns.value.filter(c => c.id !== POOL)
         .map(c => [c.id, c.items.map(i => i.id)]));
   verdict.value = check(props.exercise, response);
+  emit('checked', props.exercise.id, { pass: verdict.value.pass });
   if (verdict.value.pass) emit('solved', props.exercise.id);
 }
 

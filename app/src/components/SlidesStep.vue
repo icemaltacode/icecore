@@ -10,14 +10,22 @@
  * It is also why the student can page through the topic with the deck's own keyboard
  * shortcuts once they have clicked into it.
  */
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import DeckActions from './DeckActions.vue';
 import SplitPane from './SplitPane.vue';
 import Icon from './Icon.vue';
 import { loadNotes } from '../content.js';
 import { md } from '../md.js';
 
+const emit = defineEmits(['slide']);
 const props = defineProps({
+  /* Which slide to be on, when something outside is driving - a live session following the
+   * tutor. Undefined means nobody is driving, which is every other use of this component.
+   *
+   * A NUMBER RATHER THAN A HASH, because the range is the component's business: what
+   * arrives is "the tutor is on 15" and what happens to it is the same clamp everything
+   * else goes through. */
+  goto: Number,
   /* `slides` off the topic - `slides/1.1/index.html`, its unit's deck, or an absolute URL
    * when a deck lives somewhere else entirely. */
   deck: String,
@@ -92,6 +100,7 @@ async function fetchNotes() {
 }
 watch(showNotes, open => { if (open) fetchNotes(); });
 onMounted(() => { if (showNotes.value) fetchNotes(); });
+onUnmounted(() => stopDriving?.());
 
 const note = computed(() => notes.value?.[current.value] || '');
 const noteHtml = computed(() => (note.value ? md(note.value) : ''));
@@ -109,6 +118,10 @@ const noteHtml = computed(() => (note.value ? md(note.value) : ''));
  * rather than the utility classes Slidev happens to compile (`.absolute.bottom-0`), because
  * those are an implementation detail and this should not need touching when they change. */
 const frame = ref(null);
+/* The driving watcher belongs to the FRAME, not to the component: the iframe is keyed on
+ * `src`, so moving between topics of one deck builds a new element, and a watcher left over
+ * from the last one would be writing hashes into a window that no longer exists. */
+let stopDriving = null;
 
 /* Two things, both injected into the frame rather than worked around from outside.
  *
@@ -196,12 +209,24 @@ const onLoad = () => {
    * iframe navigates or the step is left. The iframe is keyed on `src`, so moving between
    * two topics of one deck builds a new element rather than reusing this one with a stale
    * range closed over. */
-  const both = () => { clamp(); track(); };
+  /* Where the student actually is, reported outwards so a tutor's client can broadcast it.
+   * Off the same hash watch as the clamp and the notes panel - a third listener would be a
+   * third thing that stops working the day vue-router changes how it navigates. */
+  const both = () => { clamp(); track(); emit('slide', current.value); };
   const push = win.history.pushState;
   win.history.pushState = function (...a) { const r = push.apply(this, a); both(); return r; };
   win.addEventListener('popstate', both);
   win.addEventListener('hashchange', both);
   both();
+
+  /* Driven from outside. `replace` rather than assigning the hash, so following a tutor
+   * through nine slides does not put nine entries in the student's history and make Back
+   * a slow walk backwards through the lesson. */
+  stopDriving?.();
+  stopDriving = watch(() => props.goto, n => {
+    if (!n || n === at()) return;
+    win.location.replace(`#/${n}`);
+  }, { immediate: true });
 };
 
 </script>

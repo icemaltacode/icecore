@@ -14,9 +14,10 @@
  *
  *   me()          the signed-in student, or the admin's own view. Writes are real.
  *   watching(sub) another student, read-only.
- *   driving(sub)  later: reads fed by a channel, writes going through as the student.
+ *   driving(sub)  remote control: the same reads, and writes that go through AS the student.
  *
- * Remote control is the third of those, and adds no call sites. See ADMIN.md.
+ * Remote control is the third of those, and it added no call sites - which is what the shape
+ * was chosen for. See ADMIN.md.
  *
  * THE WRITE GATE IS HERE RATHER THAN AT THE API LAYER, which is a departure from what that
  * plan said. The thing deciding what is read has to be the thing deciding what is written,
@@ -72,5 +73,47 @@ export function watching(sub, who) {
      * zero, which would read as a student who has done nothing today, the top bar is told
      * it is watching and shows nothing at all. */
     async earnedToday() { return 0; },
+  };
+}
+
+/**
+ * Remote control: the same session, and writes that land on the student's rows.
+ *
+ * READS ARE `watching`'s, UNCHANGED. The educator is looking at exactly what a read-only view
+ * would show - the difference is entirely on the write side, which is why this is built from
+ * that one rather than beside it. Two independent readers would be two chances to render one
+ * student while recording against another, and that failure is silent.
+ *
+ * THE ROW IS THEIRS AND THE ATTRIBUTION IS OURS. An exercise solved while an educator was
+ * driving is the student's progress and the student's XP - it has to be, or being helped
+ * would cost them the exercise. What makes it auditable is the `by` the Lambda stamps on.
+ *
+ * IT GOES THROUGH THE ADMIN FUNCTION, NEVER THE ACCOUNT ONE. That one acts on exactly the
+ * caller's sub, and there is no sub parameter in the file - the day somebody adds a `?sub=`
+ * there for a good reason, the boundary is gone. See ACCOUNT.md.
+ *
+ * THE COHORT TRAVELS WITH EVERY WRITE, and it is not decoration: the function reads that
+ * session's control row and refuses unless this caller is the one currently driving this
+ * student. Being an admin is not enough, and the capability lasts exactly as long as the
+ * control does - which the student can end.
+ *
+ * `earnedToday` stays at nought, from `watching`: it is a number this side does not have, and
+ * inventing a zero would read as a student who has done nothing today.
+ */
+export function driving(sub, who, cohort) {
+  const where = `admin/progress?sub=${encodeURIComponent(sub)}`
+    + `&cohort=${encodeURIComponent(cohort)}`;
+  return {
+    ...watching(sub, who),
+    driving: true,
+    async mark(course, exercise, { xp, code } = {}) {
+      await api(where, { method: 'PUT', body: { course, exercise, xp, code } });
+    },
+    /* Written for the same reason it is written for anyone: an educator who drove somebody to
+     * exercise 12 has moved where that student resumes tomorrow. Attributed, so a bookmark
+     * nobody can account for does not read as the platform having lost their place. */
+    async remember(course, exercise) {
+      await api(where, { method: 'PUT', body: { course, last: exercise } });
+    },
   };
 }

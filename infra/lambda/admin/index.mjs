@@ -42,8 +42,13 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
-  DynamoDBDocumentClient, QueryCommand, PutCommand, UpdateCommand, DeleteCommand, BatchWriteCommand,
+  DynamoDBDocumentClient, QueryCommand, GetCommand, PutCommand, UpdateCommand, DeleteCommand,
+  BatchWriteCommand,
 } from '@aws-sdk/lib-dynamodb';
+/* The same writer the progress function uses, so a row written by an educator driving a
+ * student is the same row in the same shape as one the student wrote themselves. The one
+ * difference is the `by` this function passes and that one does not. */
+import { writeProgress } from '../shared/progress-rows.mjs';
 
 const cognito = new CognitoIdentityProviderClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -380,6 +385,43 @@ async function forget(sub) {
 const clean = email => String(email || '').trim().toLowerCase();
 const courseList = v => (Array.isArray(v) ? v : []).map(c => String(c).trim()).filter(Boolean);
 
+/**
+ * Progress written for somebody else, during remote control.
+ *
+ * THE ROW IS THEIRS AND THE ATTRIBUTION IS OURS. An exercise solved while an educator was
+ * driving is the student's progress and the student's XP - it has to be, or being helped
+ * would cost them the exercise - so what makes this auditable rather than indistinguishable
+ * from their own work is the `by` field and nothing else.
+ *
+ * IT IS NOT ENOUGH TO BE AN ADMIN. This function may act on any sub, which is right for
+ * managing accounts and far too wide for writing progress: it would make "an admin may
+ * suspend anyone" and "an admin may silently award anyone XP" the same permission. So the
+ * live session is read and the caller must be the one currently DRIVING that student. The
+ * capability then lasts exactly as long as the control does, and the student can end it.
+ *
+ * It must not go through the account function, which acts on exactly the caller's sub and has
+ * no sub parameter in the file - the day somebody adds a `?sub=` there for a good reason, the
+ * boundary is gone. See ACCOUNT.md.
+ */
+async function putProgress(q, body, me) {
+  const sub = q.sub;
+  const cohort = q.cohort;
+  if (!sub || !cohort) return json(400, { error: 'sub and cohort are required' });
+
+  const held = await ddb.send(new GetCommand({
+    TableName: TABLE, Key: { pk: COHORTS, sk: `LIVE#${cohort}` },
+  }));
+  const control = held.Item?.control;
+  if (!control || control.by !== me || control.sub !== sub)
+    return json(403, { error: 'You are not controlling that student.' });
+
+  try {
+    return json(200, await writeProgress(ddb, TABLE, sub, body, me));
+  } catch (e) {
+    return json(400, { error: e.message });
+  }
+}
+
 export async function handler(event) {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   if (!isAdmin(claims)) return json(403, { error: 'admins only' });
@@ -387,9 +429,14 @@ export async function handler(event) {
   const me = claims.sub;
   const method = event.requestContext.http.method;
   const q = event.queryStringParameters || {};
-  const cohorts = (event.requestContext.http.path || '').endsWith('/cohorts');
+  const path = event.requestContext.http.path || '';
+  const cohorts = path.endsWith('/cohorts');
 
   try {
+    if (path.endsWith('/progress')) {
+      if (method === 'PUT') return await putProgress(q, JSON.parse(event.body || '{}'), me);
+      return json(405, { error: `${method} not allowed` });
+    }
     if (cohorts) {
       if (method === 'POST') return await postCohort(JSON.parse(event.body || '{}'));
       if (method === 'PUT') return await putCohort(JSON.parse(event.body || '{}'));

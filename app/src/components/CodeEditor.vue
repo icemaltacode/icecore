@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
-import { EditorState } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
@@ -27,10 +27,20 @@ const highlight = HighlightStyle.define([
  * would have drifted the moment either was touched. */
 const LANGUAGES = { sql: () => sql({ dialect: PostgreSQL }), python: () => python() };
 
-const props = defineProps({ modelValue: String, language: { type: String, default: 'sql' } });
+const props = defineProps({
+  modelValue: String,
+  language: { type: String, default: 'sql' },
+  /* Read-only, for a student whose screen somebody else is driving. TWO PEOPLE TYPING INTO
+   * ONE BUFFER is not a thing this can do - there is no merge here and there should not be
+   * one - so while an educator is driving, the student watches. The band says so. */
+  readonly: Boolean,
+});
 const emit = defineEmits(['update:modelValue', 'run']);
 const host = ref(null);
 let view = null;
+/* A compartment rather than a rebuild: control starts and stops mid-lesson, and recreating
+ * the view would throw away the undo history and the scroll position each time. */
+const editable = new Compartment();
 
 onMounted(() => {
   view = new EditorView({
@@ -38,6 +48,7 @@ onMounted(() => {
     state: EditorState.create({
       doc: props.modelValue || '',
       extensions: [
+        editable.of(EditorView.editable.of(!props.readonly)),
         lineNumbers(), history(), highlightActiveLine(),
         syntaxHighlighting(highlight, { fallback: true }),
         (LANGUAGES[props.language] || LANGUAGES.sql)(),
@@ -75,6 +86,10 @@ onMounted(() => {
       ],
     }),
   });
+});
+
+watch(() => props.readonly, ro => {
+  view?.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!ro)) });
 });
 
 // external changes (moving to another step) replace the whole document

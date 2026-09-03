@@ -45,21 +45,69 @@ const people = [
   { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper',
     status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening'] },
   { sub: 'preview-3', email: 'katherine@example.com', name: 'Katherine Johnson',
-    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening'] },
+    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening', 'data-team'] },
   { sub: 'preview-4', email: 'margaret@example.com', name: 'Margaret Hamilton',
-    status: 'CONFIRMED', enabled: false, admin: false, courses: [], cohorts: ['jan-2026'] },
+    status: 'CONFIRMED', enabled: false, admin: false, courses: [], cohorts: ['jan-2026', 'data-team'] },
   { sub: 'preview-5', email: 'joan@example.com', name: '',
     status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: [] },
+  /* On every course there is, and alone in her cohort - which is what makes the course
+   * PICKER reachable. It only appears when a cohort's members share more than one course,
+   * so it needs a run with more than one content directory:
+   *   icecore dev ../a/content ../b/content --as admin
+   * With one course the picker is correctly skipped, which is a different thing worth
+   * seeing and not a substitute for seeing this. */
+  { sub: 'preview-6', email: 'dorothy@example.com', name: 'Dorothy Vaughan',
+    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['oct-2026-morning'] },
 ];
-/* One of each state the cohort screens draw differently: a live intake with people in it, a
- * finished one that is archived, and an empty one - which exists because a cohort is named
- * before it is filled, and is the case a list derived from membership could not show at
- * all. */
+/* ONE OF EACH STATE THE COHORT SCREEN DRAWS DIFFERENTLY, which since the Live button means
+ * one per reason that button can be off - four of them, none guessable from the row:
+ *
+ *   sept-2026-evening  people who share no course     "not all on the same course"
+ *   jan-2026           archived                       "restore it before delivering"
+ *   data-team          somebody else is delivering    the refusal, naming them
+ *   new-intake         nobody in it                   "there is nobody to deliver to"
+ *   oct-2026-morning   ready, and on several courses  the course picker
+ *
+ * An empty cohort has to exist here for the reason it has to exist at all: you name a class
+ * before you import it, and that is exactly the case a list derived from membership could
+ * not represent. */
 const classes = [
   { id: 'sept-2026-evening', title: 'Sept 2026 evening', created: '2026-09-01T09:00:00Z', archived: false },
+  { id: 'oct-2026-morning', title: 'Oct 2026 morning', created: '2026-10-01T09:00:00Z', archived: false },
   { id: 'jan-2026', title: 'Jan 2026', created: '2026-01-08T09:00:00Z', archived: true },
   { id: 'data-team', title: 'Data team', created: '2026-08-20T09:00:00Z', archived: false },
+  { id: 'new-intake', title: 'New intake', created: '2026-09-02T09:00:00Z', archived: false },
 ];
+
+/* Live delivery, standing in for the session rows and the socket.
+ *
+ * `data-team` is SEEDED AS ALREADY RUNNING, and by somebody else. That is the state the
+ * cohort screen draws differently and cannot be reached here otherwise - a preview where
+ * every Live button is enabled is a preview in which the refusal, its tooltip and the
+ * `Rejoin` label are all messages nobody reads before shipping. It is deliberately held by
+ * a name that is not the preview user's, because `Rejoin` and the refusal differ only by
+ * whose sub is on the row.
+ *
+ * There is no socket in preview - `socketUrl()` is null with no auth.json, so `live.js`
+ * never attempts one - which means nothing here can stand in for what a second browser
+ * would say. What it CAN do is make every screen and every refusal reachable, which is what
+ * the rule asks of it.
+ */
+let sessions = [
+  { cohort: 'data-team', title: 'Data team', course: null, by: 'preview-9',
+    name: 'Sarah Mifsud', at: new Date(Date.now() - 34 * 60000).toISOString(),
+    sharing: false, position: null },
+];
+/* The cohort bookmarks, keyed `<cohort>#<course>`. Empty to start with, so the picker's
+ * "never delivered live" line is the first thing seen - and then filled by ending a
+ * session, which is the only way it is filled on the stack either. That round trip is the
+ * whole point of keeping them here: a stub that seeded a mark would show the badge working
+ * without anything having written one. */
+const cohortMarks = {};
+const marksFor = cohort => Object.fromEntries(
+  Object.entries(cohortMarks)
+    .filter(([k]) => k.startsWith(`${cohort}#`))
+    .map(([k, v]) => [k.slice(cohort.length + 1), v]));
 
 /* Resolve as the real API does - id, then title, then create - so that inventing a cohort
  * from the dialog or the import behaves here the way it will on the stack. */
@@ -89,6 +137,7 @@ async function seed() {
   people[0].courses = ids.slice(0, 2);
   people[2].courses = ids.slice(0, 1);
   people[3].courses = ids.slice(0, 1);
+  people[5].courses = ids;
   return people;
 }
 const find = sub => people.find(p => p.sub === sub);
@@ -370,6 +419,95 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     }
   }
 
+  /* Starting, ending, and who is live. The course on the seeded session is filled in on
+   * first read rather than in the literal above, because the manifest is loaded lazily and
+   * a hard-coded course id would name a course this checkout may not have. */
+  if (route === 'live/session') {
+    const first = (await loadManifest())[0]?.id || 'course';
+    for (const s of sessions) if (!s.course) s.course = first;
+
+    if (method === 'GET') {
+      const cohort = q.get('cohort');
+      /* NOT FILTERED, and the real one is. Filtering is a membership question, and the only
+       * membership this file has is the admin panel's user list - a different fiction, in
+       * which the preview identity is an admin with no cohorts at all. Reproducing it here
+       * would hide the seeded session from `--as student` and take the invitation band with
+       * it, which is the one thing this stub exists to make reachable.
+       *
+       * What the real route does with it is checked in test/live.mjs, where there are real
+       * rows to be a member of. */
+      if (!cohort) return { running: sessions.map(x => ({ ...x })) };
+      return {
+        session: sessions.find(x => x.cohort === cohort) || null,
+        marks: marksFor(cohort),
+      };
+    }
+    if (method === 'POST') {
+      const { cohort, course } = body || {};
+      const held = sessions.find(s => s.cohort === cohort);
+      // The conditional write's refusal, in the words the real one uses.
+      if (held) { const e = new Error(`${held.name} is already delivering to this cohort.`); throw e; }
+      const made = {
+        cohort, title: classes.find(c => c.id === cohort)?.title || cohort, course,
+        by: 'preview-1', name: PREVIEW_NAME(), at: new Date().toISOString(),
+        sharing: false, position: null,
+      };
+      sessions.push(made);
+      return { session: made, marks: marksFor(cohort) };
+    }
+    if (method === 'DELETE') {
+      const cohort = q.get('cohort');
+      const held = sessions.find(s => s.cohort === cohort);
+      const where = q.get('exercise');
+      // Missing means missing, exactly as the real one has it: no position leaves the
+      // previous mark standing rather than replacing it with nothing.
+      if (held && where) {
+        cohortMarks[`${cohort}#${held.course}`] = {
+          exercise: where, title: q.get('title') || '', at: new Date().toISOString(),
+        };
+      }
+      /* The takeover rule, and preview is the only place it can be SEEN: another admin's
+       * session with nobody connected may be ended by anyone, and there are never any
+       * connections here. Refusing would make an unreachable dead end of a cohort. */
+      sessions = sessions.filter(s => s.cohort !== cohort);
+      /* THE SUMMARY, which is otherwise unreachable without running a real lesson: the
+       * tallies behind it are accumulated on the session row by four different socket
+       * handlers, and preview has no socket. Seeded with the shapes that are easy to get
+       * wrong rather than with a tidy example - somebody who attended eight minutes of an
+       * hour, an exercise the class could not run, and a bookmark that is missing when the
+       * ending carried no position. */
+      const startedAt = held?.at || new Date(Date.now() - 52 * 60000).toISOString();
+      const summary = !held ? null : {
+        mark: where ? { exercise: where, title: q.get('title') || '' } : null,
+        minutes: Math.max(1, Math.round((Date.now() - Date.parse(startedAt)) / 60000)),
+        covered: (rowsForSummary() || []).slice(0, 5)
+          .map(r => ({ exercise: r.at, title: r.title })),
+        people: [
+          { sub: 'preview-2', name: 'Grace Hopper', minutes: 51,
+            first: new Date(Date.parse(startedAt) + 60000).toISOString() },
+          { sub: 'preview-3', name: 'Katherine Johnson', minutes: 48,
+            first: new Date(Date.parse(startedAt) + 3 * 60000).toISOString() },
+          { sub: 'preview-6', name: 'Dorothy Vaughan', minutes: 8,
+            first: new Date(Date.parse(startedAt) + 40 * 60000).toISOString() },
+        ],
+        said: 14,
+        worst: [
+          { exercise: 'x1', title: 'Joining three tables', tried: 11, right: 3, wrong: 6, err: 2 },
+          { exercise: 'x2', title: 'Counting with GROUP BY', tried: 9, right: 6, wrong: 3, err: 0 },
+        ],
+        cohort: held.title, course: held.course,
+        at: startedAt, endedAt: new Date().toISOString(),
+      };
+      return { ok: true, ended: !!held, marked: !!(held && where), summary };
+    }
+  }
+
+  /* A ticket is minted and never spent: there is no socket to spend it on. It answers at
+   * all so that a caller which asks for one before connecting behaves the same here. */
+  if (route === 'live/ticket' && method === 'POST') {
+    return { ticket: 'preview', expires: new Date(Date.now() + 60000).toISOString() };
+  }
+
   if (route === 'admin/users') {
     const users = await seed();
     /* One person, and one of their courses. Invented rather than read: nothing local holds
@@ -503,4 +641,247 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
   }
 
   throw new Error(`No preview stub for ${method} /api/${path}`);
+}
+
+/* ---- the room, as a script -------------------------------------------------
+ *
+ * There is no socket in preview and there cannot be one: nothing local has another browser
+ * in it to be the other end. What there CAN be is every state the participants panel draws
+ * differently, which is what the rule actually asks for - a state nobody can reach locally
+ * is a state nobody sees before shipping, and this panel has four of them plus an empty
+ * room and a reconnection.
+ *
+ * It plays the REAL MESSAGES at the real handlers. `emit` here is delivery.js's own
+ * `receive`, so what is exercised is the parsing, the per-person connection counting and
+ * the presence derivation - not a second drawing of the same list. Anything less would test
+ * the stub.
+ *
+ * The timeline is short on purpose: a tutor opening this screen should see it move within a
+ * few seconds rather than wonder whether it is broken.
+ */
+/* The open course's rows, for the summary's "covered" list. Registered by delivery.js like
+ * the scripted walk's, and read at the moment it is asked rather than captured - a session is
+ * ended long after this file was loaded. */
+let rowsForSummary = () => [];
+export const previewSummaryRows = fn => { rowsForSummary = fn; };
+
+let roomTimers = [];
+/* The scripted class's answering chain, held apart from `roomTimers` because it re-arms
+ * itself rather than being scheduled once. */
+let answering = null;
+
+export function previewRoom(session, emit, rows = () => [], whereAmI = () => null) {
+  stopPreviewRoom();
+  const at = ms => new Date(Date.now() - ms).toISOString();
+  /* ROWS ARE ASKED FOR WHEN THEY ARE USED, not now. Joining a session happens BEFORE its
+   * course is opened - the join is what tells the player which course to open - so reading
+   * the walk here returns the previous course's rows, or none at all. The scripted tutor
+   * would then walk through ids that do not exist in the course on screen, nothing would
+   * move, and it would look exactly like following being broken. */
+  const start = { exercise: null, title: '', slide: null };
+  /* Is the preview user the tutor here, or a student following one? Both are reachable -
+   * starting a session from the cohort screen makes you the tutor, and opening
+   * `#/live/data-team` by hand joins the seeded one somebody else is running. The second is
+   * the only way to see the student's half of the band, the Catch up nudge and the
+   * following itself without a second browser. */
+  const leading = (session.by || 'preview-1') === 'preview-1';
+
+  const members = [
+    { sub: 'preview-2', name: 'Grace Hopper' },
+    { sub: 'preview-3', name: 'Katherine Johnson' },
+    { sub: 'preview-4', name: 'Margaret Hamilton' },
+    { sub: 'preview-6', name: 'Dorothy Vaughan' },
+  ];
+  const conn = (sub, name, extra = {}) => ({
+    sub, name, role: 'student', seen: at(0), position: start, ...extra,
+  });
+
+  /* The tutor is deliberately NOT in `members` - an admin has no membership row, which is
+   * the case that would otherwise leave them missing from the panel of the room they are
+   * running. */
+  const tutor = { sub: session.by || 'preview-1', name: session.name || PREVIEW_NAME(),
+                  role: 'tutor', seen: at(0), position: start };
+  // Following, the preview user is one of the students and needs a connection of their own.
+  const self = leading ? null : conn('preview-1', PREVIEW_NAME());
+
+  const play = (ms, msg) => roomTimers.push(setTimeout(() => emit(msg), ms));
+
+  // Two here to begin with, two yet to arrive.
+  emit({ type: 'roster', members,
+         here: [tutor, conn('preview-2', 'Grace Hopper'), ...(self ? [self] : [])] });
+
+  /* THE TUTOR WALKS THE COURSE, when somebody else is the tutor. This is the whole of the
+   * student side: the screen moves on its own, navigating stops it, and Catch up comes
+   * back. Every three seconds, through real rows of the real course - a made-up id would
+   * resolve to nothing and the screen would sit still, which is what "following is broken"
+   * looks like. */
+  if (!leading) {
+    for (let i = 0; i < 7; i++) {
+      roomTimers.push(setTimeout(() => {
+        const row = rows()[i];
+        if (!row) return;   // a shorter course simply stops walking
+        emit({
+          type: 'moved', sub: tutor.sub,
+          position: { exercise: row.at, title: row.title, slide: null },
+          at: new Date().toISOString(),
+        });
+      }, 3000 * (i + 1)));
+    }
+  }
+
+  play(2500, { type: 'joined', who: conn('preview-3', 'Katherine Johnson') });
+  play(4500, { type: 'joined', who: conn('preview-6', 'Dorothy Vaughan') });
+
+  /* Somewhere else: connected, attentive, and not where the tutor is. The position is a
+   * made-up id on purpose - it only has to DIFFER from the leader's for the group to
+   * split, and the title is what the panel actually shows. */
+  play(7000, { type: 'moved', sub: 'preview-3',
+               position: { exercise: 'elsewhere', title: 'Reading ahead — 2.4.3' },
+               at: new Date().toISOString() });
+
+  /* Idle, sent as a fresh roster with one `seen` backdated past the threshold. A roster is
+   * what a real reconnection sends, so this exercises the idempotent path as well. */
+  roomTimers.push(setTimeout(() => emit({
+    type: 'roster',
+    members,
+    here: [
+      tutor,
+      ...(self ? [self] : []),
+      conn('preview-2', 'Grace Hopper', { seen: at(20 * 60000) }),
+      conn('preview-3', 'Katherine Johnson',
+           { position: { exercise: 'elsewhere', title: 'Reading ahead — 2.4.3' } }),
+      conn('preview-6', 'Dorothy Vaughan'),
+    ],
+  }), 10000));
+
+  // And somebody drops out, which is the only way `Not here` is reached with people in it.
+  play(14000, { type: 'left', sub: 'preview-6' });
+
+  /* ---- and somebody's screen being driven -----------------------------------
+   *
+   * The student's two halves of remote control, neither of which is reachable on one
+   * machine: an educator taking over YOUR screen, and the class being pointed at a
+   * CLASSMATE's. They are different bands saying different things and both are easy to get
+   * wrong, so the script plays them in that order and releases in between - a mode that only
+   * ever appears is a mode whose exit nobody tries.
+   *
+   * The educator's own half needs no script: `--as admin` reaches it by taking control from
+   * the panel, which the echo in delivery.js makes work without a socket. */
+  if (!leading) {
+    const driver = { by: tutor.sub, byName: tutor.name };
+    // A classmate's screen, shared with the room. Screen 12.
+    play(17000, { type: 'controlling',
+                  control: { ...driver, sub: 'preview-2', name: 'Grace Hopper',
+                             sharing: true, at: new Date().toISOString() } });
+    play(25000, { type: 'controlling', control: null });
+    // Then your own. Screen 10.
+    play(29000, { type: 'controlling',
+                  control: { ...driver, sub: 'preview-1', name: PREVIEW_NAME(),
+                             sharing: false, at: new Date().toISOString() } });
+    roomTimers.push(setTimeout(() => {
+      const row = rows()[2] || rows()[0];
+      if (row) {
+        emit({ type: 'driven', position: { exercise: row.at, title: row.title, slide: null },
+               at: new Date().toISOString() });
+      }
+    }, 32000));
+    play(40000, { type: 'controlling', control: null });
+  }
+
+  /* ---- and the conversation -------------------------------------------------
+   *
+   * Two things a local run could not otherwise reach: a backlog that was already there when
+   * you arrived, and a message whose ORIGIN is somewhere other than where you are. The
+   * second is most of what chat is for - a question asked from inside an exercise can be
+   * opened rather than located - and it is invisible without another browser in the room.
+   *
+   * The origin is a REAL row of the real course, asked for when the timer fires for the same
+   * reason the walk above is: joining happens before the course is opened, so reading it now
+   * gives the previous course's rows and a button that goes nowhere. */
+  const chatAt = ms => new Date(Date.now() - ms).toISOString();
+  emit({
+    type: 'history',
+    messages: [
+      { id: 'pv-1', sub: tutor.sub, from: tutor.name, role: 'tutor',
+        text: 'Morning everyone. We are picking up where we left off last week.',
+        at: chatAt(9 * 60000), where: null },
+      { id: 'pv-2', sub: 'preview-2', from: 'Grace Hopper', role: 'student',
+        text: 'Sorry, my train was late — catching up now.', at: chatAt(7 * 60000), where: null },
+    ],
+  });
+
+  roomTimers.push(setTimeout(() => {
+    const row = rows()[3] || rows()[0];
+    emit({
+      type: 'said', id: 'pv-3', sub: 'preview-3', from: 'Katherine Johnson', role: 'student',
+      text: 'This one returns nothing for me — have I misread the join?',
+      at: new Date().toISOString(),
+      where: row ? { exercise: row.at, title: row.title } : null,
+    });
+  }, 6000));
+
+  roomTimers.push(setTimeout(() => emit({
+    type: 'said', id: 'pv-4', sub: tutor.sub, from: tutor.name, role: 'tutor',
+    text: 'Good question — hold that one and we will do it together in a minute.',
+    at: new Date().toISOString(), where: null,
+  }), 12000));
+
+  /* ---- and the class answering ----------------------------------------------
+   *
+   * The tutor's half, and the one that cannot be reached locally at all otherwise: nothing
+   * on this machine is a second person pressing Check. It follows the tutor's OWN position
+   * rather than a fixed row, because the results view is about the exercise on screen -
+   * scripted against a made-up id it would be permanently empty, which is what the feature
+   * looks like when it is broken.
+   *
+   * Answers are coherent with the exercise: whoever is marked correct chose the correct
+   * option, and the one who is wrong chose a different real one. A stand-in that contradicts
+   * itself is one you stop reading.
+   *
+   * The class REFILLS when the tutor moves on, which is the whole rhythm of the screen -
+   * a panel that stayed full would never show the "working on it" state it exists to show.
+   */
+  if (leading) {
+    const answered = new Set();
+    let watching = null;
+    const answer = () => {
+      const at = whereAmI()?.at;
+      if (at != null) {
+        if (String(at) !== String(watching)) { watching = String(at); answered.clear(); }
+        const i = members.findIndex(m => !answered.has(m.sub));
+        if (i >= 0) {
+          const who = members[i];
+          answered.add(who.sub);
+          const row = rows().find(r => String(r.at) === String(at));
+          const options = row?.options || 0;
+          const right = row?.answer ?? null;
+          // One wrong, one that would not run, and the rest correct.
+          const pass = i !== 1 && i !== 3;
+          const error = i === 3 && !options;
+          emit({
+            type: 'marked', sub: who.sub,
+            mark: {
+              exercise: at, step: null,
+              choice: !options ? null
+                : pass ? right
+                  : (Number(right ?? 0) + 1) % options,
+              pass, error, at: new Date().toISOString(),
+            },
+          });
+        }
+      }
+      /* One slot, re-armed, rather than a timer pushed onto the list each round: this chain
+       * runs for as long as the lesson does, and a list that grows a number every four
+       * seconds is a leak however small each one is. */
+      answering = setTimeout(answer, 4000);
+    };
+    answering = setTimeout(answer, 3500);
+  }
+}
+
+export function stopPreviewRoom() {
+  for (const t of roomTimers) clearTimeout(t);
+  roomTimers = [];
+  clearTimeout(answering);
+  answering = null;
 }
