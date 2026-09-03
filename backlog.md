@@ -29,6 +29,13 @@ in a month.
   decided because it costs nothing to defer: every path leaves the session itself unchanged
   and only decides what one person sees. See [LIVE.md](LIVE.md).
 
+- [ ] **End a live session from the cohort screen.** Today the only End session button is on
+  the live screen itself, which is fine until that screen is the thing that is broken - and
+  then the session is unendable and holds its cohort's lock until the `ttl` a day later. The
+  takeover rule in the Lambda already allows any admin to end a session with nobody connected,
+  so the button has somewhere to go; what is missing is the button. Found the hard way, while
+  a bug on the live screen made every attempt to end a lesson require waiting it out.
+
 # Live Delivery
 
 Ok, so I had a think about the remote control feature, and I think it makes sense to implement it as a new, 'Live Delivery' feature. So here's how it works:

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session, api } from './auth.js';
 import { progressId } from './progress.js';
@@ -604,7 +604,16 @@ async function enterLive(cohort, driving = false) {
       ? { at: current.value.id, title: current.value.title, slide: mySlide.value }
       : null));
   } catch (e) {
-    liveError.value = e.message;
+    /* SAY SOMETHING, ALWAYS. `e.message` is empty for more errors than it looks - a bare
+     * `throw new Error()`, a rejection with no reason, anything whose message never got set -
+     * and `.livegone` renders on truthiness, so an empty one took the whole session off the
+     * screen without a word on it. A lesson vanishing in silence is the worst version of
+     * every failure this can have.
+     *
+     * The console gets the error ITSELF, not its message: a stack is the only thing that says
+     * where an unmessaged error came from, and swallowing it cost a long afternoon. */
+    console.error('live: could not enter', cohort, e);
+    liveError.value = e?.message || 'That session could not be opened. Try joining again.';
     leaveArea(true);
     forgetLive();
   }
