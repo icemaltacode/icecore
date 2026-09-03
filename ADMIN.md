@@ -150,19 +150,59 @@ read-only is what keeps that distinction clean until the channel exists.
 ## Cohorts
 
 **A cohort is a group of people** — an intake, a class, "Sept 2026 evening". Not a group of
-enrolments and not a property of a course: an intake may take two courses, and a cohort
-that named one course would be a second, worse spelling of enrolment.
+enrolments and not a property of a course: an intake may take two courses, so the courses
+are a **list on the cohort** rather than a course id in its name.
 
-So a cohort does not appear in the navigation as a peer of Courses. It is **an axis**: a
+**And the cohort is what puts its people on those courses.** That reversed the direction: a
+student used to be enrolled on courses one at a time and separately grouped into a class,
+and now a course reaches them *through* the class. There is no `ENROL#` row — a person's
+courses are the union of the courses of every cohort they are in, derived wherever it is
+needed from rows that were already being read.
+
+The reason is a bug that the old shape made structurally possible and this one cannot
+express: **a cohort member who was not enrolled on the course being delivered to them.** Two
+independent facts — who is in this class, and who is on this course — will disagree
+eventually, and the moment they did was in front of a class. There is now one fact. It also
+took a calculation out of the live screens: what a cohort could be taught used to be the
+*intersection* of its members' enrolments, which one person enrolled a day late emptied, and
+which an admin who was a member of their own cohort emptied outright.
+
+It follows that there is **no per-person grant, and there must not be one**. Somebody who
+needs a course nobody else in their class is taking gets a cohort of their own — a cohort is
+a group of people, so a group of one is a cohort. A second way onto a course is the way that
+drifts.
+
+A cohort still does not appear in the navigation as a peer of Courses. It is **an axis**: a
 filter in People, a page of its own reachable from there, a pivot on the course page ("this
 class, this course"), and a grouping on spend.
+
+### What follows from a course being on the cohort
+
+- **Archiving does not revoke.** Archiving is the ordinary end of an intake and keeps the
+  statistics; a class that finished in June still owns what it was taught. Revoking on
+  archive would make finishing a course and losing it the same gesture.
+- **Deleting a cohort takes its courses away**, which it did not before. Progress survives
+  and reappears if they are put in another intake that takes it, but the grid empties in
+  between — so the confirmation says so, and archiving is what an intake that has simply
+  finished should get.
+- **Courses are set on the cohort screen and nowhere else.** The user dialog shows what
+  somebody will be on as a read-only line derived from the intakes ticked in it, said out
+  loud rather than implied by the absence of the tick list that used to be there.
+- **An intake that takes nothing is an ordinary state**, not a broken one — it is what a
+  class is between being named and being set up, and it is what an import creates. It is also
+  the one state where everybody in it signs in to an empty grid, so it is said on the cohort
+  row, in the import preview, and in the CSV template's legend.
+- **The per-course roster is a query per intake** — which cohorts take this course, then
+  `byCourse('COHORT#<id>')` for each — rather than one query on `ENROL#<course>`. The name
+  and email cached on the membership row is what makes that work, exactly as before. A
+  handful of queries against a catalogue of tens of cohorts, run together.
 
 ### The rows
 
 | Row | Key | Why |
 |---|---|---|
-| The cohort | `pk = COHORTS`, `sk = COHORT#<id>` | Title, created, archived. One query lists every cohort |
-| Membership | `pk = USER#<sub>`, `sk = COHORT#<id>` | Name and email cached, exactly as `ENROL#` does |
+| The cohort | `pk = COHORTS`, `sk = COHORT#<id>` | Title, created, archived, **courses**. One query lists every cohort |
+| Membership | `pk = USER#<sub>`, `sk = COHORT#<id>` | Name and email cached, exactly as `ENROL#` used to |
 
 Membership in the **user's** partition, not the cohort's, for two reasons that both already
 have precedent here: `byCourse` inverts the key, so `COHORT#<id>` is a partition and the
@@ -175,9 +215,16 @@ before you import it, and a list derived from membership cannot represent a coho
 nobody in it yet — which is exactly the state it is in at the moment you need to pick it.
 
 **The title lives on the cohort row and is not cached on membership.** That differs from the
-person's name, which *is* cached on `ENROL#` rows, and the difference is the reason: the
+person's name, which *is* cached on the membership row, and the difference is the reason: the
 name cache exists so `byCourse` can answer without a call to the pool. Anything reading a
 cohort has already read the cohort row.
+
+**The courses are not cached on membership either, and that is the whole point.** A copy on
+each member's row would be a copy to rewrite every time a cohort's courses changed, and one
+that could be left behind — which is the disagreement this shape exists to make impossible.
+The cost is that a person's courses are a lookup rather than a read: free in the admin
+listing, which reads the catalogue anyway, and one extra `BatchGetItem` on the way into the
+app.
 
 ### How they are set
 

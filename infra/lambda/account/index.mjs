@@ -77,7 +77,7 @@ const ABOUT = {
   ],
   categories: [
     'Identity: your name and the email address you sign in with.',
-    'Enrolment: which courses you are on and which class you are in.',
+    'Enrolment: which class you are in, and so which courses you are on.',
     'Learning record: which exercises you have solved, when, what XP each earned, where you'
       + ' left off, and the code you wrote to solve them.',
     'Hint usage: how many hints you asked for, on which day and which course, and the size'
@@ -164,27 +164,28 @@ async function lookup(sub) {
   };
 }
 
-/* Cohorts and courses in ONE query, exactly as the admin listing does it - see the long
- * comment on `belongings` there. `$` is one codepoint above `#`, so the range covers every
- * COHORT# and ENROL# row and nothing else. A prefix added later that begins with D or E
- * lands inside it. */
-async function belongings(sub) {
+/* WHICH INTAKES SOMEBODY IS IN. One prefix, exactly as the admin listing reads it.
+ *
+ * It used to be a range across `COHORT#` and `ENROL#` - one query for two prefixes, at the
+ * price of an `ENROL$` bound that any later sort key beginning with D or E would fall
+ * inside. Enrolment is derived from the intake now, so there is one prefix left and a plain
+ * `begins_with` reads it. */
+async function memberships(sub) {
   const items = await queryAll({
     TableName: TABLE,
-    KeyConditionExpression: 'pk = :pk AND sk BETWEEN :from AND :to',
-    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':from': 'COHORT#', ':to': 'ENROL$' },
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'COHORT#' },
     ProjectionExpression: 'sk',
   });
-  const cohorts = [];
-  const courses = [];
-  for (const i of items) {
-    if (i.sk.startsWith('COHORT#')) cohorts.push(i.sk.slice('COHORT#'.length));
-    else if (i.sk.startsWith('ENROL#')) courses.push(i.sk.slice('ENROL#'.length));
-  }
-  return { cohorts, courses };
+  return items.map(i => i.sk.slice('COHORT#'.length));
 }
 
-/* Titles for the cohorts somebody is in.
+/* The cohorts somebody is in: their titles, and what each one takes.
+ *
+ * THE COURSES COME BACK FROM THE SAME QUERY, which is the reason this function did not have
+ * to grow a sibling. A person's courses are the union of their intakes' courses, and the
+ * intakes are already being read here to put a name on each - so what used to be a separate
+ * `ENROL#` query is now free.
  *
  * Reads the whole catalogue rather than fetching the two rows wanted, because it is one
  * partition, one query and tens of rows - and because it is how the admin function reads
@@ -196,14 +197,21 @@ async function titles(ids) {
     TableName: TABLE,
     KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
     ExpressionAttributeValues: { ':pk': COHORTS, ':sk': 'COHORT#' },
-    ProjectionExpression: 'sk, title, archived',
+    ProjectionExpression: 'sk, title, archived, courses',
   });
   const known = new Map(items.map(i => [i.sk.slice('COHORT#'.length), i]));
   /* An id with no row is still shown, under its own id. Membership and the cohort are two
    * rows and only one of them is deleted when a cohort is removed, so this is a real state
    * rather than a corrupt one - and a student seeing a class they are in is better than a
    * student seeing a shorter list with no explanation. */
-  return ids.map(id => ({ id, title: known.get(id)?.title || id, archived: !!known.get(id)?.archived }));
+  return ids.map(id => ({
+    id,
+    title: known.get(id)?.title || id,
+    archived: !!known.get(id)?.archived,
+    /* And an intake whose row has gone takes nothing, which is the honest answer: there is
+     * no row left to say what it took. The student keeps the progress either way. */
+    courses: known.get(id)?.courses || [],
+  }));
 }
 
 /* What every course of theirs has earned, and how much of it is solved.
@@ -260,10 +268,14 @@ async function hints(sub) {
 
 async function get(sub, claims) {
   const who = await lookup(sub);
-  const on = await belongings(sub);
+  const on = await memberships(sub);
   const [cohorts, earned, hint, avatar] = await Promise.all([
-    titles(on.cohorts), progress(sub), hints(sub), currentAvatar(sub),
+    titles(on), progress(sub), hints(sub), currentAvatar(sub),
   ]);
+  /* DERIVED HERE, from rows that were being read anyway. The screen says out loud that a
+   * student's courses are set by their tutor and not by them; it can now say WHERE they came
+   * from, because each course arrives attached to the intake that grants it. */
+  const courses = [...new Set(cohorts.flatMap(c => c.courses))];
   return json(200, {
     sub,
     name: who.name,
@@ -274,7 +286,7 @@ async function get(sub, claims) {
      * be a ListUsersInGroup per account-screen open to tell somebody something they can
      * already see in their own top bar. */
     admin: String(claims?.['cognito:groups'] ?? '').includes('admins'),
-    courses: on.courses,
+    courses,
     cohorts,
     xp: earned,
     hints: hint,
@@ -287,15 +299,19 @@ async function get(sub, claims) {
 
 /* Rename.
  *
- * THE CACHED COPIES ARE THE WHOLE JOB. `ENROL#` and `COHORT#` rows each carry the name so
- * that `byCourse` answers "who is in X" without a call to the pool, and a rename that
- * writes only the attribute leaves every admin list showing the old one. The client could
- * have written the attribute by itself - it is signed in and the pool allows it - and that
- * is exactly the version of this that would have been wrong.
+ * THE CACHED COPIES ARE THE WHOLE JOB. `COHORT#` rows carry the name so that `byCourse`
+ * answers "who is in X" without a call to the pool, and a rename that writes only the
+ * attribute leaves every admin list showing the old one. The client could have written the
+ * attribute by itself - it is signed in and the pool allows it - and that is exactly the
+ * version of this that would have been wrong.
  *
- * Rewritten rather than updated in place: the row is `{ pk, sk, course|cohort, email, name }`
- * and a Put of the same shape is one call with no expression, where an Update would need
- * one per row to change one attribute. Same number of round trips, less to get wrong.
+ * THERE IS ONE KIND OF ROW TO REWRITE NOW rather than two: `ENROL#` carried the same cache
+ * and is gone, so a rename touches strictly fewer rows than it did and cannot half-succeed
+ * across two prefixes.
+ *
+ * Rewritten rather than updated in place: the row is `{ pk, sk, cohort, email, name }` and a
+ * Put of the same shape is one call with no expression, where an Update would need one per
+ * row to change one attribute. Same number of round trips, less to get wrong.
  */
 async function put(sub, body) {
   const wanted = typeof body.name === 'string' ? body.name.trim() : undefined;
@@ -313,17 +329,11 @@ async function put(sub, body) {
     UserPoolId: POOL, Username: username, UserAttributes: [{ Name: 'name', Value: next }],
   }));
 
-  const on = await belongings(sub);
-  await Promise.all([
-    ...on.courses.map(course => ddb.send(new PutCommand({
-      TableName: TABLE,
-      Item: { pk: `USER#${sub}`, sk: `ENROL#${course}`, course, email, name: next },
-    }))),
-    ...on.cohorts.map(cohort => ddb.send(new PutCommand({
-      TableName: TABLE,
-      Item: { pk: `USER#${sub}`, sk: `COHORT#${cohort}`, cohort, email, name: next },
-    }))),
-  ]);
+  const on = await memberships(sub);
+  await Promise.all(on.map(cohort => ddb.send(new PutCommand({
+    TableName: TABLE,
+    Item: { pk: `USER#${sub}`, sk: `COHORT#${cohort}`, cohort, email, name: next },
+  }))));
 
   return json(200, { ok: true, name: next });
 }
@@ -355,7 +365,7 @@ async function put(sub, body) {
  * replacement is a new key plus a delete of the old - no invalidation, which is slow and
  * costs per path.
  */
-const AVATAR_ROW = 'AVATAR';        // sorts before COHORT#, so outside the belongings range
+const AVATAR_ROW = 'AVATAR';        // sorts before COHORT#, so outside the membership range
 const MAX_BYTES = 400 * 1024;       // a 256px square is ~15KB; this is room, not a target
 
 /* What a normalised avatar may be, and what its bytes have to start with. Checked rather
@@ -469,14 +479,18 @@ async function exportAll(sub, claims) {
     ExpressionAttributeValues: { ':pk': `USER#${sub}` },
   });
 
+  /* NO `enrolments` KEY ANY MORE, because there is no such row to disclose. What the
+   * platform holds about who may open what is the `cohorts` rows below and the course list
+   * on the cohort itself - and the cohort row is not in this partition and is not about this
+   * person. The courses are put beside each membership instead, so the export still answers
+   * "what am I on and why" rather than losing the answer to a schema change. */
   const data = {
-    enrolments: [], cohorts: [], progress: [], place: [],
+    cohorts: [], progress: [], place: [],
     hintsAsked: [], hintCounters: [],
   };
   for (const r of rows) {
     const { pk, sk, ttl, ...rest } = r;
-    if (sk.startsWith('ENROL#')) data.enrolments.push({ course: sk.slice(6), ...rest });
-    else if (sk.startsWith('COHORT#')) data.cohorts.push({ cohort: sk.slice(7), ...rest });
+    if (sk.startsWith('COHORT#')) data.cohorts.push({ cohort: sk.slice(7), ...rest });
     else if (sk.startsWith('PROG#')) {
       const [course, ...rest2] = sk.slice(5).split('#');
       data.progress.push({ course, exercise: rest2.join('#'), ...rest });
@@ -494,6 +508,13 @@ async function exportAll(sub, claims) {
       data.other.push({ key: sk, ...rest });
     }
   }
+
+  /* And what each of those intakes takes, resolved from the catalogue. One query on one
+   * partition, and without it the export would say which classes somebody is in and not
+   * which courses that put them on - which is the question the section exists to answer. */
+  const takes = Object.fromEntries(
+    (await titles(data.cohorts.map(c => c.cohort))).map(c => [c.id, c.courses]));
+  for (const c of data.cohorts) c.courses = takes[c.cohort] || [];
 
   return json(200, {
     generated: new Date().toISOString(),
@@ -527,8 +548,8 @@ async function exportAll(sub, claims) {
  *
  *   PROG#<course>#*   goes - every solve, its XP, and the code that solved it
  *   LAST#<course>     goes - the place marker
- *   ENROL#<course>    STAYS. Resetting progress is not leaving the course.
- *   COHORT#*          STAYS. A cohort is a group of people; this is not about who they are.
+ *   COHORT#*          STAYS, and it is now the row that keeps them on the course as well as
+ *                     in the class. Resetting progress is not leaving either.
  *   SPEND#hint#*      STAYS. It is a financial record, and history is not the student's to
  *                     revise.
  *   HINTS#<course>    STAYS, and is not in this partition anyway. The per-exercise counter

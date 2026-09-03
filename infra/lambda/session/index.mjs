@@ -3,7 +3,8 @@
  * The caller has already proved who they are — the HTTP API's Cognito authorizer rejects
  * anything without a valid token. This hands back CloudFront signed cookies so that
  * subsequent /content/* and /slides/* requests succeed, plus the list of courses the
- * student is enrolled on.
+ * student may open - which is derived from the cohorts they are in, not stored. See
+ * `enrolments` below and ADMIN.md.
  *
  * The cookies are signed for the origin the caller names, because nothing on this side of
  * the wire knows it. The distribution's domain can't be an environment variable here — the
@@ -19,7 +20,8 @@
 import { getSignedCookies } from '@aws-sdk/cloudfront-signer';
 import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, GetCommand, BatchGetCommand }
+  from '@aws-sdk/lib-dynamodb';
 
 const SESSION_HOURS = 12;
 
@@ -35,13 +37,44 @@ async function signingKey() {
   return privateKey;
 }
 
+/**
+ * WHAT THIS PERSON MAY OPEN: the union of the courses of every intake they are in.
+ *
+ * It was one query for `ENROL#` rows, and the rows are gone - a course reaches somebody
+ * through their cohort now, so this is the membership query followed by a read of the
+ * cohorts it names. Two round trips on the way into the app rather than one; the second is
+ * a `BatchGetItem` over a handful of keys in a single partition, which is about as cheap as
+ * a second call gets, and it buys the property that a cohort's roster and a cohort's
+ * courses can never disagree because there is only one of each.
+ *
+ * ARCHIVING AN INTAKE DOES NOT CLOSE ITS COURSES. A class that finished in June still owns
+ * what it was taught, and the same rule is written down in the admin function - see
+ * `coursesFrom` there. The two are separate readers of one model rather than one calling the
+ * other: this function is on the sign-in path and has no business importing an admin API.
+ */
 async function enrolments(sub) {
   const r = await ddb.send(new QueryCommand({
     TableName: process.env.TABLE,
     KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
-    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'ENROL#' },
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'COHORT#' },
+    ProjectionExpression: 'sk',
   }));
-  return (r.Items || []).map(i => i.sk.slice('ENROL#'.length));
+  const ids = (r.Items || []).map(i => i.sk.slice('COHORT#'.length));
+  if (!ids.length) return [];
+
+  const courses = new Set();
+  // BatchGetItem takes a hundred keys; a person in more intakes than that is not a thing,
+  // but chunking costs two lines and a silent truncation costs somebody their courses.
+  for (let i = 0; i < ids.length; i += 100) {
+    const keys = ids.slice(i, i + 100).map(id => ({ pk: 'COHORTS', sk: `COHORT#${id}` }));
+    const b = await ddb.send(new BatchGetCommand({
+      RequestItems: { [process.env.TABLE]: { Keys: keys, ProjectionExpression: 'courses' } },
+    }));
+    for (const row of b.Responses?.[process.env.TABLE] || []) {
+      for (const c of row.courses || []) courses.add(c);
+    }
+  }
+  return [...courses];
 }
 
 /* The caller's avatar key, or null.

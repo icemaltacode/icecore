@@ -98,7 +98,9 @@ const openCourse = computed(() => (section.value === 'courses'
   ? (props.courses || []).find(c => c.id === route.value?.id) || null
   : null));
 
-/** How many people hold an enrolment row for each course. Tallied from what is already here. */
+/* How many people are on each course. Tallied from what the listing already carried, which
+ * is now a derivation rather than a row count: `courses` on a user is the union of what
+ * their intakes take. Still one number per course and still no extra call. */
 const enrolled = computed(() => {
   const n = {};
   for (const u of users.value) for (const c of u.courses || []) n[c] = (n[c] || 0) + 1;
@@ -258,8 +260,8 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
                   <span v-for="c in u.cohorts" :key="c" class="tag">{{ cohortTitles[c] || c }}</span>
                 </td>
                 <td>
-                  <!-- An admin sees every course whether or not a row says so - App.vue
-                       skips the enrolment filter for them - so listing their enrolments
+                  <!-- An admin sees every course whatever their cohorts take - App.vue
+                       skips the filter for them - so listing what their intakes give them
                        here reads as a limit that is not one, and a promoted student would
                        appear to have lost the rest of the catalogue. -->
                   <span v-if="u.admin" class="dim">All courses</span>

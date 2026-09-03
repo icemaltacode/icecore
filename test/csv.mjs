@@ -58,9 +58,20 @@ eq('comment rows are skipped', parseUsers('email\n# a note\nx@y.com\n').rows.map
 {
   const courses = [{ id: 'da-python', title: 'Data Analyst (Python)' },
                    { id: 'da-sql', title: 'Data Analyst (SQL)' }];
-  const template = templateCsv(courses);
-  check('the template names every course id',
-        courses.every(c => template.includes(c.id)));
+  const cohorts = [{ id: 'sept-eve', title: 'Sept evening', courses: ['da-sql'] },
+                   { id: 'oct-day', title: 'Oct daytime', courses: [] }];
+  const template = templateCsv(courses, cohorts);
+  /* THE COHORTS ARE WHAT IT HAS TO NAME NOW, not the course ids. A cohort typed slightly
+   * differently is created rather than refused, so the legend is the only thing standing
+   * between a typo and a class split quietly in two. */
+  check('the template names every cohort id',
+        cohorts.every(c => template.includes(c.id)));
+  check('and says what each one takes, by title',
+        template.includes('Data Analyst (SQL)'));
+  /* An intake with no course yet is the state that most needs saying: everybody imported
+   * into it signs in to an empty grid, and nothing else in the file would tell them. */
+  check('and says when one takes nothing', template.includes('(no course yet)'));
+  check('the template has no course column', !/^email,name,courses/m.test(template));
   eq('the template imports as zero rows - the examples are commented out',
      parseUsers(template).rows, []);
   check('the template has no file-level error either', parseUsers(template).error === '');

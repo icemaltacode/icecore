@@ -395,11 +395,11 @@ async function loadCourses() {
   try {
     const published = await loadManifest();
     allCourses.value = published;
-    // With auth on, a student sees only what they're enrolled on.
-    /* Enrolment is a per-user DynamoDB row; `open` is a property of the course. A course
-     * that declares itself open is on everyone's grid without one - which is what makes the
-     * Playground reachable by a student nobody remembered to enrol, and by everyone who
-     * already existed before it did.
+    // With auth on, a student sees only what their cohorts take.
+    /* Enrolment is DERIVED from the intakes somebody is in; `open` is a property of the
+     * course. A course that declares itself open is on everyone's grid whatever their class
+     * takes - which is what makes the Playground reachable by a student nobody remembered to
+     * put in a cohort, and by everyone who already existed before it did.
      *
      * Note what this does and does not do. The signed cookie's policy covers the whole
      * origin, so any signed-in student can already fetch any course's content by URL;
@@ -419,7 +419,7 @@ async function loadCourses() {
      * is shown. Promotion takes effect on the next sign-in, with nothing to migrate. */
     manifest.value = visible(published);
     if (!manifest.value.length) throw new Error(session.courses
-      ? 'You are not enrolled on any course yet - ask your educator.'
+      ? 'You are not on any course yet - ask your educator to put you in a class.'
       : 'No courses published - run npm run content');
     fillProgress();
     // A course named in the URL opens straight away. That is what makes returning to the
@@ -436,10 +436,11 @@ async function loadCourses() {
 
 /* Which courses the grid shows, for whoever is being looked at.
  *
- * Watching somebody narrows it to THEIR enrolments rather than the admin's derived
- * everything: a view of a student that shows the whole catalogue is a lie about the single
- * thing the feature exists to show. `open` courses stay, because they are on everybody's
- * grid without an enrolment row - including theirs. */
+ * Watching somebody narrows it to THEIR courses rather than the admin's derived everything:
+ * a view of a student that shows the whole catalogue is a lie about the single thing the
+ * feature exists to show. Theirs come from the intakes they are in, worked out on the other
+ * side - see `getPerson`. `open` courses stay, because they are on everybody's grid whatever
+ * their class takes, including theirs. */
 const visible = (all) => {
   if (watched.value) {
     const mine = watched.value.courses || [];

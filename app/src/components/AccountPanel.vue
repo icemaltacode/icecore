@@ -231,7 +231,7 @@ async function doReset() {
      * screen to disagree with the rows it just changed. */
     me.value = await api('account');
     resetting.value = null;
-    resetDone.value = `${course.title} is back to nothing. Your enrolment is untouched.`;
+    resetDone.value = `${course.title} is back to nothing. You are still on it.`;
     /* The grid behind this screen is drawn from a tally App.vue took when the courses
      * loaded, and nothing about closing the account screen recomputes it - so without this
      * a student resets a course, presses Done, and sees the card still claiming the XP they
@@ -544,11 +544,11 @@ const SECTIONS = [
                 </span>
                 <span v-else class="value muted-value">Not in a class.</span>
                 <!-- The read-only rule, said rather than implied by an absence of buttons.
-                     Enrolment and class are an admin's to set: a student who could take
+                     Class and course are an admin's to set: a student who could take
                      themselves off a course would lose one they were put on, and it would
                      look from the admin panel exactly like an administrative mistake. -->
-                <p class="hint">Your courses and class are set by your educator. Ask them if
-                  something here is wrong.</p>
+                <p class="hint">Your class is set by your educator, and your class is what
+                  puts you on a course. Ask them if something here is wrong.</p>
               </dd>
             </dl>
           </template>

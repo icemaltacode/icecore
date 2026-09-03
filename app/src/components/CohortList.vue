@@ -6,10 +6,17 @@
  * you can be - `#/admin/cohorts` addresses it, the nav shows you are in it, and it will
  * carry a cohort's own page when there is one. A dialog cannot hold that.
  *
- * Deliberately a small screen with no way to create anything. A cohort is named at the
- * moment somebody is put in it - in UserDialog, or in the import - because that is when a
- * tutor knows what to call it, and a create form here would be a second place to invent one
- * with nobody in it.
+ * IT CREATES COHORTS NOW, and it did not. The old reasoning was that a cohort is named at
+ * the moment somebody is put in one - in UserDialog, or in the import - because that is when
+ * a tutor knows what to call it, so a form here would be a second place to invent an empty
+ * one. What changed is that a cohort carries its courses: setting a class up before anybody
+ * is in it is the ordinary first step now rather than an odd thing to want, and an intake
+ * invented by an import lands with no courses and puts its people on nothing.
+ *
+ * COURSES ARE SET HERE AND NOWHERE ELSE. This is the whole of enrolment - a course reaches a
+ * student through the intake they are in - which is why it is a control on the row rather
+ * than a page of its own, and why the row says what each cohort takes even when it takes
+ * nothing.
  *
  * ARCHIVING IS THE ORDINARY END OF AN INTAKE, not deleting. It keeps the grouping and its
  * statistics and takes it out of the pickers; a training company accumulates classes, and
@@ -46,6 +53,15 @@ const error = ref('');
 const renaming = ref('');
 const title = ref('');
 const confirming = ref('');
+/* The row whose course list is open, and the set being edited in it. Held apart from the
+ * cohort so that cancelling leaves the row as it was - the list is only what the API says it
+ * is once it has said so. */
+const choosing = ref('');
+const chosen = ref(new Set());
+/* Naming a new intake. Closed until asked for: a create field that is always open is one
+ * somebody types into by accident on a screen whose other rows are destructive. */
+const creating = ref(false);
+const fresh = ref('');
 /* Ending a lesson from HERE rather than from the live screen. The recovery path, not the
  * ordinary one - see the menu item below. */
 const finishing = ref('');
@@ -71,6 +87,8 @@ const why = c => whyNotLive(c, props.users);
 const mine = c => mineAlready(c.id);
 const held = c => running.running[c.id];
 const courseTitle = id => (props.courses || []).find(x => x.id === id)?.title || id;
+/** The courses a cohort takes, named, for a sentence. */
+const courseTitles = c => (c.courses || []).map(courseTitle).join(' and ');
 
 async function run(label, fn) {
   error.value = ''; busy.value = label;
@@ -80,6 +98,44 @@ async function run(label, fn) {
 }
 
 const startRename = c => { menu.value = ''; renaming.value = c.id; title.value = c.title; };
+
+const startCourses = c => {
+  menu.value = '';
+  choosing.value = c.id;
+  chosen.value = new Set(c.courses || []);
+};
+const pick = id => {
+  const next = new Set(chosen.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  chosen.value = next;
+};
+
+/* THE WHOLE DESIRED SET, so a course unticked is a course withdrawn from everybody in the
+ * class. Reported in terms of the people rather than the cohort, because the gesture that
+ * takes access away looks exactly like the one that grants it. */
+const setCourses = c => run('courses', async () => {
+  const want = [...chosen.value];
+  await api('admin/cohorts', { method: 'PUT', body: { id: c.id, courses: want } });
+  choosing.value = '';
+  const n = counts.value[c.id] || 0;
+  const who = n === 1 ? '1 person' : `${n} people`;
+  return want.length
+    ? `${c.title} takes ${want.map(courseTitle).join(', ')}. ${who} can open ${want.length === 1 ? 'it' : 'them'}.`
+    : `${c.title} takes no course. ${who} can open nothing until it does.`;
+});
+
+const create = () => run('create', async () => {
+  const named = fresh.value.trim();
+  const r = await api('admin/cohorts', { method: 'POST', body: { title: named } });
+  creating.value = false;
+  fresh.value = '';
+  /* Naming one that already exists is not an error on the API's side - it hands back the one
+   * that is there - so this says which of the two happened rather than claiming to have made
+   * something it found. */
+  return r.created
+    ? `${r.cohort.title} created. Give it a course, then add people to it.`
+    : `${r.cohort.title} already exists.`;
+});
 
 const rename = c => run('save', async () => {
   await api('admin/cohorts', { method: 'PUT', body: { id: c.id, title: title.value.trim() } });
@@ -120,7 +176,7 @@ const finish = c => run('end', async () => {
 const destroy = c => run('delete', async () => {
   const r = await api(`admin/cohorts?id=${encodeURIComponent(c.id)}`, { method: 'DELETE' });
   confirming.value = '';
-  return `${c.title} deleted. ${r.removed} ${r.removed === 1 ? 'person is' : 'people are'} no longer grouped - nobody was removed from anything else.`;
+  return `${c.title} deleted. ${r.removed} ${r.removed === 1 ? 'person is' : 'people are'} no longer in it, and no longer on its courses. Nothing else about them changed.`;
 });
 
 /* One listener for the whole list rather than one per row: two of them would each have to
@@ -135,12 +191,25 @@ onUnmounted(() => removeEventListener('click', shut));
   <section class="cohorts">
     <!-- The full width of the card. It was clamped to 60ch, which on this screen left a
          column of prose down the left and a lot of nothing beside it. -->
-    <p class="lead">A cohort is a class or an intake — a group of people, not a course.
-      New ones are named when you add or import somebody, which is when you know what to
-      call them. Delivering live puts everyone in a cohort on the same page of the same
-      course, in real time.</p>
+    <p class="lead">A cohort is a class or an intake — a group of people. <strong>What a
+      cohort takes is what its people are on</strong>: put somebody in a class and they get
+      its courses, take them out and they lose them. Delivering live puts everyone in a
+      cohort on the same page of the same course, in real time.</p>
 
     <p v-if="error" class="err">{{ error }}</p>
+
+    <!-- Name it, then give it courses, then put people in it. In that order, which is why
+         creating one is a button here and not only a side effect of an import. -->
+    <div class="make">
+      <template v-if="creating">
+        <input v-model="fresh" type="text" placeholder="Sept 2026 evening"
+               @keydown.enter.prevent="fresh.trim() && create()">
+        <button class="btn primary" type="button" :disabled="!fresh.trim() || !!busy"
+                @click="create">{{ busy === 'create' ? 'Creating…' : 'Create' }}</button>
+        <button class="link" type="button" @click="creating = false; fresh = ''">Cancel</button>
+      </template>
+      <button v-else class="btn" type="button" @click="creating = true">New cohort</button>
+    </div>
 
     <ul class="list">
       <li v-for="c in listed" :key="c.id" :class="{ off: c.archived }">
@@ -157,12 +226,45 @@ onUnmounted(() => removeEventListener('click', shut));
           <button class="btn danger" type="button" :disabled="!!busy" @click="finish(c)">End session</button>
           <button class="link" type="button" @click="finishing = ''">Cancel</button>
         </template>
+        <template v-else-if="choosing === c.id">
+          <!-- The tick list, inline like the rename: a dialog for four checkboxes is a
+               dialog nobody wants, and this is a row-level edit. -->
+          <div class="picking">
+            <strong>What {{ c.title }} takes</strong>
+            <ul class="ticks">
+              <li v-for="x in (courses || [])" :key="x.id">
+                <label>
+                  <input type="checkbox" :checked="chosen.has(x.id)" @change="pick(x.id)">
+                  <span>{{ x.title }}</span>
+                  <!-- An open course is on everybody's grid anyway, so ticking it changes
+                       nothing a student can see. Said rather than hidden: leaving it out
+                       would read as the course being missing. -->
+                  <em v-if="x.open">open to everyone</em>
+                  <em v-else-if="x.playground">playground</em>
+                </label>
+              </li>
+              <li v-if="!(courses || []).length" class="none">No courses are published yet.</li>
+            </ul>
+            <p class="note">Everyone in this cohort is on what is ticked. Unticking takes a
+              course away from all {{ counts[c.id] || 0 }} of them; their progress is kept.</p>
+          </div>
+          <button class="btn primary" type="button" :disabled="!!busy" @click="setCourses(c)">
+            {{ busy === 'courses' ? 'Saving…' : 'Save' }}</button>
+          <button class="link" type="button" @click="choosing = ''">Cancel</button>
+        </template>
         <template v-else-if="confirming === c.id">
           <!-- Said in full, because "delete" beside a list of students reads as deleting
                students and this is the one destructive verb here that is not. -->
-          <span class="warn">Remove this grouping? The
+          <!-- IT NOW TAKES THE COURSES AWAY, which it did not while enrolment was its own
+               row, so the sentence had to change with the model. Their progress survives and
+               comes back if they are put in another intake that takes it - the account and
+               the work are what "none of the people" always meant, and still does. -->
+          <span class="warn">Delete this cohort? The
             {{ counts[c.id] || 0 }} {{ (counts[c.id] || 0) === 1 ? 'person' : 'people' }} in it
-            keep their account, their courses and their progress.</span>
+            keep their account and their progress, but lose access to
+            {{ (c.courses || []).length ? courseTitles(c) : 'its courses' }} until they are
+            put in another cohort that takes {{ (c.courses || []).length === 1 ? 'it' : 'them' }}.
+            Archive it instead to end an intake without that.</span>
           <button class="btn danger" type="button" :disabled="!!busy" @click="destroy(c)">Delete</button>
           <button class="link" type="button" @click="confirming = ''">Cancel</button>
         </template>
@@ -172,6 +274,16 @@ onUnmounted(() => removeEventListener('click', shut));
             <small><code>{{ c.id }}</code> · {{ counts[c.id] || 0 }}
               {{ (counts[c.id] || 0) === 1 ? 'person' : 'people' }}<template v-if="c.archived"> · archived</template><template
                 v-if="held(c)"> · <span class="on">live now — {{ courseTitle(held(c).course) }}</span></template></small>
+            <!-- ON THE ROW RATHER THAN BEHIND THE MENU, because it is now the most important
+                 fact about a cohort: it is what its members can open. An intake taking
+                 nothing is the state that most needs saying, so it says it. -->
+            <small class="takes">
+              <template v-if="(c.courses || []).length">
+                <span v-for="id in c.courses" :key="id" class="course">{{ courseTitle(id) }}</span>
+              </template>
+              <button v-else type="button" class="link empty" @click="startCourses(c)">
+                No course yet — nobody in it can open anything</button>
+            </small>
           </div>
 
           <div class="acts">
@@ -200,6 +312,7 @@ onUnmounted(() => removeEventListener('click', shut));
                 <li v-if="held(c)"><button type="button" class="danger"
                         @click="menu = ''; finishing = c.id">End session</button></li>
                 <li v-if="held(c)" class="rule"></li>
+                <li><button type="button" @click="startCourses(c)">Courses</button></li>
                 <li><button type="button" @click="startRename(c)">Rename</button></li>
                 <li><button type="button" :disabled="!!busy" @click="setArchived(c, !c.archived)">
                   {{ c.archived ? 'Restore' : 'Archive' }}</button></li>
@@ -215,7 +328,7 @@ onUnmounted(() => removeEventListener('click', shut));
         somebody, and it appears here.</li>
     </ul>
 
-    <LiveStart v-if="starting" :cohort="starting" :users="users" :courses="courses"
+    <LiveStart v-if="starting" :cohort="starting" :courses="courses"
                @close="starting = null" />
   </section>
 </template>
@@ -241,6 +354,33 @@ input[type=text] { flex: 1; font: inherit; font-size: 14px; padding: 7px 10px;
                    background: var(--ice-bg); color: var(--ice-fg);
                    border: 1px solid var(--ice-border); border-radius: 8px; }
 input:focus { outline: none; border-color: var(--ice-primary); }
+
+.make { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+.make input { flex: 1; max-width: 340px; font: inherit; font-size: 14px; padding: 7px 10px;
+              background: var(--ice-bg); color: var(--ice-fg);
+              border: 1px solid var(--ice-border); border-radius: 8px; }
+
+/* What it takes, under the name. Chips rather than prose: a cohort on three courses is a
+   list, and a comma-separated sentence at 12px is one nobody parses at a glance. */
+.takes { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+.takes .course { font-size: 11.5px; padding: 1px 7px; border-radius: 5px;
+                 background: var(--ice-primary-soft); border: 1px solid var(--ice-primary);
+                 color: var(--ice-fg); }
+/* The empty state is a BUTTON, because it names a thing to fix and the fix is one click
+   away. A greyed sentence saying the same words would be a dead end. */
+.takes .empty { font-size: 11.5px; color: var(--ice-bad); }
+
+.picking { flex: 1; min-width: 0; }
+.picking > strong { display: block; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
+.ticks { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.ticks li { display: block; padding: 0; border: 0; }
+.ticks label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
+               cursor: pointer; padding: 3px 0; }
+.ticks input { accent-color: var(--ice-primary); width: 15px; height: 15px; }
+.ticks em { font-style: normal; font-size: 10.5px; text-transform: uppercase;
+            letter-spacing: .05em; color: var(--ice-fg-muted); }
+.ticks li.none { color: var(--ice-fg-muted); font-size: 13px; }
+.picking .note { margin: 0; font-size: 12px; color: var(--ice-fg-muted); line-height: 1.45; }
 
 .acts { display: flex; align-items: center; gap: 8px; flex: none; }
 .iconbtn { display: inline-flex; padding: 6px; border-radius: 6px; cursor: pointer;

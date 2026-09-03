@@ -65,6 +65,8 @@ export const toCsv = rows => rows.map(r => r.map(quote).join(',')).join('\r\n') 
 const HEADINGS = {
   email: 'email', 'e-mail': 'email', 'email address': 'email', address: 'email',
   name: 'name', 'full name': 'name', fullname: 'name', student: 'name',
+  /* STILL PARSED, AND NO LONGER OBEYED. The import calls out a file that has one rather than
+   * ignoring it silently, which it can only do if the column is still recognised here. */
   courses: 'courses', course: 'courses', 'course ids': 'courses', enrol: 'courses', enroll: 'courses',
   cohort: 'cohorts', cohorts: 'cohorts', class: 'cohorts', group: 'cohorts', intake: 'cohorts',
   admin: 'admin', 'is admin': 'admin', administrator: 'admin',
@@ -145,40 +147,47 @@ export function parseUsers(text) {
 }
 
 /**
- * The template, with the real course ids in it.
+ * The template, with the real cohort names in it.
  *
- * Listing them matters more than the header does: a tutor cannot guess that a course is
- * called `data-analyst-sql`, and an import whose course column is quietly wrong succeeds,
- * says nothing, and leaves a class with no courses on their grid. The example rows are
- * commented out for exactly that reason - a template that imports two fictional students
- * on its first use is worse than one that imports nothing.
+ * THERE IS NO COURSE COLUMN. A course reaches somebody through the intake they are in, so
+ * the only thing this file decides is which class each person joins - and the courses are
+ * listed underneath anyway, as a legend saying which cohort takes what. That is what a tutor
+ * is actually checking when they fill this in: not "did I spell the course id right" but
+ * "will these people land on the right material".
+ *
+ * Listing the cohorts matters more than the header does, and for a stronger reason than the
+ * course ids ever had: a course id at least exists to be got wrong, where a cohort name
+ * typed slightly differently is CREATED - so a class splits quietly in two rather than
+ * failing loudly, and the half in the new cohort is on nothing. The import previews that,
+ * and this is the copy that stops it happening in the first place.
+ *
+ * The example rows are commented out for the same kind of reason - a template that imports
+ * two fictional students on its first use is worse than one that imports nothing.
  */
 export function templateCsv(courses, cohorts = []) {
-  const ids = courses.map(c => c.id);
   const example = cohorts[0]?.id || 'sept-2026-evening';
   const rows = [
-    ['email', 'name', 'courses', 'cohort', 'admin'],
-    ['# jane.borg@example.com', 'Jane Borg', ids.slice(0, 2).join(';'), example, 'no'],
-    ['# sam.grech@example.com', 'Sam Grech', ids[0] || '', example, 'no'],
+    ['email', 'name', 'cohort', 'admin'],
+    ['# jane.borg@example.com', 'Jane Borg', example, 'no'],
+    ['# sam.grech@example.com', 'Sam Grech', example, 'no'],
   ];
-  const legend = courses.length
-    ? courses.map(c => `# ${c.id}  -  ${c.title}`).join('\r\n')
-    : '# (no courses published yet)';
-  /* Cohorts are listed the same way and for a stronger reason: a course id at least exists
-   * to be got wrong, where a cohort typed slightly differently is CREATED - so a class
-   * splits quietly in two rather than failing loudly. The import previews that, and this is
-   * the copy that stops it happening in the first place. */
+  const title = id => courses.find(c => c.id === id)?.title || id;
+  /* Each cohort with what it takes beside it, because the two facts are only useful
+   * together: a name on its own does not tell a tutor whether this is the class they mean. */
   const classes = cohorts.length
-    ? cohorts.map(c => `# ${c.id}  -  ${c.title}`).join('\r\n')
-    : '# (none yet - whatever you type here is created)';
+    ? cohorts.map(c => {
+      const on = (c.courses || []).map(title).join(', ');
+      return `# ${c.id}  -  ${c.title}  -  ${on || '(no course yet)'}`;
+    }).join('\r\n')
+    : '# (none yet - whatever you type here is created, and takes no course until you give it one)';
   /* The legend goes UNDER the data, not above it: a comment line before the header makes
    * the header row the second line, and every spreadsheet then imports the file with the
    * comment as its column names. */
   return toCsv(rows)
     + '\r\n# The two rows above start with a # and are ignored - they show the shape.\r\n'
-    + '# Separate several courses with a semicolon. The course ids are:\r\n'
-    + legend + '\r\n'
-    + '#\r\n# The cohort column takes one name, or several separated by a semicolon.\r\n'
-    + '# A name that is not one of these creates a new cohort:\r\n'
-    + classes + '\r\n';
+    + '# The cohort column takes one name, or several separated by a semicolon.\r\n'
+    + '# A cohort is what puts somebody on a course. These exist:\r\n'
+    + classes + '\r\n'
+    + '#\r\n# A name that is not one of these creates a new cohort, taking no course.\r\n'
+    + '# Give it one in Cohorts afterwards, or everybody in it signs in to an empty grid.\r\n';
 }

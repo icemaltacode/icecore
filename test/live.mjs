@@ -235,6 +235,36 @@ try {
   madeIt = made.body.created;
   console.log(`session tests in ${throwaway}${madeIt ? '' : ' (already existed - kept)'}\n`);
 
+  /* ---- what the cohort takes ------------------------------------------------
+   *
+   * A COURSE REACHES A STUDENT THROUGH THE INTAKE THEY ARE IN, so this list is the whole of
+   * enrolment - there is no `ENROL#` row behind it any more. Checked here rather than in a
+   * test of its own because this file already holds an admin token and a throwaway cohort,
+   * and the failure it guards is the silent one: a field that does not persist leaves every
+   * class on nothing and looks exactly like a course that was never published.
+   */
+  {
+    const set = await call(site, tokenA, 'admin/cohorts',
+      { method: 'PUT', body: { id: throwaway, courses: ['zz-a', 'zz-b'] } });
+    check('a cohort can be given courses', set.status === 200,
+          `HTTP ${set.status} ${JSON.stringify(set.body)}`);
+    const listed = await call(site, tokenA, 'admin/users');
+    const back = (listed.body?.cohorts || []).find(c => c.id === throwaway);
+    check('and the listing carries them back',
+          JSON.stringify(back?.courses) === JSON.stringify(['zz-a', 'zz-b']),
+          JSON.stringify(back));
+    /* THE WHOLE DESIRED SET, so an empty list is a course withdrawn from everybody in the
+     * class rather than a no-op. It is the destructive direction and the one worth proving:
+     * a PUT that quietly merged would make unticking do nothing. */
+    await call(site, tokenA, 'admin/cohorts',
+      { method: 'PUT', body: { id: throwaway, courses: ['zz-b'] } });
+    const after = await call(site, tokenA, 'admin/users');
+    check('and a course left off the list is withdrawn',
+          JSON.stringify((after.body?.cohorts || [])
+            .find(c => c.id === throwaway)?.courses) === JSON.stringify(['zz-b']),
+          JSON.stringify((after.body?.cohorts || []).find(c => c.id === throwaway)));
+  }
+
   /* A made-up course id, deliberately. Nothing on this path resolves one - a session names
    * a course, a bookmark is keyed by it, and neither reads the catalogue - and the real
    * catalogue is behind the signed-cookie key group anyway, so fetching it here would 403

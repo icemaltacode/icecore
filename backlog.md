@@ -21,13 +21,14 @@ in a month.
   exercise rather than an event per press: the question is "how many tries before this class
   got it", not an audit log.
 
-- [ ] **A cohort member who is not enrolled on the course being delivered.** Reachable by
-  construction: a cohort is a group of *people*, deliberately not a group of enrolments, so
-  nothing stops an intake taking one course together while one of them is not on it. Three
-  answers, and the live delivery screens do not settle which — enrol them on the spot,
-  refuse the invitation, or let them follow read-only for the hour. Deferred rather than
-  decided because it costs nothing to defer: every path leaves the session itself unchanged
-  and only decides what one person sees. See [LIVE.md](LIVE.md).
+- [x] **A cohort member who is not enrolled on the course being delivered.** Was reachable by
+  construction: a cohort was a group of *people* and enrolment was a separate per-person row,
+  so nothing stopped an intake taking one course together while one of them was not on it.
+  Three answers were on the table — enrol them on the spot, refuse the invitation, or let
+  them follow read-only for the hour — and the right one turned out to be none of them.
+  **The cohort now carries the courses and enrolment is derived from it**, so the state
+  cannot be expressed. Two independent facts that have to agree eventually do not, and the
+  moment they did not was in front of a class. See [ADMIN.md](ADMIN.md).
 
 - [ ] **[TO TEST] End a live session from the cohort screen.** Today the only End session button is on
   the live screen itself, which is fine until that screen is the thing that is broken - and

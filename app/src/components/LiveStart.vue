@@ -11,23 +11,25 @@
  * place the difference between the courses is legible: two titles say nothing about which
  * one Tuesday's class was in the middle of.
  *
- * The shared courses come from `sharedCourses`, which is the same function the Live button
- * used to decide it could be pressed at all. A second reading of "what does this cohort
- * have in common" would eventually disagree with the button that opened this dialog.
+ * THE COURSES COME OFF THE COHORT, which is also what the Live button reads to decide it
+ * could be pressed at all. That used to be a shared function computing an intersection over
+ * everybody's enrolments, so that two screens could not disagree about what the class had in
+ * common; a cohort takes courses now, and two readers of one array have nothing to disagree
+ * about.
  */
 import { ref, computed, onMounted } from 'vue';
-import { sharedCourses, sessionFor, start, join } from '../delivery.js';
+import { sessionFor, start, join } from '../delivery.js';
 import { live as goLive } from '../route.js';
 import Icon from './Icon.vue';
 
 const props = defineProps({
   cohort: Object,
-  users: Array,
+  /** The catalogue, for titles and exercise counts. Not what the cohort takes - see below. */
   courses: Array,
 });
 const emit = defineEmits(['close']);
 
-const shared = computed(() => sharedCourses(props.cohort.id, props.users));
+const shared = computed(() => props.cohort?.courses || []);
 const titled = computed(() => shared.value.map(id => ({
   id,
   title: (props.courses || []).find(c => c.id === id)?.title || id,

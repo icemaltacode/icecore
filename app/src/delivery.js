@@ -650,21 +650,21 @@ export async function end(cohort = delivery.cohort, where = null) {
 
 /* ---- whether a cohort can be delivered to at all -------------------------- */
 
-/**
- * The courses everyone in a cohort is on.
+/* `sharedCourses` USED TO BE HERE AND IS DELIBERATELY GONE.
  *
- * ADMINS ARE LEFT OUT OF THE INTERSECTION, and that is not a detail: an admin has no
- * enrolment rows at all - they see every course because `App.vue` derives it from the admin
- * flag - so a tutor who is also a member of their own cohort would empty this and disable
- * their own Live button. What is wanted is the courses the STUDENTS share.
+ * It intersected the courses of everyone in a cohort to guess at what the class could all
+ * follow, and it lived in this file rather than in a component so that the Live button and
+ * the course picker could not disagree about the answer. A cohort takes courses now, so the
+ * answer is `cohort.courses` and two readers of one array have nothing to disagree about -
+ * a one-line function named after an intersection that no longer happens would only
+ * suggest there was still a calculation to get wrong.
+ *
+ * The intersection was also wrong in two ways worth remembering. One person enrolled a day
+ * late emptied it, and the Live button went dark with a sentence about people not being on
+ * the same course. And an admin has no enrolment rows at all, so a tutor who was a member of
+ * their own cohort emptied it and disabled their own button - which is why the members were
+ * filtered on `!u.admin` before any of this. Both are gone with the calculation.
  */
-export function sharedCourses(cohortId, users) {
-  const members = (users || []).filter(u => !u.admin && (u.cohorts || []).includes(cohortId));
-  if (!members.length) return [];
-  return members
-    .map(u => u.courses || [])
-    .reduce((all, mine) => all.filter(c => mine.includes(c)));
-}
 
 /** Is this one already ours? Then the button is a way back in, not a refusal. */
 export const mineAlready = cohortId =>
@@ -683,9 +683,12 @@ export function whyNotLive(cohort, users) {
   const members = (users || []).filter(u => !u.admin && (u.cohorts || []).includes(cohort.id));
   if (!members.length)
     return 'Nobody is in this cohort yet, so there is nobody to deliver to.';
-  if (!sharedCourses(cohort.id, users).length)
-    return `These ${members.length} people are not all on the same course, so there is `
-      + 'nothing everyone could follow. Enrol them together first.';
+  /* AND THE REFUSAL BELOW IS A DIFFERENT ONE FROM THE ONE IT REPLACED. It used to say these
+   * people are not all on the same course, which was a fact about a dozen enrolment rows and
+   * left a tutor to work out which of them was the odd one out. A cohort takes courses now,
+   * so there is exactly one thing to fix and this names it. */
+  if (!(cohort.courses || []).length)
+    return 'This intake is not taking any course yet. Give it one before delivering to it.';
   const held = live.running[cohort.id];
   if (held && !mineAlready(cohort.id))
     return `${held.name || 'Somebody else'} is delivering to this cohort now.`;

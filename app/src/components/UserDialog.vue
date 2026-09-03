@@ -1,10 +1,17 @@
 <script setup>
 /* One person: invite them, or change everything about them.
  *
- * Add and edit are the same form because they are the same facts - who they are, what they
- * are on, and whether they can invite others. What editing adds is the things that only
- * exist once an account does: reissuing an invitation that has gone stale, suspending
- * somebody who has left, and deleting them outright.
+ * Add and edit are the same form because they are the same facts - who they are, which
+ * intakes they are in, and whether they can invite others. What editing adds is the things
+ * that only exist once an account does: reissuing an invitation that has gone stale,
+ * suspending somebody who has left, and deleting them outright.
+ *
+ * COURSES ARE NOT SET HERE ANY MORE, and the tick list that used to set them is a read-only
+ * line instead. A course reaches somebody through the intake they are in, so choosing them
+ * per person would be a second way onto a course and the second way is the one that drifts.
+ * The line stays visible because the question it answers - what will this person see when
+ * they sign in - is exactly the one being asked at the moment somebody is invited, and an
+ * answer that has to be worked out by opening another screen is one nobody works out.
  *
  * It talks to the API itself and reports back a sentence, rather than handing intents up to
  * AdminPanel: the panel would then need a branch per action and an error slot per branch,
@@ -31,7 +38,7 @@ const isSelf = computed(() => !!props.user && props.user.email === session.email
 const email = ref(props.user?.email || '');
 const name = ref(props.user?.name || '');
 const admin = ref(!!props.user?.admin);
-const picked = ref(new Set(props.user?.courses || []));
+
 /* Ids for cohorts that exist, and the RAW NAME for one being invented here. The API
  * resolves both the same way - id, then title, then create - so this screen does not have
  * to make a cohort before it can put somebody in one, and two admins inventing the same
@@ -46,12 +53,6 @@ const typed = ref('');
 const first = ref(null);
 
 onMounted(() => first.value?.focus());
-
-const toggle = id => {
-  const next = new Set(picked.value);
-  next.has(id) ? next.delete(id) : next.add(id);
-  picked.value = next;
-};
 
 const toggleCohort = id => {
   const next = new Set(inCohorts.value);
@@ -74,6 +75,28 @@ const cohortList = computed(() => {
   });
 });
 
+/**
+ * WHAT THEY WILL BE ON, worked out from the ticks as they are made.
+ *
+ * Live rather than saved: an admin ticking an intake is asking "and what does that put them
+ * on", and answering after the form is submitted answers it too late to change the answer.
+ *
+ * A cohort being invented here has no courses yet and contributes none - which is true, and
+ * is why it says so rather than showing an empty list with no explanation.
+ */
+const willBeOn = computed(() => {
+  const byId = new Map((props.cohorts || []).map(c => [c.id, c]));
+  const ids = new Set();
+  for (const id of inCohorts.value) for (const c of byId.get(id)?.courses || []) ids.add(c);
+  return [...ids]
+    .map(id => (props.courses || []).find(c => c.id === id) || { id, title: id })
+    .sort((a, b) => a.title.localeCompare(b.title));
+});
+/** Intakes that have been ticked and take nothing - the one case the line above cannot show. */
+const emptyPicks = computed(() => [...inCohorts.value]
+  .map(id => (props.cohorts || []).find(c => c.id === id) || { id, title: id, courses: [] })
+  .filter(c => !(c.courses || []).length));
+
 function addCohort() {
   const title = newCohort.value.trim();
   if (!title) return;
@@ -86,14 +109,6 @@ function addCohort() {
 }
 
 const invited = computed(() => props.user?.status === 'FORCE_CHANGE_PASSWORD');
-
-/* Sorted so the tick list reads the way the grid does, with the courses a student is
- * actually enrolled on first. A dozen courses in publication order makes checking what
- * somebody is on a hunt. */
-const listed = computed(() => [...(props.courses || [])].sort((a, b) => {
-  const on = c => (picked.value.has(c.id) ? 0 : 1);
-  return on(a) - on(b) || a.title.localeCompare(b.title);
-}));
 
 async function run(label, fn) {
   error.value = ''; busy.value = label;
@@ -109,7 +124,6 @@ const save = () => run('save', async () => {
       body: {
         sub: props.user.sub,
         name: name.value.trim(),
-        courses: [...picked.value],
         cohorts: [...inCohorts.value],
         ...(isSelf.value ? {} : { admin: admin.value }),
       },
@@ -122,14 +136,17 @@ const save = () => run('save', async () => {
     body: {
       email: address,
       name: name.value.trim() || undefined,
-      courses: [...picked.value],
       cohorts: [...inCohorts.value],
       admin: admin.value,
     },
   });
+  /* The COUNT COMES BACK FROM THE API rather than from the ticks, and the difference is
+   * real: what somebody ends up on is the union of every intake they are in, including ones
+   * they were already in before this form was opened. */
+  const n = (r.enrolled || []).length;
   return r.invited
     ? `Invitation sent to ${address}.`
-    : `${address} already had an account, and is now on ${picked.value.size || 'no'} course${picked.value.size === 1 ? '' : 's'}.`;
+    : `${address} already had an account, and is on ${n || 'no'} course${n === 1 ? '' : 's'}.`;
 });
 
 const resend = () => run('resend', async () => {
@@ -146,7 +163,7 @@ const setEnabled = enabled => run('enabled', async () => {
 
 const destroy = () => run('delete', async () => {
   const r = await api(`admin/users?sub=${encodeURIComponent(props.user.sub)}`, { method: 'DELETE' });
-  return `${props.user.email} deleted, along with ${r.removed} row${r.removed === 1 ? '' : 's'} of enrolment and progress.`;
+  return `${props.user.email} deleted, along with ${r.removed} row${r.removed === 1 ? '' : 's'} of membership and progress.`;
 });
 
 // Typing the address out is the point: this deletes their progress as well as their
@@ -178,28 +195,7 @@ watch(confirming, v => { if (!v) typed.value = ''; });
           </div>
         </div>
 
-        <label>Courses</label>
-        <ul class="courses">
-          <li v-for="c in listed" :key="c.id">
-            <label class="tick">
-              <input type="checkbox" :checked="picked.has(c.id)" @change="toggle(c.id)">
-              <span class="title">{{ c.title }}</span>
-              <!-- An open course is on everybody's grid without an enrolment row, so
-                   ticking it changes nothing a student can see. Say so rather than hide it:
-                   its absence from the list would read as the course being missing. -->
-              <span v-if="c.open" class="tag">open to everyone</span>
-              <span v-else-if="c.playground" class="tag">playground</span>
-            </label>
-          </li>
-          <li v-if="!listed.length" class="none">No courses are published yet.</li>
-        </ul>
-        <!-- Kept and still editable, because these rows are what they are left on if their
-             rights are ever removed. But an admin already sees the whole catalogue, so
-             ticks that look like a limit have to say that they are not one. -->
-        <p v-if="admin" class="hint above">An admin sees every course. These only decide
-          what they are on if their rights are removed.</p>
-
-        <label>Cohorts <span class="opt">optional</span></label>
+        <label>Cohorts</label>
         <ul v-if="cohortList.length" class="courses short">
           <li v-for="c in cohortList" :key="c.id">
             <label class="tick">
@@ -216,7 +212,30 @@ watch(confirming, v => { if (!v) typed.value = ''; });
           <button class="btn" type="button" :disabled="!newCohort.trim()" @click="addCohort">Add</button>
         </div>
         <p class="hint above">A cohort is a class or an intake. It groups people, and it is
-          not tied to a course.</p>
+          what puts them on a course.</p>
+
+        <!-- READ-ONLY, AND SAID OUT LOUD RATHER THAN IMPLIED BY AN ABSENCE OF CONTROLS. The
+             ticks above used to be here, and somebody who remembers them needs to be told
+             where they went rather than left hunting for a list that is no longer a list. -->
+        <label>Courses</label>
+        <div class="derived">
+          <p v-if="willBeOn.length" class="on">
+            <span v-for="c in willBeOn" :key="c.id" class="tag course">{{ c.title }}</span>
+          </p>
+          <p v-else class="none">Nothing yet.</p>
+          <p class="hint">Set by the cohort, not per person. To change what somebody is on,
+            change what their intake takes — in Cohorts.</p>
+          <!-- The one case the line above cannot show, because it looks identical to having
+               ticked nothing at all. -->
+          <p v-if="emptyPicks.length" class="hint">
+            <template v-for="(c, i) in emptyPicks" :key="c.id"><template v-if="i">, </template><strong>{{ c.title }}</strong></template>
+            {{ emptyPicks.length === 1 ? 'takes' : 'take' }} no course yet.
+          </p>
+        </div>
+        <!-- An admin sees the whole catalogue whatever their intakes say, so a list that
+             looks like a limit has to say that it is not one. -->
+        <p v-if="admin" class="hint above">An admin sees every course. This only decides what
+          they are on if their rights are removed.</p>
 
         <label class="tick admin" :class="{ off: isSelf }">
           <input type="checkbox" v-model="admin" :disabled="isSelf">
@@ -233,7 +252,7 @@ watch(confirming, v => { if (!v) typed.value = ''; });
         <footer>
           <button class="btn ghost" type="button" @click="emit('close')">Cancel</button>
           <button class="btn primary" type="submit" :disabled="!!busy || (!editing && !email.trim())">
-            {{ busy === 'save' ? 'Saving…' : editing ? 'Save changes' : 'Invite &amp; enrol' }}
+            {{ busy === 'save' ? 'Saving…' : editing ? 'Save changes' : 'Invite' }}
           </button>
         </footer>
       </form>
@@ -353,4 +372,15 @@ h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
 .confirm label { color: var(--ice-bad); text-transform: none; letter-spacing: 0; font-size: 12.5px; }
 .confirm code { font-family: var(--ice-font-mono); font-size: .92em; }
 @media (max-width: 620px) { .pair { grid-template-columns: 1fr; } }
+/* The read-only half of the form. Chips rather than a tick list, because a tick list with
+   nothing to tick is a control that looks broken - these are an answer, not a choice. */
+.derived { margin: 0 0 18px; }
+.derived:has(+ .hint.above) { margin-bottom: 0; }
+.derived .on { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.derived .tag.course { text-transform: none; letter-spacing: 0; font-size: 12.5px;
+                       padding: 3px 9px; color: var(--ice-fg);
+                       background: var(--ice-primary-soft); border-color: var(--ice-primary); }
+.derived .none { color: var(--ice-fg-muted); font-size: 13px; margin: 0 0 8px; }
+.derived .hint { margin: 0 0 4px; }
+
 </style>

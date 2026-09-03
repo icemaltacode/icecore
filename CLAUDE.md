@@ -310,10 +310,35 @@ other work.
   platform's job; fixing it is a commit in the course repo. The rule most likely to rot,
   because every step towards breaking it looks reasonable on its own.
 
-- **Cognito owns identity; the table owns enrolment.** Name, email, sign-in status, enabled,
+- **Cognito owns identity; the table owns membership.** Name, email, sign-in status, enabled,
   and membership of `admins` are read back from the pool, never from a copy. The name is
-  still echoed onto each `ENROL#` row as a cache, and PUT rewrites it on a rename — one fact
+  still echoed onto each `COHORT#` row as a cache, and PUT rewrites it on a rename — one fact
   in two places diverges unless something keeps them together.
+
+- **A COHORT CARRIES THE COURSES, AND ENROLMENT IS DERIVED FROM IT.** There is no `ENROL#`
+  row: `courses` is a list on the cohort, and a person's courses are the union of the courses
+  of every cohort they are in. Computed in three places from rows that were already being
+  read — `coursesFrom` in the admin function, `enrolments` in the session function, `titles`
+  in the account function — rather than materialised anywhere, because a stored copy is a
+  copy that can disagree with the cohort, and *a cohort member missing the course being
+  delivered to them* is the exact bug this removed. There is no per-person grant and there
+  must not be one: somebody who needs a course of their own gets a cohort of their own, and a
+  cohort is a group of people, so a group of one is a cohort.
+  - **Archiving does not revoke.** Archiving is the ordinary end of an intake; a class that
+    finished in June still owns what it was taught. Revoking on archive would make finishing
+    a course and losing it the same gesture.
+  - **Deleting a cohort now takes its courses away**, which it did not when enrolment was its
+    own row. Progress survives and reappears if they are put in another intake that takes it,
+    but the grid empties in between — so `CohortList` says that before the button is pressed,
+    and archiving is the gesture for an intake that has simply finished.
+  - **Courses are set on the cohort screen and nowhere else.** `UserDialog` shows what
+    somebody will be on as a read-only line derived from the ticked intakes, said out loud
+    rather than implied by the absence of the tick list that used to be there. The importer's
+    `courses` column is still *parsed*, so a file that has one can be told it is ignored —
+    silently dropping a column somebody filled in is how a class ends up on nothing.
+  - **The per-course roster is a query per intake** rather than one on `ENROL#<course>`:
+    which cohorts take this course, then `byCourse('COHORT#<id>')` for each. The name and
+    email cache on the membership row is what makes that work, exactly as it did before.
 - **The sub is not the username, and Admin\* calls take the username.** The pool signs in by
   email alias, so Cognito generated an opaque username of its own and `sub` is a separate
   attribute. Passing a sub where a username is wanted fails with `UserNotFound` on a user who
@@ -373,33 +398,38 @@ property of a course. An intake may take two courses, so a cohort that named one
 second, worse spelling of enrolment. It is therefore an axis rather than a section: a filter
 in the user list, a page of its own later, a pivot on the course page, a grouping on spend.
 
-- **Two rows.** `COHORTS`/`COHORT#<id>` is the cohort; `USER#<sub>`/`COHORT#<id>` is
-  membership, with the name cached on it exactly as `ENROL#` does. Membership lives in the
+- **Two rows.** `COHORTS`/`COHORT#<id>` is the cohort — its title, whether it is archived,
+  and `courses`; `USER#<sub>`/`COHORT#<id>` is membership, with the name cached on it exactly
+  as `ENROL#` used to. Membership lives in the
   *user's* partition for two reasons: `byCourse` inverts the key, so the roster is one query
   with names on it, and `forget()` already deletes it with the person.
 - **The cohort needs a row of its own because an empty cohort has to exist.** You name a
   class before you import it, and that is precisely when a list derived from membership
   cannot represent it.
-- **THE LISTING READS `COHORT#` AND `ENROL#` AS ONE RANGE** — `sk BETWEEN 'COHORT#' AND
-  'ENROL$'` in `belongings` — so cohorts cost no extra query per person on the slowest screen
-  in the app. **A sort-key prefix added later that begins with D or E falls inside that range
-  and arrives in the listing as an enrolment nobody wrote.** The prefixes today are `COHORT#`,
-  `ENROL#`, `LAST#`, `PROG#`, `RATE#` and `SPEND#`.
+- **The listing reads one prefix**, `begins_with(sk, 'COHORT#')` in `memberships`. It used to
+  read `COHORT#` and `ENROL#` as one range — `sk BETWEEN 'COHORT#' AND 'ENROL$'` — so that
+  cohorts cost no extra query per person on the slowest screen in the app, at the price of a
+  bound that any later sort key beginning with D or E fell inside, arriving in the listing as
+  an enrolment nobody wrote. That fragility bought a prefix that no longer exists. The
+  prefixes today are `COHORT#`, `LAST#`, `PROG#`, `RATE#` and `SPEND#`.
 - **The id is a slug of the title, taken once and never moved.** A tutor types it into a CSV
   column, so it cannot be opaque; and because it never moves, a rename rewrites one row
   rather than every membership row. The title drifting from its original slug is the
   ordinary outcome, not a bug. Matching is on id *or* title, case-insensitively, and the
   Lambda is the authority — the import's own resolution is only for the preview.
-- **An unknown course blocks an import row; an unknown cohort creates one.** A course id that
-  is not published means a typo and a student landing on nothing; a cohort that does not
-  exist yet is how an intake gets named. What makes creating safe is that the preview says
-  which cohorts it is about to create, before anything is sent.
+- **An unknown cohort creates one, and the import has no course column left to get wrong.**
+  A cohort that does not exist yet is how an intake gets named. What makes creating safe is
+  that the preview says which cohorts it is about to create, before anything is sent — and
+  now also that a cohort created this way takes nothing, so the preview says how many people
+  are about to be invited onto an empty grid. Not a blocker: inviting a class before its
+  course is decided is a real order of doing things.
 - **The cohort column splits on `;` and `|` only, never whitespace.** A course id cannot
   contain a space and a cohort name usually does — "Sept 2026 evening" through the course
   splitter is three cohorts, two of them created on the spot.
-- **Deleting a cohort deletes the grouping and none of the people.** Said twice in the UI,
-  because "delete" beside a member count reads as deleting students. Archiving is the
-  ordinary end of an intake: it keeps the statistics and leaves the pickers.
+- **Deleting a cohort deletes no account and no progress**, and it does now take away the
+  courses — see above. Said in full in the UI, because "delete" beside a member count reads
+  as deleting students. Archiving is the ordinary end of an intake: it keeps the statistics,
+  leaves the pickers, and keeps everyone on the material.
 
 ### What a hint costs
 
@@ -446,7 +476,7 @@ the avatar. Recovery came first because it was not a feature but a lockout.
   other student's rows would be an `if` - and the day somebody adds a `?sub=` here for a good
   reason, it is gone. There is no sub parameter in the file: the only key it can build comes
   from the claims. Its IAM policy is two Cognito actions, and that is the whole of it.
-- **A rename's cached copies are the whole job.** `ENROL#` and `COHORT#` rows each carry the
+- **A rename's cached copies are the whole job.** `COHORT#` rows carry the
   name so `byCourse` answers "who is in X" without a pool call. The signed-in client could
   have written the attribute alone, which is exactly the version that would have been wrong:
   every admin list would go on showing the old name. The top bar is written directly too -
@@ -466,7 +496,7 @@ the avatar. Recovery came first because it was not a feature but a lockout.
   no-op dressed as a destructive act is how a danger zone becomes a place people click
   through.
 - **The reset's bound is the sort key, not a filter.** `begins_with('PROG#<course>#')` cannot
-  reach another course's rows even if the caller asks it to. `ENROL#`, `COHORT#`,
+  reach another course's rows even if the caller asks it to. `COHORT#`,
   `SPEND#hint#` and the aggregate `HINTS#` counter all stay - the last because it is not
   about the student at all, which is why `forget()` spares it too.
 - **Hints are read from `RATE#`, in UTC; XP is the student's own day.** They look like the

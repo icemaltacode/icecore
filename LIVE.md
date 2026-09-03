@@ -176,12 +176,14 @@ pk/sk with the inverted `sk`/`pk` GSI and the `ttl` attribute.
 
 ### The prefix, and the range that already exists
 
-**`LIVE#`, and the choice is not cosmetic.** `belongings` in the admin function reads
-cohorts and enrolments as one range —
-`sk BETWEEN 'COHORT#' AND 'ENROL$'` ([`admin/index.mjs:113`](infra/lambda/admin/index.mjs#L113))
-— so **any new sort-key prefix beginning with D or E arrives in the user listing as an
-enrolment nobody wrote.** `L` sorts after `ENROL$`, so `LIVE#` falls outside it. The
-prefixes in use today are `COHORT#`, `ENROL#`, `LAST#`, `PROG#`, `RATE#` and `SPEND#`.
+**`LIVE#`, and the choice was not cosmetic.** The admin listing used to read cohorts and
+enrolments as one range — `sk BETWEEN 'COHORT#' AND 'ENROL$'` — so **any new sort-key prefix
+beginning with D or E arrived in the user listing as an enrolment nobody wrote.** `L` sorts
+after `ENROL$`, so `LIVE#` fell outside it.
+
+That trap has since gone: a cohort carries its courses and enrolment is derived from it, so
+there is no `ENROL#` prefix and the listing is a plain `begins_with(sk, 'COHORT#')`. The
+prefixes in use today are `COHORT#`, `LAST#`, `PROG#`, `RATE#` and `SPEND#`.
 
 ### Four kinds of row
 
@@ -225,11 +227,10 @@ It is otherwise as described: What the summary reads:
 who attended and for how long, which topics were walked, what each exercise did to the
 class. Written when the session ends, from tallies kept on the session row as it runs.
 
-**It stores names, cached, exactly as `ENROL#` and `COHORT#` rows already do** — so the
-summary is one read with no pool call behind it. One difference from those two, and it is
-the important one: **a rename must not rewrite a history row.** `ENROL#` and `COHORT#` cache
-a name because they answer "who is on this course *now*", and PUT rewrites them for that
-reason. A history row answers "who was in the room on the 3rd of September", which a later
+**It stores names, cached, exactly as `COHORT#` membership rows already do** — so the
+summary is one read with no pool call behind it. One difference, and it is the important
+one: **a rename must not rewrite a history row.** A membership row caches a name because it
+answers "who is in this class *now*", and PUT rewrites it for that reason. A history row answers "who was in the room on the 3rd of September", which a later
 rename does not change. It is a snapshot, and snapshots that get edited are not records.
 
 That has one consequence to carry: a name on a cohort partition is personal data
@@ -923,9 +924,13 @@ that exists and cannot be built at all against data nobody recorded.
 
 ## Open questions
 
-- **A student invited to a session for a course they are not enrolled on.** Deferred, and
-  recorded under Deferred in [backlog.md](backlog.md). Reachable by construction, and every
-  answer leaves the session itself unchanged.
+- ~~**A student invited to a session for a course they are not enrolled on.**~~ **Settled,
+  and not by any of the three answers this listed.** The cohort carries the courses now and
+  enrolment is derived from it, so a member of the cohort being delivered to is on its course
+  by construction and the state cannot be expressed. See [ADMIN.md](ADMIN.md). It also took
+  the *intersection* out of these screens: what a cohort could be taught used to be computed
+  over its members' enrolments, and one person enrolled a day late turned the Live button off
+  with a sentence about people not being on the same course.
 - **Two tabs, one student.** Two connections, one sub. Follow both, or make the newest win?
   The second is less surprising and needs the older tab told why it stopped.
 - **What a late joiner sees.** The current position and the last 200 messages is the

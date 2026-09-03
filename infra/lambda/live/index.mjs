@@ -42,10 +42,12 @@
  * for `sk = LIVECONN#<cohort>`. The sort key carries the cohort for exactly this reason;
  * with the cohort in an attribute instead, the same question would need an index of its own.
  *
- * `LIVE#` and `LIVECONN#`, and the prefix is not cosmetic: `belongings` in the admin
- * function reads cohorts and enrolments as ONE range, `sk BETWEEN 'COHORT#' AND 'ENROL$'`,
- * so any sort-key prefix beginning with D or E would arrive in the user listing as an
- * enrolment nobody wrote. L sorts after that range.
+ * `LIVE#` and `LIVECONN#`, and the prefix used to matter more than it does: the admin
+ * listing read cohorts and enrolments as ONE range, `sk BETWEEN 'COHORT#' AND 'ENROL$'`, so
+ * any sort-key prefix beginning with D or E arrived in the user listing as an enrolment
+ * nobody wrote. Enrolment is derived from the cohort now and that range is a plain
+ * `begins_with('COHORT#')`, so the trap is gone - but L still sorts clear of it, and the
+ * next prefix should stay clear of `COHORT#` for the ordinary reason.
  */
 import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -243,7 +245,7 @@ const shape = row => row && ({
   /* The cohort's TITLE rides on the session row, cached at the moment it starts. A student
    * has no way to resolve one - the cohort catalogue comes back with the admin user listing
    * and nothing else - and the band naming the class is most of what tells them which
-   * lesson this is. Cached rather than joined for the reason `ENROL#` rows cache a name. */
+   * lesson this is. Cached rather than joined for the reason `COHORT#` rows cache a name. */
   title: row.title || '',
   course: row.course, by: row.by, name: row.name,
   at: row.at, sharing: !!row.sharing, position: row.position || null,
@@ -530,7 +532,7 @@ async function end(event, claims) {
  * MORE: everything else this row could carry is a question somebody might ask, and a summary
  * that answers everything is one nobody reads.
  *
- * NAMES ARE FROZEN HERE. `ENROL#` and `COHORT#` rows cache a name and PUT rewrites it on a
+ * NAMES ARE FROZEN HERE. `COHORT#` rows cache a name and PUT rewrites it on a
  * rename, because they answer "who is on this course now". This answers "who was in the room
  * on the 3rd of September", which a later rename does not change - it is a snapshot, and
  * snapshots that get edited are not records.
@@ -596,8 +598,8 @@ async function mint(event, claims) {
       sub, cohort, expires,
       role: admin ? 'tutor' : 'student',
       /* The name is cached onto the ticket and rides to the connection row, so the
-       * participants panel is one query with names already on it - the same trade `ENROL#`
-       * and `COHORT#` rows already make, and for the same reason. */
+       * participants panel is one query with names already on it - the same trade the
+       * `COHORT#` membership rows already make, and for the same reason. */
       name: claims.name || String(claims.email || '').split('@')[0],
       email: claims.email || '',
       ttl: epoch(TICKET_SECONDS * 5),

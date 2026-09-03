@@ -4,12 +4,12 @@
  *   GET    /api/admin/users?sub=        one person, summarised across every course
  *   GET    /api/admin/users?sub=&course= one course of theirs, with what they wrote
  *   GET    /api/admin/users?course=     everyone on that course, and how far they are
- *   POST   /api/admin/users            { email, name?, courses?, cohorts?, admin?, resend? }
- *   PUT    /api/admin/users            { sub, name?, courses?, cohorts?, admin?, enabled? }
+ *   POST   /api/admin/users            { email, name?, cohorts?, admin?, resend? }
+ *   PUT    /api/admin/users            { sub, name?, cohorts?, admin?, enabled? }
  *   DELETE /api/admin/users?sub=       delete the account and everything it owns
  *
- *   POST   /api/admin/cohorts          { title }              create an empty one
- *   PUT    /api/admin/cohorts          { id, title?, archived? }
+ *   POST   /api/admin/cohorts          { title, courses? }    create one
+ *   PUT    /api/admin/cohorts          { id, title?, courses?, archived? }
  *   DELETE /api/admin/cohorts?id=      the grouping, and none of the people
  *
  * THERE IS NO GET ON /cohorts. The catalogue rides back with the user listing, because the
@@ -17,17 +17,25 @@
  * of one table is two round trips to show one thing. Member counts are then a tally of what
  * the listing already carried rather than a number this side has to compute.
  *
- * A COHORT IS A GROUP OF PEOPLE, not of enrolments and not a property of a course - an
- * intake may take two courses, and a cohort that named one would be a second, worse
- * spelling of enrolment. See ADMIN.md.
+ * A COHORT IS A GROUP OF PEOPLE, AND IT IS WHAT CARRIES THE COURSES. Those are two claims
+ * and only the first is old. A cohort is still not a property of a course - an intake may
+ * take two, and the courses are a LIST on the cohort rather than a course id in its name.
+ * What changed is the direction: a course reaches a person THROUGH the intake they are in.
  *
- * COGNITO OWNS IDENTITY; THIS TABLE OWNS ENROLMENT. Name, email, sign-in status, whether
+ * ENROLMENT IS DERIVED, NOT STORED, and that is the whole point of the change. There is no
+ * `ENROL#` row any more and nothing writes one. A person's courses are the union of the
+ * courses of the cohorts they are in, computed wherever it is needed from rows that were
+ * already being read. A stored copy would be a copy that can disagree with the cohort - and
+ * a cohort member missing the course being delivered to them was the exact bug this
+ * removes, so re-introducing it as a cache would be undoing the work. See ADMIN.md.
+ *
+ * COGNITO OWNS IDENTITY; THIS TABLE OWNS MEMBERSHIP. Name, email, sign-in status, whether
  * the account is enabled and whether it is in `admins` are all read back from the pool
  * rather than from a copy here - there is one writer for each fact and it is the pool.
- * What the table holds that Cognito cannot is which courses somebody is on.
+ * What the table holds that Cognito cannot is which intakes somebody is in.
  *
- * The name is nevertheless *echoed* onto the ENROL rows, as it always was, so that the
- * byCourse index answers "who is on course X" without a pool call. That is a cache, and
+ * The name is nevertheless *echoed* onto the COHORT rows, as it always was, so that the
+ * byCourse index answers "who is in cohort X" without a pool call. That is a cache, and
  * PUT rewrites it on a rename for the reason the original comment here gave: one fact in
  * two places diverges unless something keeps them together.
  *
@@ -101,32 +109,43 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-/* What somebody is on: their cohorts and their courses, in ONE query.
+/* Which intakes somebody is in. One `begins_with`, one prefix.
  *
- * `COHORT#` and `ENROL#` are adjacent in sort order, so a range across them picks up
- * exactly those two prefixes and nothing else - where two `begins_with` queries would
- * double the fan-out on the slowest screen in the app. `$` is one codepoint above `#`, so
- * the upper bound sits after every `ENROL#...` and before anything else.
- *
- * THE FRAGILITY IS THE POINT OF THIS COMMENT: a sort-key prefix added later that begins
- * with D or E falls inside this range, and would arrive in the listing as an enrolment
- * nobody wrote. The prefixes today are COHORT#, ENROL#, LAST#, PROG#, RATE# and SPEND#.
+ * IT USED TO BE A RANGE ACROSS `COHORT#` AND `ENROL#` - one query for two prefixes, so that
+ * cohorts cost nothing extra on the slowest screen in the app, at the price of a bound
+ * (`ENROL$`) that any later sort-key beginning with D or E would fall inside and arrive in
+ * the listing as an enrolment nobody wrote. That fragility bought a prefix that no longer
+ * exists: enrolment is derived from the cohort now, so there is one prefix to read and a
+ * plain `begins_with` reads it.
  */
-async function belongings(sub) {
+async function memberships(sub) {
   const r = await ddb.send(new QueryCommand({
     TableName: TABLE,
-    KeyConditionExpression: 'pk = :pk AND sk BETWEEN :from AND :to',
-    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':from': 'COHORT#', ':to': 'ENROL$' },
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'COHORT#' },
     ProjectionExpression: 'sk',
   }));
-  const cohorts = [];
-  const courses = [];
-  for (const i of r.Items || []) {
-    if (i.sk.startsWith('COHORT#')) cohorts.push(i.sk.slice('COHORT#'.length));
-    else if (i.sk.startsWith('ENROL#')) courses.push(i.sk.slice('ENROL#'.length));
-  }
-  return { cohorts, courses };
+  return (r.Items || []).map(i => i.sk.slice('COHORT#'.length));
 }
+
+/**
+ * THE ONE DEFINITION OF WHAT SOMEBODY'S COURSES ARE: the union of the courses of every
+ * cohort they are in.
+ *
+ * A union rather than an intersection, and rather than a first-match: somebody in two
+ * intakes is taking both their courses. Order follows the catalogue so two people with the
+ * same courses list them the same way.
+ *
+ * ARCHIVING AN INTAKE DOES NOT TAKE ITS COURSES AWAY. Archiving is the ordinary end of an
+ * intake - it keeps the statistics and clears the pickers - and a class that finished in
+ * June still owns the material it was taught. Revoking on archive would make finishing a
+ * course and losing it the same gesture.
+ */
+const coursesFrom = (cohortIds, byId) => {
+  const seen = new Set();
+  for (const id of cohortIds) for (const c of byId.get(id)?.courses || []) seen.add(c);
+  return [...seen];
+};
 
 /** Every page of a query, because a cohort's roster is not something to cut short. */
 async function queryAll(params) {
@@ -149,7 +168,13 @@ async function listCohorts() {
   });
   return items.map(i => {
     const id = i.sk.slice('COHORT#'.length);
-    return { id, title: i.title || id, created: i.created, archived: !!i.archived };
+    return {
+      id, title: i.title || id, created: i.created, archived: !!i.archived,
+      /* WHAT ITS MEMBERS ARE ON. An intake with none is a class that has been named and not
+       * yet given anything to learn, which is a real and ordinary state - you name a class
+       * before you decide what it is taking - so an empty list is not a broken cohort. */
+      courses: Array.isArray(i.courses) ? i.courses : [],
+    };
   });
 }
 
@@ -163,13 +188,14 @@ const slug = title => String(title).trim().toLowerCase()
   .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 /** Create one, disambiguating a slug that is already taken. `known` is a Map by id. */
-async function createCohort(title, known) {
+async function createCohort(title, known, courses = []) {
   const base = slug(title) || 'cohort';
   let id = base;
   for (let n = 2; known.has(id); n++) id = `${base}-${n}`;
   const item = {
     pk: COHORTS, sk: `COHORT#${id}`, cohort: id,
     title: String(title).trim(), created: new Date().toISOString(), archived: false,
+    courses: courseList(courses),
   };
   try {
     await ddb.send(new PutCommand({
@@ -181,7 +207,8 @@ async function createCohort(title, known) {
   } catch (e) {
     if (e.name !== 'ConditionalCheckFailedException') throw e;
   }
-  return { id, title: item.title, created: item.created, archived: false };
+  return { id, title: item.title, created: item.created, archived: false,
+           courses: item.courses };
 }
 
 /* Names to cohort ids, creating what does not exist yet.
@@ -329,10 +356,12 @@ async function resendInvite(email, name) {
 
 /* Write the rows in `add`, drop those in `remove`. The name is the cache.
  *
- * One writer for both prefixes because they are the same kind of fact - this person belongs
- * to that thing - and the name is echoed onto both for the same reason: `byCourse` answers
- * "who is in X" without a call to the pool, and it can only do that if the name is on the
- * row. PUT rewrites it on a rename, for both. */
+ * STILL WRITTEN AS A PREFIX rather than inlined into `setCohorts`, though `COHORT#` is now
+ * the only one it is called with - `ENROL#` was the other and is gone. The shape is the
+ * thing worth keeping: this is "a person belongs to a thing, and the thing's roster wants
+ * their name on the row", and the next such relationship should be spelled this way rather
+ * than invented again. The name is echoed so `byCourse` answers "who is in X" without a
+ * call to the pool, and PUT rewrites it on a rename. */
 async function setMembership(prefix, key, sub, email, name, add, remove) {
   await Promise.all([
     ...add.map(id => ddb.send(new PutCommand({
@@ -345,8 +374,6 @@ async function setMembership(prefix, key, sub, email, name, add, remove) {
   ]);
 }
 
-const setEnrolments = (sub, email, name, add, remove) =>
-  setMembership('ENROL#', 'course', sub, email, name, add, remove);
 const setCohorts = (sub, email, name, add, remove) =>
   setMembership('COHORT#', 'cohort', sub, email, name, add, remove);
 
@@ -469,22 +496,29 @@ async function getUsers() {
    * courses exist. A user enrolled on a course that has since been withdrawn is still
    * enrolled, and this is what shows it.
    *
-   * Cohorts come back from the SAME query - see `belongings` - so adding them cost no extra
-   * round trip per person. */
-  const on = await mapLimit(users, FANOUT, u => belongings(u.sub));
+   * THE COURSES COST NOTHING AT ALL NOW. They used to be the other half of that one range
+   * read; they are derived from the cohorts this response is already carrying, so the whole
+   * of a person's courses is a lookup in a map of tens of rows rather than anything on the
+   * wire. Which is the shape the change was worth having for. */
+  const on = await mapLimit(users, FANOUT, u => memberships(u.sub));
+  const byId = new Map(cohorts.map(c => [c.id, c]));
   return json(200, {
     users: users.map((u, i) => ({
-      ...u, admin: admins.has(u.sub), courses: on[i].courses, cohorts: on[i].cohorts,
+      ...u, admin: admins.has(u.sub), cohorts: on[i], courses: coursesFrom(on[i], byId),
     })),
     cohorts,
     truncated,
   });
 }
 
-async function postUser({ email, name, courses, cohorts, admin, resend }) {
+/* THERE IS NO `courses` HERE ANY MORE, and its absence is the change rather than an
+ * omission. A person is put into an intake and takes what that intake takes; a course
+ * granted to one person directly would be a second way onto a course, and the second way is
+ * the one nothing keeps in step. Somebody who genuinely needs a course of their own gets a
+ * cohort of their own - a cohort is a group of people, and one person is a group. */
+async function postUser({ email, name, cohorts, admin, resend }) {
   const address = clean(email);
   if (!address) return json(400, { error: 'email is required' });
-  const wanted = courseList(courses);
   const wantedCohorts = courseList(cohorts);
 
   const { sub, invited } = await findOrInvite(address, name);
@@ -493,17 +527,19 @@ async function postUser({ email, name, courses, cohorts, admin, resend }) {
   /* An unknown cohort here is CREATED rather than refused, because naming an intake at the
    * moment you import it is the whole point of the field - and the import previews what it
    * is about to create, which is what makes that safe. */
+  /* Listed unconditionally, because the answer needs it even when the row named no intake:
+   * a person already in one is already on its courses, and a response that could only speak
+   * about what this call changed would report them as being on nothing. */
+  const known = await listCohorts();
   const { ids: cohortIds, made } = wantedCohorts.length
-    ? await resolveCohorts(wantedCohorts, await listCohorts())
+    ? await resolveCohorts(wantedCohorts, known)
     : { ids: [], made: [] };
 
-  // Only ever additive: POST is "put this person on these courses", and the CSV import
-  // runs it once per row. Taking courses away is PUT's job, where the whole desired set
-  // is stated rather than implied by what one row happened to mention.
-  const on = await belongings(sub);
-  const already = new Set(on.courses);
-  const inAlready = new Set(on.cohorts);
-  await setEnrolments(sub, address, label, wanted.filter(c => !already.has(c)), []);
+  // Only ever additive: POST is "put this person in these intakes", and the CSV import runs
+  // it once per row. Taking one away is PUT's job, where the whole desired set is stated
+  // rather than implied by what one row happened to mention.
+  const on = await memberships(sub);
+  const inAlready = new Set(on);
   await setCohorts(sub, address, label, cohortIds.filter(c => !inAlready.has(c)), []);
 
   if (admin) await cognito.send(new AdminAddUserToGroupCommand({
@@ -513,10 +549,19 @@ async function postUser({ email, name, courses, cohorts, admin, resend }) {
   let resent = false;
   if (resend && !invited) { await resendInvite(address, name); resent = true; }
 
-  return json(200, { sub, invited, resent, enrolled: wanted, cohorts: cohortIds, created: made });
+  /* WHAT THEY ENDED UP ON, worked out rather than echoed back. The import lists it per row,
+   * and the interesting case is a row that named no course at all and is now on three
+   * because of the intake it joined - which is the whole feature and would be invisible if
+   * this said only what the caller asked for. */
+  const byId = new Map([...known, ...made].map(c => [c.id, c]));
+  const all = [...new Set([...on, ...cohortIds])];
+  return json(200, {
+    sub, invited, resent, cohorts: all, created: made,
+    enrolled: coursesFrom(all, byId),
+  });
 }
 
-async function putUser({ sub, name, courses, cohorts, admin, enabled }, me) {
+async function putUser({ sub, name, cohorts, admin, enabled }, me) {
   if (!sub) return json(400, { error: 'sub is required' });
 
   /* THE ONE THING AN ADMIN MAY NOT DO IS UNMAKE THEMSELVES.
@@ -545,33 +590,24 @@ async function putUser({ sub, name, courses, cohorts, admin, enabled }, me) {
     ? new AdminAddUserToGroupCommand({ UserPoolId: POOL, Username: username, GroupName: GROUP })
     : new AdminRemoveUserFromGroupCommand({ UserPoolId: POOL, Username: username, GroupName: GROUP }));
 
-  const on = await belongings(sub);
-  if (courses !== undefined) {
-    // The whole desired set, so a course left off it is a course taken away. The diff is
-    // against what the table actually holds, not against what the screen was showing when
-    // it was drawn.
-    const wanted = new Set(courseList(courses));
-    await setEnrolments(sub, email, next,
-      [...wanted].filter(c => !on.courses.includes(c)),
-      on.courses.filter(c => !wanted.has(c)));
-  } else if (next !== current) {
-    // A rename has to reach the cached copy on every enrolment row, or the byCourse index
-    // keeps answering with the old name.
-    await setEnrolments(sub, email, next, on.courses, []);
-  }
+  const on = await memberships(sub);
 
   let made = [];
   if (cohorts !== undefined) {
-    // Whole set here too, and for the same reason - this is the screen where taking
-    // somebody out of a class is stated rather than implied.
+    /* The whole desired set, so an intake left off it is an intake somebody was taken out
+     * of - stated rather than implied. Which now also means taken off its courses, and that
+     * is the sharpest edge of this change: what used to remove a grouping now removes
+     * access to the material. The screen says so. */
     const resolved = await resolveCohorts(courseList(cohorts), await listCohorts());
     made = resolved.made;
     const wanted = new Set(resolved.ids);
     await setCohorts(sub, email, next,
-      [...wanted].filter(c => !on.cohorts.includes(c)),
-      on.cohorts.filter(c => !wanted.has(c)));
+      [...wanted].filter(c => !on.includes(c)),
+      on.filter(c => !wanted.has(c)));
   } else if (next !== current) {
-    await setCohorts(sub, email, next, on.cohorts, []);
+    // A rename has to reach the cached copy on every membership row, or the byCourse index
+    // keeps answering with the old name.
+    await setCohorts(sub, email, next, on, []);
   }
 
   return json(200, { ok: true, sub, created: made });
@@ -625,11 +661,12 @@ const courseOf = sk => sk.slice('PROG#'.length).split('#')[0];
 const CODE_BUDGET = 400_000;
 
 async function getPerson(sub, course) {
-  const [who, { progress, places }, on] = await Promise.all([
+  const [who, { progress, places }, on, cohorts] = await Promise.all([
     lookup(sub).catch(() => null),
     history(sub),
     // Only the summary needs it, but it is one query on a screen asked for by hand.
-    belongings(sub),
+    memberships(sub),
+    listCohorts(),
   ]);
   if (!who) return json(404, { error: 'no such user' });
 
@@ -657,8 +694,8 @@ async function getPerson(sub, course) {
        * above - and the one a watched session has to draw its grid from. Seeing an admin's
        * whole catalogue while claiming to show a student's view would make the feature a
        * lie about the one thing it exists to show. */
-      enrolled: on.courses,
-      cohorts: on.cohorts,
+      enrolled: coursesFrom(on, new Map(cohorts.map(c => [c.id, c]))),
+      cohorts: on,
     });
   }
 
@@ -694,10 +731,17 @@ async function getPerson(sub, course) {
  * How a class is doing, which is the one question this area could not ask before and the
  * only one a tutor cannot get by asking a student.
  *
- * THIS IS `byCourse`'s FIRST READER, and it uses two of its partitions at once. The index
- * inverts the key, so `ENROL#<course>` is the roster in ONE query - with the name and email
- * cached on each row, which is what that cache was for - and `LAST#<course>` is every
- * student's bookmark AND their last-active time, also one query and no fan-out at all.
+ * THIS IS `byCourse`'s FIRST READER, and it uses several of its partitions at once. The
+ * index inverts the key, so `COHORT#<id>` is an intake's roster in ONE query - with the name
+ * and email cached on each row, which is what that cache was for - and `LAST#<course>` is
+ * every student's bookmark AND their last-active time, also one query and no fan-out.
+ *
+ * THE ROSTER IS NOW A QUERY PER INTAKE ON THIS COURSE rather than one for the course, which
+ * is the read this change cost. `ENROL#<course>` was a single partition holding exactly the
+ * people on it; the same question is now "which intakes take this course, and who is in
+ * them". A handful of queries instead of one, against a catalogue of tens of cohorts, and
+ * they run together. Somebody in two intakes that both take it appears once: the union is
+ * taken on the sub.
  *
  * What the index cannot answer is how much each of them has done: that is a count over each
  * student's own `PROG#<course>#` prefix. So it fans out per STUDENT, exactly as the user
@@ -719,8 +763,9 @@ const byCourse = (sk, projection) => queryAll({
 const subOf = pk => pk.slice('USER#'.length);
 
 async function getCourse(course) {
-  const [roster, places, hints] = await Promise.all([
-    byCourse(`ENROL#${course}`),
+  const intakes = (await listCohorts()).filter(c => c.courses.includes(course));
+  const [rosters, places, hints] = await Promise.all([
+    Promise.all(intakes.map(c => byCourse(`COHORT#${c.id}`))),
     byCourse(`LAST#${course}`, {
       ProjectionExpression: 'pk, exercise, #a',
       ExpressionAttributeNames: { '#a': 'at' },
@@ -735,6 +780,14 @@ async function getCourse(course) {
       ExpressionAttributeValues: { ':pk': `HINTS#${course}` },
     }),
   ]);
+
+  /* ONE ROW PER PERSON. Somebody in two intakes that both take this course is one student
+   * who would otherwise be counted, queried and drawn twice. Which intakes they are in is
+   * not added here: the screen already has that from the user listing, and a second source
+   * for it is a second thing to keep in step. */
+  const seen = new Map();
+  for (const rows of rosters) for (const r of rows) if (!seen.has(r.pk)) seen.set(r.pk, r);
+  const roster = [...seen.values()];
 
   const place = Object.fromEntries(places.map(p => [subOf(p.pk), { exercise: p.exercise, at: p.at }]));
 
@@ -791,19 +844,21 @@ async function getCourse(course) {
  *
  * Three verbs and no listing: the catalogue rides back with the users, above. */
 
-async function postCohort({ title }) {
+async function postCohort({ title, courses }) {
   const wanted = String(title || '').trim();
   if (!wanted) return json(400, { error: 'a cohort needs a name' });
   const known = await listCohorts();
   const hit = known.find(c => c.title.trim().toLowerCase() === wanted.toLowerCase());
-  // Naming one that exists is not an error - it is somebody arriving at the same intake
-  // from the other screen. Hand back the one that is already there.
+  /* Naming one that exists is not an error - it is somebody arriving at the same intake
+   * from the other screen. Hand back the one that is already there, and DO NOT quietly
+   * apply the courses to it: this call did not know it was editing, and adding a course to
+   * an existing intake puts material in front of everybody already in it. */
   if (hit) return json(200, { cohort: hit, created: false });
-  const made = await createCohort(wanted, new Map(known.map(c => [c.id, c])));
+  const made = await createCohort(wanted, new Map(known.map(c => [c.id, c])), courses);
   return json(200, { cohort: made, created: true });
 }
 
-async function putCohort({ id, title, archived }) {
+async function putCohort({ id, title, courses, archived }) {
   if (!id) return json(400, { error: 'id is required' });
   const sets = [];
   const names = {};
@@ -812,6 +867,19 @@ async function putCohort({ id, title, archived }) {
     const wanted = String(title).trim();
     if (!wanted) return json(400, { error: 'a cohort needs a name' });
     sets.push('#title = :title'); names['#title'] = 'title'; values[':title'] = wanted;
+  }
+  /* WHAT THE INTAKE TAKES, and this is the write that puts a course in front of people or
+   * takes it away from them. The whole desired set, like every other list in this file: a
+   * course left off it is a course withdrawn from everyone in the class.
+   *
+   * It is not checked against a catalogue, because there is none to check against here -
+   * courses live in the content bucket, assembled from every card.json in it, and this
+   * function has never known which exist. The screen picks from the real list; a course id
+   * typed into a CSV is checked by the importer against the catalogue the CLIENT holds. */
+  if (courses !== undefined) {
+    sets.push('#courses = :courses');
+    names['#courses'] = 'courses';
+    values[':courses'] = courseList(courses);
   }
   /* ARCHIVED, NOT DELETED, is how an intake finishes. A training company accumulates
    * them, and a picker holding forty dead classes is a picker nobody reads - but the
@@ -841,9 +909,16 @@ async function putCohort({ id, title, archived }) {
   return json(200, { ok: true, id });
 }
 
-/* Deleting a cohort deletes the GROUPING AND NONE OF THE PEOPLE - no account, no
- * enrolment, no progress. Worth saying twice, because "delete" beside a list of students
- * reads as deleting students, and this is the one destructive verb here that is not. */
+/* Deleting a cohort deletes NO ACCOUNT AND NO PROGRESS. Worth saying, because "delete"
+ * beside a list of students reads as deleting students, and it never has been that.
+ *
+ * IT DOES NOW TAKE THE COURSES AWAY, and that is new. While enrolment was its own row this
+ * removed a grouping and nothing else; a course reaches a person through their intake now,
+ * so deleting the intake is deleting their way to the material. Their progress rows survive
+ * it and reappear the moment they are put in an intake that takes it again - but the grid
+ * goes empty in between, and the screen has to say so before the button is pressed.
+ * Archiving is the gesture for an intake that has finished; this one is for one created by
+ * mistake. */
 async function deleteCohort(id) {
   if (!id) return json(400, { error: 'id is required' });
   const members = await cohortMembers(id);

@@ -33,50 +33,56 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
 
 /* Seeded so the user table has something in it - an empty table tells you nothing about how
  * a full one looks, and every state the screen draws differently needs an example: invited,
- * active, suspended, admin, and somebody on no course at all. In memory only: it resets on
- * reload, deliberately.
+ * active, suspended, admin, and somebody in no cohort at all - which is now the same thing
+ * as somebody on no course. In memory only: it resets on reload, deliberately.
+ *
+ * NOBODY CARRIES A `courses` ARRAY. It is derived from their cohorts by `coursesOf`, the way
+ * the real listing derives it - a stub that stored what the real thing computes would go on
+ * working after somebody broke the computation.
  *
  * `ada@example.com` is the signed-in preview user - see PREVIEW_TOKEN in auth.js - so the
  * self-editing rules have somebody to apply to. */
 let nextSub = 100;
 const people = [
   { sub: 'preview-1', email: 'ada@example.com', name: 'Ada Lovelace',
-    status: 'CONFIRMED', enabled: true, admin: true, courses: [], cohorts: [] },
+    status: 'CONFIRMED', enabled: true, admin: true, cohorts: [] },
   { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening'] },
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: ['sept-2026-evening'] },
   { sub: 'preview-3', email: 'katherine@example.com', name: 'Katherine Johnson',
-    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['sept-2026-evening', 'data-team'] },
+    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['sept-2026-evening', 'data-team'] },
   { sub: 'preview-4', email: 'margaret@example.com', name: 'Margaret Hamilton',
-    status: 'CONFIRMED', enabled: false, admin: false, courses: [], cohorts: ['jan-2026', 'data-team'] },
+    status: 'CONFIRMED', enabled: false, admin: false, cohorts: ['jan-2026', 'data-team'] },
   { sub: 'preview-5', email: 'joan@example.com', name: '',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, courses: [], cohorts: [] },
-  /* On every course there is, and alone in her cohort - which is what makes the course
-   * PICKER reachable. It only appears when a cohort's members share more than one course,
-   * so it needs a run with more than one content directory:
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: [] },
+  /* Alone in the cohort that takes every course there is - which is what makes the course
+   * PICKER reachable. It only appears when a cohort takes more than one, so it needs a run
+   * with more than one content directory:
    *   icecore dev ../a/content ../b/content --as admin
    * With one course the picker is correctly skipped, which is a different thing worth
    * seeing and not a substitute for seeing this. */
   { sub: 'preview-6', email: 'dorothy@example.com', name: 'Dorothy Vaughan',
-    status: 'CONFIRMED', enabled: true, admin: false, courses: [], cohorts: ['oct-2026-morning'] },
+    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['oct-2026-morning'] },
 ];
 /* ONE OF EACH STATE THE COHORT SCREEN DRAWS DIFFERENTLY, which since the Live button means
  * one per reason that button can be off - four of them, none guessable from the row:
  *
- *   sept-2026-evening  people who share no course     "not all on the same course"
+ *   sept-2026-evening  takes no course                "not taking any course yet"
  *   jan-2026           archived                       "restore it before delivering"
  *   data-team          somebody else is delivering    the refusal, naming them
  *   new-intake         nobody in it                   "there is nobody to deliver to"
- *   oct-2026-morning   ready, and on several courses  the course picker
+ *   oct-2026-morning   ready, and takes several       the course picker
  *
  * An empty cohort has to exist here for the reason it has to exist at all: you name a class
  * before you import it, and that is exactly the case a list derived from membership could
- * not represent. */
+ * not represent. A cohort taking NO COURSE is the same argument one level along - it is the
+ * ordinary state of a class between being named and being set up, it is what an import
+ * creates, and it is the one state where everybody in it signs in to an empty grid. */
 const classes = [
-  { id: 'sept-2026-evening', title: 'Sept 2026 evening', created: '2026-09-01T09:00:00Z', archived: false },
-  { id: 'oct-2026-morning', title: 'Oct 2026 morning', created: '2026-10-01T09:00:00Z', archived: false },
-  { id: 'jan-2026', title: 'Jan 2026', created: '2026-01-08T09:00:00Z', archived: true },
-  { id: 'data-team', title: 'Data team', created: '2026-08-20T09:00:00Z', archived: false },
-  { id: 'new-intake', title: 'New intake', created: '2026-09-02T09:00:00Z', archived: false },
+  { id: 'sept-2026-evening', title: 'Sept 2026 evening', created: '2026-09-01T09:00:00Z', archived: false, courses: [] },
+  { id: 'oct-2026-morning', title: 'Oct 2026 morning', created: '2026-10-01T09:00:00Z', archived: false, courses: [] },
+  { id: 'jan-2026', title: 'Jan 2026', created: '2026-01-08T09:00:00Z', archived: true, courses: [] },
+  { id: 'data-team', title: 'Data team', created: '2026-08-20T09:00:00Z', archived: false, courses: [] },
+  { id: 'new-intake', title: 'New intake', created: '2026-09-02T09:00:00Z', archived: false, courses: [] },
 ];
 
 /* Live delivery, standing in for the session rows and the socket.
@@ -121,25 +127,43 @@ function resolveCohorts(names) {
     const hit = classes.find(c =>
       c.id === name || c.title.trim().toLowerCase() === name.toLowerCase());
     if (hit) { if (!ids.includes(hit.id)) ids.push(hit.id); continue; }
-    const made = { id: slug(name) || 'cohort', title: name, created: new Date().toISOString(), archived: false };
+    /* A cohort invented here takes NOTHING, exactly as one invented by the real API does -
+     * which is what makes the import's "these people will be on nothing yet" warning
+     * reachable without a stack behind it. */
+    const made = { id: slug(name) || 'cohort', title: name, created: new Date().toISOString(),
+                   archived: false, courses: [] };
     classes.push(made);
     if (!ids.includes(made.id)) ids.push(made.id);
   }
   return ids;
 }
-/* The seeded enrolments cannot be written above: they are course ids, and which courses
- * exist depends on what `icecore dev` was pointed at. Done once, on the first listing. */
+/* THE COURSES GO ON THE COHORTS, and they cannot be written above: they are course ids, and
+ * which courses exist depends on what `icecore dev` was pointed at. Done once, on the first
+ * listing.
+ *
+ * `sept-2026-evening` is deliberately left empty. It used to be the cohort whose members
+ * shared no course, which was the intersection's way of disabling the Live button; the same
+ * refusal is now "this intake takes no course", and this is the row that reaches it. */
 let seeded = false;
 async function seed() {
   if (seeded) return people;
   seeded = true;
   const ids = (await loadManifest()).map(c => c.id);
-  people[0].courses = ids.slice(0, 2);
-  people[2].courses = ids.slice(0, 1);
-  people[3].courses = ids.slice(0, 1);
-  people[5].courses = ids;
+  byId('oct-2026-morning').courses = ids;
+  byId('data-team').courses = ids.slice(0, 1);
+  byId('jan-2026').courses = ids.slice(0, 1);
   return people;
 }
+const byId = id => classes.find(c => c.id === id);
+
+/**
+ * A person's courses, derived exactly as the API derives them.
+ *
+ * THE STUB HAS TO DERIVE IT TOO, rather than keeping a `courses` array beside the cohorts.
+ * A stub that stored what the real thing computes is a stub that would go on working after
+ * somebody broke the computation - which is the one failure a local run exists to catch.
+ */
+const coursesOf = who => [...new Set((who.cohorts || []).flatMap(c => byId(c)?.courses || []))];
 const find = sub => people.find(p => p.sub === sub);
 
 /**
@@ -392,7 +416,8 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       const title = String(body.title || '').trim();
       const hit = classes.find(c => c.title.trim().toLowerCase() === title.toLowerCase());
       if (hit) return { cohort: hit, created: false };
-      const made = { id: slug(title) || 'cohort', title, created: new Date().toISOString(), archived: false };
+      const made = { id: slug(title) || 'cohort', title, created: new Date().toISOString(),
+                     archived: false, courses: [...(body.courses || [])] };
       classes.push(made);
       return { cohort: made, created: true };
     }
@@ -400,6 +425,8 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       const c = classes.find(x => x.id === body.id);
       if (!c) throw new Error('no such cohort');
       if (body.title !== undefined) c.title = String(body.title).trim();
+      // The whole desired set, as the real one is: unticking is withdrawing.
+      if (body.courses !== undefined) c.courses = [...body.courses];
       if (body.archived !== undefined) c.archived = !!body.archived;
       return { ok: true, id: c.id };
     }
@@ -408,7 +435,9 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       const i = classes.findIndex(c => c.id === id);
       if (i === -1) throw new Error('no such cohort');
       classes.splice(i, 1);
-      // The grouping and none of the people, exactly as the real handler does it.
+      /* The membership rows and none of the people, exactly as the real handler does it -
+       * which now also takes the cohort's courses away from every one of them, because
+       * there is no other row saying they were on it. */
       let removed = 0;
       for (const p of people) {
         const was = p.cohorts.length;
@@ -520,13 +549,14 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       const who = find(q.get('sub'));
       if (!who) throw new Error('no such user');
       const ids = (await loadManifest()).map(c => c.id);
-      const mine = who.courses.length ? who.courses : ids.slice(0, 1);
+      const on = coursesOf(who);
+      const mine = on.length ? on : ids.slice(0, 1);
       const course = q.get('course');
       if (!course) {
         return {
           sub: who.sub, email: who.email, name: who.name,
           // What they are enrolled on, which is what a watched session draws its grid from.
-          enrolled: [...who.courses], cohorts: [...who.cohorts],
+          enrolled: on, cohorts: [...who.cohorts],
           courses: mine.map((id, i) => ({
             course: id, solved: 12 - i * 7, xp: 240 - i * 140,
             first: '2026-08-04T09:12:00Z', last: i ? '2026-08-19T16:02:00Z' : '2026-09-01T11:40:00Z',
@@ -559,7 +589,7 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
      * half-done, finished and not-started, because those are four different rows. */
     if (method === 'GET' && q.get('course')) {
       const course = q.get('course');
-      const on = users.filter(u => u.courses.includes(course));
+      const on = users.filter(u => coursesOf(u).includes(course));
       /* THE REAL EXERCISE IDS, read out of the course being previewed.
        *
        * Invented ones do not work here and the failure is silent: an id is a DataCamp
@@ -591,7 +621,12 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       return { course, students, hints };
     }
     if (method === 'GET')
-      return { users: users.map(u => ({ ...u })), cohorts: classes.map(c => ({ ...c })), truncated: false };
+      return {
+        // `courses` derived on the way out, exactly as the real listing derives it.
+        users: users.map(u => ({ ...u, courses: coursesOf(u) })),
+        cohorts: classes.map(c => ({ ...c })),
+        truncated: false,
+      };
 
     if (method === 'POST') {
       const email = String(body.email || '').trim().toLowerCase();
@@ -599,20 +634,21 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       if (known) {
         if (body.resend && known.status !== 'FORCE_CHANGE_PASSWORD')
           throw new Error('That person has already chosen a password - there is nothing to reissue.');
-        // Additive, exactly as the real POST is: a course left out is not a course removed.
-        known.courses = [...new Set([...known.courses, ...(body.courses || [])])];
+        // Additive, exactly as the real POST is: a cohort left out is not one removed.
         known.cohorts = [...new Set([...known.cohorts, ...resolveCohorts(body.cohorts)])];
         if (body.admin) known.admin = true;
-        return { sub: known.sub, invited: false, resent: !!body.resend };
+        return { sub: known.sub, invited: false, resent: !!body.resend,
+                 cohorts: [...known.cohorts], enrolled: coursesOf(known) };
       }
       const made = {
         sub: `preview-${nextSub++}`, email, name: body.name || '',
         status: 'FORCE_CHANGE_PASSWORD', enabled: true,
-        admin: !!body.admin, courses: [...(body.courses || [])],
+        admin: !!body.admin,
         cohorts: resolveCohorts(body.cohorts),
       };
       users.push(made);
-      return { sub: made.sub, invited: true, resent: false };
+      return { sub: made.sub, invited: true, resent: false,
+               cohorts: [...made.cohorts], enrolled: coursesOf(made) };
     }
 
     if (method === 'PUT') {
@@ -625,7 +661,6 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
       if (who.email === 'ada@example.com' && body.enabled === false)
         throw new Error('you cannot disable your own account');
       if (body.name !== undefined) who.name = body.name;
-      if (body.courses !== undefined) who.courses = [...body.courses];
       if (body.cohorts !== undefined) who.cohorts = resolveCohorts(body.cohorts);
       if (body.admin !== undefined) who.admin = body.admin;
       if (body.enabled !== undefined) who.enabled = body.enabled;
