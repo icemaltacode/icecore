@@ -711,6 +711,54 @@ courtesy, it is the same route.
   because the one notice that existed could not co-occur with a band. A control tab can show
   both.
 
+## Sharing the editor with the whole class
+
+**Built.** Remote control's other half, and the one that scales past helping one person: a
+switch beside End session that puts the educator's editor on every following screen, caret
+and all. The class watches a solution being *written* rather than being shown one.
+
+It is deliberately **not** `drive` fanned out to the room, though everything it needed
+already existed on that path. A drive is addressed to one browser and carries a position;
+this carries an editor and nothing else, because *where* the class is looking is already
+answered — they follow the educator's reported position, and a second authority for it would
+be two things moving the same screen. One fact each.
+
+- **A flag on the session row, not a mode of the sender.** A student who joins ten minutes
+  into a demonstration has to arrive already knowing, and a fact held only in the educator's
+  browser cannot tell them. So the roster carries it, and throwing the switch is a write.
+- **The write is conditional on being the *deliverer*, not on being a tutor.** A second admin
+  in the room may take control of one student — that is a claim on one browser, refused if
+  somebody else holds it — but freezing every editor in the room is the lesson itself, and
+  the lesson has one owner. The push is gated on the same row, so the switch cannot be
+  bypassed by sending a buffer with it off.
+- **Every push names the exercise it belongs to**, and the other side applies it nowhere
+  else. A class does not move as one — somebody is a step behind, somebody read ahead — and
+  dropping the educator's query into whatever exercise a student happens to have open is the
+  difference between a demonstration and vandalism.
+- **The student's editor is read-only while it lasts, and moving is the way out.** Two people
+  typing into one buffer is not a thing this can do, so it is `frozen` exactly as a driven
+  screen is. There is no second gesture to learn: a student who moves stops following, which
+  stops the sync, which unfreezes the editor — the rule they already have. The band says so
+  in the sentence it already had.
+- **What they had written comes back.** The band promises it and it would otherwise be false:
+  a student mid-attempt would watch their query be replaced and then be left with the
+  educator's. One stash for the exercise on screen, taken on the first push into it — the
+  exercise component is keyed by row, so a synced buffer cannot outlive the row it arrived
+  on. The cost is honest and stated in the code: a student who walks *out* of a demonstration
+  mid-way leaves their own attempt behind with it, because the restore is a prop change a
+  mounted editor reacts to and there is nothing left to react.
+- **Control outranks it**, exactly as the bands do. A student whose screen is being driven has
+  one person in their editor and must not have two, and a control tab never pushes — its
+  editor holds one student's work rather than the educator's, and putting that on thirty
+  screens would be somebody's half-finished attempt with their name nowhere near it.
+- **A closed laptop must not leave a room full of frozen editors.** `$disconnect` clears the
+  flag when the deliverer's last socket goes, counted per person and conditional on the flag
+  still being theirs — `orphaned` for one student, this for the whole class. Without it the
+  flag stands until the session's `ttl` a day later, with nobody left to switch it off.
+- **The switch reads the flag back rather than setting it optimistically**, which is what
+  the four control sends already do: a toggle that says on when the write was refused is
+  worse than one that lags.
+
 ## Ending a session
 
 Ending writes the bookmark — the step *after* the one the session finished on, per cohort

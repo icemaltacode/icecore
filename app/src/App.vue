@@ -16,6 +16,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          catchUp, wandered, marksAt, previewRows,
          control, driven, drive, takeControl, setSharing, releaseControl,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
+         sync, setSync, pushEditor,
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
 import WatchBanner from './components/WatchBanner.vue';
 import LiveBand from './components/LiveBand.vue';
@@ -718,6 +719,64 @@ function startControl(sharing) {
 const myCode = ref('');
 /** And where its caret is, so the other end can see somebody in the room. */
 const myCursor = ref(null);
+/* WHICH EXERCISE `myCode` BELONGS TO, and it is load-bearing rather than bookkeeping. The
+ * emit that fills it is debounced, and an exercise whose starter code is empty never emits
+ * at all - so on a fresh row this ref still holds the PREVIOUS one's text for a moment or
+ * for good. Everything that stashes it has to know that, or it stashes the wrong exercise's
+ * work and hands it back as this one's. */
+const myAt = ref(null);
+
+/**
+ * THE EDUCATOR IS WRITING IN THIS EDITOR.
+ *
+ * True for a student who is still following, and for nobody else. Everything it is gated on
+ * is a rule that already exists rather than a new one:
+ *
+ *  - `mine` - the educator is the source, not an audience.
+ *  - `controlSub` - a control tab's editor holds the student it is helping, not a lesson.
+ *  - `beingDriven` - control outranks it, exactly as the bands do. A student whose screen is
+ *    being driven has one person in their editor and must not have two.
+ *  - `following` - and this is the whole way out. A student who moves stops following, which
+ *    stops the sync, which unfreezes the editor. There is no second gesture to learn and no
+ *    button that has to be found; the band says so in the sentence it already had.
+ */
+const synced = computed(() => !!(delivery.cohort && !delivery.mine && !controlSub.value
+  && sync.on && delivery.following && !beingDriven()));
+/** And whether the push in hand is for the exercise on screen - see `sync.at`. */
+const syncedHere = computed(() =>
+  synced.value && sync.code != null && progressId(sync.at) === progressId(currentId.value));
+
+/**
+ * WHAT THIS STUDENT HAD BEFORE THE DEMONSTRATION LANDED ON IT, so it can be given back.
+ *
+ * The band promises it, and without this the promise would be false: a student mid-attempt
+ * when the educator starts writing would watch their query be replaced and then be left with
+ * the educator's when it stopped. Being shown the answer is not the same as losing your own.
+ *
+ * ONLY THE EXERCISE ON SCREEN NEEDS ONE. The exercise component is keyed by row, so moving
+ * away and back remounts it and it reloads its own starter or saved code - a synced buffer
+ * cannot outlive the row it arrived on. That is why this is one stash rather than a map, and
+ * why moving clears it.
+ */
+const beforeSync = ref(null);
+watch(() => sync.when, () => {
+  if (!synced.value || progressId(sync.at) !== progressId(currentId.value)) return;
+  // The FIRST push into this exercise, and only it: every one after it would stash the
+  // educator's own text back over the student's.
+  if (beforeSync.value) return;
+  // And never from a buffer belonging to another row - see `myAt`. Nothing is stashed and
+  // nothing is restored, which is the honest failure next to handing back the wrong work.
+  if (progressId(myAt.value) !== progressId(currentId.value)) return;
+  beforeSync.value = { at: currentId.value, code: myCode.value };
+});
+/* Moving retires it. The restore is a PROP CHANGE the mounted editor reacts to, so a stash
+ * kept for a row that is no longer on screen could never be handed back anyway - the
+ * component remounts on return and its watcher does not fire for the value a prop already
+ * had. What that costs is real and worth saying: a student who walks out of a demonstration
+ * mid-way leaves their own attempt behind with it. The case the promise is actually about -
+ * the educator finishing and switching off while the class is still there - is the one that
+ * restores. */
+watch(currentId, () => { beforeSync.value = null; });
 
 /* Driving: every change goes with the position, because they change together - moving to an
  * exercise is also arriving at its starter code, and two messages would show one exercise's
@@ -730,9 +789,23 @@ const myCursor = ref(null);
 function editorChanged({ code, cursor }) {
   myCode.value = code;
   myCursor.value = cursor ?? null;
-  if (!controlSub.value || !drivingSomebody()) return;
-  drive({ at: current.value?.id ?? null, title: current.value?.title,
-          slide: mySlide.value, code, cursor: myCursor.value });
+  myAt.value = current.value?.id ?? null;
+  /* A CONTROL TAB DRIVES AND NEVER SYNCS. Its editor holds one student's work rather than
+   * the educator's, and pushing that to the room would put somebody's half-finished attempt
+   * on thirty screens - with their name nowhere near it. */
+  if (controlSub.value) {
+    if (drivingSomebody()) {
+      drive({ at: current.value?.id ?? null, title: current.value?.title,
+              slide: mySlide.value, code, cursor: myCursor.value });
+    }
+    return;
+  }
+  /* The room, when the switch is on. Every keystroke, already debounced inside the exercise
+   * component - the same beat the drive above travels on, because it is the same thing being
+   * watched from further away. */
+  if (delivery.mine && sync.on) {
+    pushEditor(current.value?.id ?? null, code, myCursor.value);
+  }
 }
 
 /* Being driven: send what we have, ONCE, the moment control begins. This is the half that
@@ -749,6 +822,13 @@ watch(() => control.sub, sub => {
  * half-finished query into the wrong exercise is worse than not showing it. */
 const shownCode = computed(() => {
   if (beingDriven()) return driven.code ?? undefined;
+  // The demonstration, while it lasts and only where it belongs.
+  if (synced.value) return syncedHere.value ? sync.code : undefined;
+  /* And what was here before it. Reached the moment the switch goes off or the student
+   * moves, which are the two ways a sync ends - and guarded on the row, so nothing is handed
+   * back into an exercise it was never written in. */
+  if (beforeSync.value && progressId(beforeSync.value.at) === progressId(currentId.value))
+    return beforeSync.value.code;
   if (controlSub.value && borrowed.code != null
       && progressId(borrowed.at) === progressId(currentId.value)) return borrowed.code;
   return undefined;
@@ -1033,7 +1113,9 @@ watch(currentId, id => {
               :can-catch-up="!!followedPosition()"
               :leader-at="followedPosition()?.title"
               :shared-name="control.sharing ? control.name : ''"
-              @end="endLiveHere" @leave="leaving = true" @catch-up="catchUpHere" />
+              :syncing="sync.on"
+              @end="endLiveHere" @leave="leaving = true" @catch-up="catchUpHere"
+              @sync="setSync" />
 
     <LiveLeave v-if="leaving" :name="delivery.name"
                :cohort-title="delivery.title"
@@ -1208,6 +1290,9 @@ watch(currentId, id => {
           @slide="n => { mySlide = n;
                          if (controlSub) { if (drivingSomebody()) drive({ at: current?.id ?? null, title: current?.title, slide: n }); }
                          else if (delivery.cohort) reportPosition(); }" />
+        <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there are two
+             ways to end up with two: somebody driving this screen, and the educator writing
+             in every screen at once. Hence `frozen` in both cases, and a band for each. -->
         <component
           v-else-if="current"
           :is="componentFor[current.type] || CodingExercise"
@@ -1217,11 +1302,11 @@ watch(currentId, id => {
           :done="isSolved(current.id)"
           :saved="savedCode[current.id]"
           :class-answers="classAnswers"
-          :frozen="beingDriven()"
+          :frozen="beingDriven() || synced"
           :driven-code="shownCode"
           @solved="markSolved"
-          :peer-at="beingDriven() ? driven.cursor : null"
-          :peer-name="control.byName"
+          :peer-at="beingDriven() ? driven.cursor : (syncedHere ? sync.cursor : null)"
+          :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
           @editor="editorChanged" />
 

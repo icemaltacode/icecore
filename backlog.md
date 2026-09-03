@@ -40,8 +40,15 @@ in a month.
   only way to end a lesson was from the screen that knew where it was, useless the moment it
   is ended from anywhere else. The educator's own moves now keep it up to date.
 
-- [ ] **Sync exercise view with students**. In the live screen, by default, code written by the 
+- [x] **Sync exercise view with students**. In the live screen, by default, code written by the 
   Educator is not pushed to the students. Deliberately, because the students should be writing 
   their own code. But sometimes the Educator wants to show a solution, and the students should
   see it. So, we need a control in the top-bar (where there's End session), to allow the 
-  teacher to turn on "Sync with students" mode, which will push the Educator's code to the students' screens (showing the same caret as when remote controlling). 
+  teacher to turn on "Sync with students" mode, which will push the Educator's code to the students' screens (showing the same caret as when remote controlling).
+  Done, as **Share editor** beside End session. See [LIVE.md](LIVE.md). Two things it turned
+  out to need beyond the buffer: every push names the exercise it belongs to, because a class
+  is never all on the same row and dropping the educator's query into whatever somebody has
+  open is vandalism rather than a demonstration; and what the student had written is stashed
+  and handed back when it stops, or being shown the answer would cost them their own attempt.
+  The student's editor is read-only while it lasts, and moving - which already ends following
+  - is the way out.

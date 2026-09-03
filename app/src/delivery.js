@@ -80,6 +80,27 @@ export const driven = reactive({ position: null, code: null, cursor: null, at: n
  */
 export const borrowed = reactive({ at: null, code: null, when: null });
 
+/**
+ * THE EDUCATOR'S EDITOR, ON THE WHOLE CLASS'S SCREENS.
+ *
+ * Remote control's other half: that one is a claim on one browser, addressed to one person,
+ * and this is a demonstration - the educator writes and everybody following watches it being
+ * written, caret and all. Sometimes the thing to teach is the answer.
+ *
+ * `on` IS A FACT ABOUT THE SESSION and the rest is the latest push. They arrive separately
+ * because they change at different rates and mean different things: the switch is thrown
+ * twice in an hour and rides the roster so a latecomer knows; the buffer arrives on every
+ * keystroke and is a moment, gone if it was missed.
+ *
+ * `at` NAMES THE EXERCISE THE CODE BELONGS TO. A class does not move as one, so the other
+ * side applies a push only where it belongs - dropping the educator's query into whatever a
+ * student happens to have open is the difference between a demonstration and vandalism.
+ *
+ * `when` changes on every push so a watcher fires on the MESSAGE rather than the text, for
+ * `driven.at`'s reason: typing a character back to what it was is still somebody typing.
+ */
+export const sync = reactive({ on: false, at: null, code: null, cursor: null, when: null });
+
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
 export const live = reactive({ running: {}, loading: false });
 
@@ -151,6 +172,7 @@ export function forget() {
   setControl(null);
   driven.position = null; driven.code = null; driven.cursor = null; driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
+  sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.when = null;
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -287,6 +309,9 @@ const HANDLERS = {
      * must not be the same thing here - clearing on absence would drop a live control every
      * time a client reconnected. */
     if ('control' in m) setControl(m.control);
+    // Same rule for the same reason: absent from an older deployment, false from a room
+    // where nothing is being shown, and the two must not be one thing here.
+    if ('sync' in m) sync.on = !!m.sync;
   },
   joined(m) { add(m.who); },
   /* MERGED, never replaced. A roster answers "what is everybody doing now" and carries one
@@ -303,6 +328,18 @@ const HANDLERS = {
     if (p) { p.position = m.position; p.seen = m.at; }
   },
   controlling(m) { setControl(m.control); },
+  /* The switch. Cleared of its buffer on the way down so that turning it on again cannot
+   * momentarily show the last thing the educator wrote half an hour ago. */
+  syncing(m) {
+    sync.on = !!m.on;
+    if (!m.on) { sync.at = null; sync.code = null; sync.cursor = null; }
+  },
+  synced(m) {
+    sync.at = m.at ?? null;
+    sync.code = typeof m.code === 'string' ? m.code : null;
+    sync.cursor = m.cursor ?? null;
+    sync.when = m.when || new Date().toISOString();
+  },
   driven(m) {
     driven.position = m.position;
     /* Undefined means "not sent", which is not the same as an empty editor - see `drive`. */
@@ -410,6 +447,26 @@ export function setSharing(on) {
 export function releaseControl() {
   if (!send('release')) echo(null);
 }
+
+/**
+ * Show the class what you are writing, or stop.
+ *
+ * NOTHING IS SET HERE. The switch is a field on the session row and what comes back is the
+ * `syncing` broadcast, so a toggle that was refused - a second admin in the room, a session
+ * that has just ended - reads as off rather than lying about a room it never reached. Same
+ * rule the four control sends follow, and the echo is the same preview door.
+ */
+export function setSync(on) {
+  if (send('sync', { on: !!on })) return;
+  if (previewRole()) emitLocal({ type: 'syncing', on: !!on });
+}
+
+/** What the educator has in their editor, on its way to everybody following. */
+export const pushEditor = (at, code, cursor) => send('push', {
+  at: at ?? null,
+  code: String(code ?? ''),
+  cursor: cursor ?? null,
+});
 
 /** Send the controlled screen somewhere, and what to put in its editor. */
 export const drive = where => send('drive', {

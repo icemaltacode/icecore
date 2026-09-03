@@ -656,6 +656,76 @@ try {
     A.ws.send(JSON.stringify({ type: 'release' }));
     await alsoA(); await alsoB();
 
+    /* ---- the educator's editor, on every screen -------------------------------
+     *
+     * SYNC IS THE OPPOSITE SHAPE TO CONTROL and the checks say so: a drive is addressed to
+     * one browser and refused to anybody who does not hold that person, a push is a
+     * broadcast and refused unless the switch is on. Getting either half wrong is silent -
+     * a push that reaches nobody looks like a slow network, and one that reaches everybody
+     * with the switch off looks like nothing at all until somebody's work is overwritten.
+     */
+    {
+      // With the switch off, nothing travels. The first half of the gate.
+      A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT nope' }));
+      check('nothing is pushed while sharing is off',
+            (await heardB.next('synced', 1500)) === null,
+            'an editor reached the room with the switch off');
+
+      A.ws.send(JSON.stringify({ type: 'sync', on: true }));
+      const onB = await heardB.next('syncing');
+      const onA = await heardA.next('syncing');
+      check('sharing an editor tells the room', onB?.on === true, JSON.stringify(onB));
+      /* THE SENDER IS TOLD TOO, and it is not a courtesy: their switch reads the flag back
+       * rather than setting it optimistically, so a toggle nobody heard would sit on
+       * saying it was on. */
+      check('and tells the educator who threw the switch', onA?.on === true,
+            JSON.stringify(onA));
+
+      A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT 1', cursor: 8 }));
+      const pushed = await heardB.next('synced');
+      check('the editor reaches the class', pushed?.code === 'SELECT 1',
+            JSON.stringify(pushed));
+      check('it names the exercise it belongs to', pushed?.at === '101',
+            JSON.stringify(pushed));
+      /* A caret is an offset INTO a buffer, so it travels with it or it points at the wrong
+       * character on the other side. */
+      check('and carries the caret with it', pushed?.cursor === 8, JSON.stringify(pushed));
+      if (distinct) {
+        check('and does not come back to the educator',
+              (await heardA.next('synced', 1500)) === null,
+              'the sender was sent their own buffer back');
+      } else {
+        await heardA.next('synced', 1500);
+        skip('and does not come back to the educator',
+             'one account was used for both sockets');
+      }
+
+      // A roster carries it, so somebody arriving mid-demonstration is not the last to know.
+      B.ws.send(JSON.stringify({ type: 'roster' }));
+      const withSync = await heardB.next('roster');
+      check('a roster says the editor is being shared', withSync?.sync === true,
+            JSON.stringify(withSync?.sync));
+
+      /* A STUDENT MAY NOT FREEZE THE ROOM. `tutor` is the gate on the switch itself, and it
+       * is the one that keeps a demonstration something an educator does rather than
+       * something that can be done to them. */
+      if (distinct) {
+        B.ws.send(JSON.stringify({ type: 'sync', on: false }));
+        check('a student cannot switch it off', (await heardA.next('syncing', 1500)) === null,
+              'a student threw the educator\'s switch');
+      } else {
+        skip('a student cannot switch it off', 'one account was used for both sockets');
+      }
+
+      A.ws.send(JSON.stringify({ type: 'sync', on: false }));
+      const offB = await heardB.next('syncing');
+      await heardA.next('syncing');
+      check('and it can be switched off again', offB?.on === false, JSON.stringify(offB));
+      A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT nope' }));
+      check('after which nothing is pushed', (await heardB.next('synced', 1500)) === null,
+            'an editor reached the room after the switch was thrown back');
+    }
+
     /* And the gate closes with the control. The capability lasts exactly as long as the
      * driving does - which is what makes it a smaller thing than "an admin may write
      * anyone's rows", and what makes the student's Stop button mean something. */

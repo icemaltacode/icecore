@@ -19,6 +19,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { live as channel } from '../live.js';
+import Icon from './Icon.vue';
 
 const props = defineProps({
   /** The session: cohort, course, by, name, at. */
@@ -40,8 +41,13 @@ const props = defineProps({
    * instead. From where a classmate sits nothing has changed except the name, which is why
    * this is a word in the existing sentence rather than a band of its own. */
   sharedName: String,
+  /* Whether the educator's editor is on the room's screens. ONE PROP FOR BOTH SIDES, because
+   * it is one fact about the session: for the educator it is what their switch reads, and for
+   * a student it is why their editor has gone read-only. Two props would be two chances for
+   * the switch to say one thing and the class to be doing another. */
+  syncing: Boolean,
 });
-const emit = defineEmits(['end', 'leave', 'catch-up']);
+const emit = defineEmits(['end', 'leave', 'catch-up', 'sync']);
 
 const now = ref(Date.now());
 let tick;
@@ -86,7 +92,14 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
       </template>
       <template v-else-if="following">
         Following <strong>{{ session?.name || 'your educator' }}</strong>, live.
-        <span class="sub">Your screen moves with theirs. Move on your own whenever you
+        <!-- IT SAYS HOW TO GET OUT, because the editor below has just gone read-only and
+             nothing else on the screen explains why. Moving is the way, which is the same
+             gesture that ends following for every other reason - so this is a sentence about
+             a rule the student already has rather than a second one to learn. And it
+             promises the thing that makes moving safe: what they had written comes back. -->
+        <span class="sub" v-if="syncing">They are writing in your editor. Move on your own
+          whenever you like — your own work comes back.</span>
+        <span class="sub" v-else>Your screen moves with theirs. Move on your own whenever you
           like — nothing is lost.</span>
       </template>
       <!-- Not a warning and not an error. They did a perfectly ordinary thing, and the band
@@ -102,6 +115,19 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
 
     <span class="clock">{{ elapsed }}</span>
 
+    <!-- THE SWITCH SITS BESIDE End session, because those are the two things an educator
+         does to the room rather than to one person - and the panel, where taking control of
+         one student lives, is about people one at a time. It is a toggle rather than a
+         press-and-hold: a demonstration lasts as long as the explanation does, and holding a
+         button through it is not a thing anyone can do while also teaching. -->
+    <button v-if="mine" class="btn ghost sync" :class="{ on: syncing }" type="button"
+            :title="syncing
+              ? 'Your editor is on the class\'s screens. Their own work comes back when you stop.'
+              : 'Show the class what you type, in their own editors.'"
+            @click="emit('sync', !syncing)">
+      <Icon name="edit" :size="14" />
+      {{ syncing ? 'Sharing editor' : 'Share editor' }}
+    </button>
     <button v-if="mine" class="btn danger" type="button" @click="emit('end')">End session</button>
     <template v-else>
       <!-- The one nudge gesture, as `.btn.urge` already defines it in styles.css: there is
@@ -132,6 +158,13 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
 .what strong { font-weight: 600; }
 .sub { color: var(--ice-fg-muted); }
 .sub.away { margin-left: 6px; font-style: italic; }
+/* On rather than pressed: it stays until it is switched back, so it wears the state
+   colour rather than a click's. The caret's own colour, and deliberately - the accent moving
+   in a student's editor and the switch that put it there are the same event seen from the two
+   ends of the room, and in two different accents they read as two features. */
+.sync { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.sync.on { background: var(--ice-drive-fill); border-color: var(--ice-drive-line);
+           color: var(--ice-fg); }
 .clock { font-family: var(--ice-font-mono); font-variant-numeric: tabular-nums;
          font-size: 12px; color: var(--ice-fg-muted); }
 @media (max-width: 720px) { .sub { display: none; } }

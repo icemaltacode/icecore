@@ -786,6 +786,45 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
       }
     }, 32000));
     play(40000, { type: 'controlling', control: null });
+
+    /* ---- and the educator writing in your editor -------------------------------
+     *
+     * The student's half of Share editor, which is the half nobody sees while building it:
+     * the educator's is a switch they press, and this is a read-only editor with somebody
+     * else's caret moving in it and a band explaining why. It is played AFTER control has
+     * been released, because the two must not overlap - control outranks sync deliberately,
+     * and a script that ran them together would be exercising that rule rather than this
+     * screen.
+     *
+     * Switched off at the end, so the restore is reachable too: a mode that only ever
+     * arrives is a mode whose exit nobody tries.
+     */
+    /* A ROW WITH AN EDITOR ON IT, because a push names the exercise it belongs to and is
+     * applied nowhere else - aimed anywhere the student is not, the whole episode would
+     * arrive and do nothing at all. Slides rows are skipped: there is no editor on one. */
+    const demoAt = () => rows().slice(0, 7).reverse()
+      .find(r => !String(r.at).startsWith('slides:'));
+    /* And the class is moved onto it first. Following is what carries a student there, and
+     * the last thing that moved them was a drive to somewhere else entirely. */
+    roomTimers.push(setTimeout(() => {
+      const row = demoAt();
+      if (row) {
+        emit({ type: 'moved', sub: tutor.sub,
+               position: { exercise: row.at, title: row.title, slide: null },
+               at: new Date().toISOString() });
+      }
+    }, 43000));
+    play(44000, { type: 'syncing', on: true });
+    const DEMO = 'SELECT title, released\nFROM films\nWHERE released > 2000\nORDER BY released;';
+    for (let i = 1; i <= DEMO.length; i += 3) {
+      roomTimers.push(setTimeout(() => {
+        const row = demoAt();
+        if (!row) return;
+        emit({ type: 'synced', at: row.at, code: DEMO.slice(0, i), cursor: i,
+               when: new Date().toISOString() });
+      }, 45000 + i * 60));
+    }
+    play(45000 + DEMO.length * 60 + 6000, { type: 'syncing', on: false });
   }
 
   /* ---- and the conversation -------------------------------------------------

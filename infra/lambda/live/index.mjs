@@ -4,7 +4,8 @@
  *   ws   $connect           ?ticket=<id>        the ticket is the credential
  *   ws   $disconnect                            forget the connection
  *   ws   $default           { type, ... }       ping, active, marked, roster, history, say,
- *                                                 control, sharing, release, drive, buffer
+ *                                                 control, sharing, release, drive, buffer,
+ *                                                 sync, push
  *
  * One function serving two HTTP routes and three WebSocket routes, told apart by the shape
  * of the event and then by path - the same way the admin function tells users from cohorts.
@@ -699,7 +700,41 @@ async function disconnect(event) {
                    Math.max(0, Date.now() - Date.parse(row.at || 0)));
   }
   await orphaned(event, row);
+  await unsynced(event, row);
   return { statusCode: 200, body: 'gone' };
+}
+
+/**
+ * Sync that has lost the person doing it.
+ *
+ * A CLOSED LAPTOP MUST NOT LEAVE A ROOM FULL OF FROZEN EDITORS. While sync is on a
+ * following student's editor is read-only - the educator is writing in it - and the way out
+ * of that is the educator switching it off. If their browser has gone there is nobody left
+ * to switch it, and the flag would stand until the session's `ttl` a day later. `orphaned`
+ * is the same failure one student at a time; this is it for the whole class.
+ *
+ * Counted rather than assumed, and conditional on the flag still being this person's, for
+ * `orphaned`'s reasons. Only a tutor can hold it, so a student leaving costs no read at all.
+ */
+async function unsynced(event, row) {
+  if (row.role !== 'tutor') return;
+  const held = await sessionFor(row.cohort);
+  if (!held?.sync || held.by !== row.sub) return;
+  const still = (await connectionsIn(row.cohort)).some(x => x.sub === row.sub);
+  if (still) return;
+  try {
+    await ddb.send(new UpdateCommand({
+      TableName: TABLE, Key: sessionKey(row.cohort),
+      UpdateExpression: 'REMOVE #s',
+      ConditionExpression: '#s = :on AND #by = :me',
+      ExpressionAttributeNames: { '#s': 'sync', '#by': 'by' },
+      ExpressionAttributeValues: { ':on': true, ':me': row.sub },
+    }));
+  } catch (e) {
+    if (e.name !== 'ConditionalCheckFailedException') throw e;
+    return;   // they came back, or somebody else is delivering now
+  }
+  await emit(event, row.cohort, { type: 'syncing', on: false });
 }
 
 /**
@@ -1093,6 +1128,76 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
+    /* SHOWING THE CLASS WHAT YOU ARE WRITING, which is the other half of an editor two
+     * people can see and the only one that scales past helping one person.
+     *
+     * A FLAG ON THE SESSION ROW RATHER THAN A MODE OF THE SENDER, for the reason `control`
+     * is one: a student joining ten minutes into a demonstration has to arrive already
+     * knowing, and a fact held only in the educator's browser cannot tell them. So the
+     * roster carries it and this is a write.
+     *
+     * DELIBERATELY NOT `drive`. A drive is addressed to one browser and carries a position;
+     * this carries an editor and nothing else, because where the class is looking is
+     * already answered - they follow the educator's reported position, and a second
+     * authority for it would be two things moving the same screen. One fact each.
+     */
+    case 'sync': {
+      if (row.role !== 'tutor') return { statusCode: 200, body: 'not yours' };
+      const on = !!msg.on;
+      try {
+        await ddb.send(new UpdateCommand({
+          TableName: TABLE, Key: sessionKey(row.cohort),
+          UpdateExpression: on ? 'SET #s = :on' : 'REMOVE #s',
+          /* The DELIVERER, not any tutor. A second admin watching the lesson may take
+           * control of one student - that is a claim on one browser and it is refused if
+           * somebody else holds it - but freezing every editor in the room is the lesson
+           * itself, and the lesson has one owner. */
+          ConditionExpression: 'attribute_exists(sk) AND #by = :me',
+          ExpressionAttributeNames: { '#s': 'sync', '#by': 'by' },
+          ExpressionAttributeValues: on ? { ':on': true, ':me': row.sub } : { ':me': row.sub },
+        }));
+      } catch (e) {
+        if (e.name !== 'ConditionalCheckFailedException') throw e;
+        return { statusCode: 200, body: 'not yours' };
+      }
+      /* To everybody, the sender included: their own button reads the flag back rather than
+       * setting it optimistically, which is `control`'s rule and for the same reason - a
+       * toggle that says it is on when the write was refused is worse than one that lags. */
+      await emit(event, row.cohort, { type: 'syncing', on });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* The buffer itself, on its way to the room.
+     *
+     * IT NAMES THE EXERCISE IT BELONGS TO, and the other side applies it only there. A
+     * class does not move as one - somebody is a step behind, somebody read ahead - and
+     * dropping the educator's query into whatever exercise a student happens to have open
+     * is the difference between a demonstration and vandalism.
+     *
+     * The session row is read rather than the sender's role trusted, exactly as `drive`
+     * does: `tutor` says they may run a lesson, not that they are running this one, and the
+     * flag has to be on. Without the second half a tutor could write into every editor in
+     * the room with the switch off, which is the whole thing the switch exists to gate. */
+    case 'push': {
+      const held = await sessionFor(row.cohort);
+      if (!held?.sync || held.by !== row.sub) return { statusCode: 200, body: 'not syncing' };
+      await emit(event, row.cohort, {
+        type: 'synced',
+        at: msg.at == null ? null : String(msg.at).slice(0, 200),
+        code: String(msg.code ?? '').slice(0, EDITOR_LIMIT),
+        /* Where the educator's caret is, so what a class watches is somebody typing rather
+         * than text appearing. Travels with the buffer for `drive`'s reason: a caret is an
+         * offset INTO a document, and sent apart from it points at the wrong character. */
+        cursor: Number.isFinite(Number(msg.cursor)) && msg.cursor != null
+          ? Number(msg.cursor) : null,
+        /* Changes on every push, so the other side can watch the MESSAGE rather than the
+         * text - retyping a character back to what it was is still somebody typing, and a
+         * watcher on the code alone would not see it. */
+        when: now,
+      }, { except: id });
+      return { statusCode: 200, body: 'ok' };
+    }
+
     /* Ask again. A client that has just reconnected - a lid, a tunnel, API Gateway's
      * two-hour cap - has a roster from before it went away, and every join and leave in
      * between happened to somebody who was not listening. */
@@ -1104,6 +1209,11 @@ async function tallied(cohort, mark, seeded = false) {
          * has just connected, or just come back from a tunnel, would otherwise not know a
          * classmate's screen was being shown until the next time it changed. */
         control: held?.control || null,
+        /* And whether the educator's editor is on the room's screens, for exactly the same
+         * reason: a client that has just arrived, or just come back from a tunnel, would
+         * otherwise sit with a writable editor in the middle of a demonstration until the
+         * educator happened to switch it off. */
+        sync: !!held?.sync,
         members: await membersOf(row.cohort),
         here: (await connectionsIn(row.cohort)).map(c => ({
           sub: c.sub, name: c.name, role: c.role, seen: c.seen, position: c.position || null,
