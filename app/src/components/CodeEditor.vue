@@ -140,15 +140,25 @@ onMounted(() => {
              absolutely placed against it and the label hangs above, out of the line's flow -
              a label on the baseline would push the code sideways as somebody typed. */
           '.cm-peer': { position: 'relative', display: 'inline-block', width: '0' },
+          /* IT BLINKS, because a static bar in a read-only editor reads as a decoration
+             rather than as a caret - and the whole point of it is that somebody is typing
+             there. The same 1.06s CodeMirror uses for its own, so the two never look like
+             different kinds of thing. Honoured off under reduced motion, where a solid bar
+             is still perfectly legible. */
           '.cm-peer-bar': {
             position: 'absolute', left: '-1px', top: '0', bottom: '0', width: '2px',
-            background: 'var(--ice-primary)',
+            background: 'var(--ice-drive-line)',
+            animation: 'ice-peer-blink 1.06s steps(1) infinite',
+          },
+          '@keyframes ice-peer-blink': { '50%': { opacity: '0' } },
+          '@media (prefers-reduced-motion: reduce)': {
+            '.cm-peer-bar': { animation: 'none' },
           },
           '.cm-peer-name': {
             position: 'absolute', left: '-1px', bottom: '100%', whiteSpace: 'nowrap',
             padding: '1px 5px', borderRadius: '4px 4px 4px 0', fontSize: '10px',
             lineHeight: '1.5', fontFamily: 'var(--ice-font-sans, inherit)',
-            background: 'var(--ice-primary)', color: 'var(--ice-on-primary)',
+            background: 'var(--ice-drive-line)', color: 'var(--ice-on-drive)',
             pointerEvents: 'none', userSelect: 'none',
           },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
@@ -161,18 +171,35 @@ onMounted(() => {
   });
 });
 
-watch(() => [props.peerAt, props.peerName], ([pos, name]) => {
-  view?.dispatch({ effects: setPeer.of({ pos: pos == null ? null : Number(pos), name }) });
+/* THE CARET IS RE-ASSERTED AFTER EVERY DOCUMENT REPLACE, and that is what fixes it jumping
+ * to the end of the exercise.
+ *
+ * An external change - which is every keystroke of somebody driving - arrives here as a
+ * replacement of the WHOLE document, and `mapPos` through a whole-document replacement lands
+ * on the end of the insertion. So the field faithfully mapped the caret to the last character
+ * of the file on every letter typed. The prop carrying the true position had already arrived
+ * by then, so re-applying it afterwards is both correct and free: whatever the driver last
+ * said wins over whatever mapping inferred.
+ *
+ * `mapPos` still earns its place for a document this side edits itself, where nothing else
+ * would keep the caret against moving text. */
+const applyPeer = () => view?.dispatch({
+  effects: setPeer.of({
+    pos: props.peerAt == null ? null : Number(props.peerAt),
+    name: props.peerName,
+  }),
 });
+watch(() => [props.peerAt, props.peerName], applyPeer);
 
 watch(() => props.readonly, ro => {
   view?.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!ro)) });
 });
 
-// external changes (moving to another step) replace the whole document
+// external changes (moving to another step, or somebody driving) replace the whole document
 watch(() => props.modelValue, v => {
-  if (view && v !== view.state.doc.toString())
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v || '' } });
+  if (!view || v === view.state.doc.toString()) return;
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v || '' } });
+  applyPeer();   // see above: the replacement above would otherwise map it to the end
 });
 
 onBeforeUnmount(() => view?.destroy());

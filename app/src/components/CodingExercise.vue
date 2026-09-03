@@ -31,7 +31,7 @@ const props = defineProps({
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved', 'checked', 'code', 'cursor']);   // see McqExercise
+const emit = defineEmits(['solved', 'checked', 'editor']);   // see McqExercise
 
 // Figures and embedded apps are named bare in the markdown - a filename, an app
 // directory - and this is what turns them into URLs under the course's content.
@@ -49,14 +49,25 @@ watch(() => props.drivenCode, v => {
   if (typeof v === 'string' && v !== code.value) code.value = v;
 });
 
-/* Debounced, because this is every keystroke and the other end is a socket. Long enough that
- * a burst of typing is one message and short enough that an educator does not appear to have
- * stopped typing mid-word. */
+/* THE TEXT AND THE CARET LEAVE TOGETHER, on one debounced emit.
+ *
+ * They were two events with different timing - the code debounced, the caret immediate - so
+ * every keystroke sent a caret against text up to 300ms old. On the other side that is a
+ * caret pointing at the wrong character, and past the end of a shorter document it is no
+ * caret at all. A caret is an offset INTO a buffer; sending it apart from that buffer is
+ * sending a number without its units.
+ *
+ * Short, because this is what somebody watching sees as "typing". Long enough that a burst
+ * of keystrokes is one message rather than thirty. */
+const BEAT = 160;
+let cursorAt = null;
 let beat;
-watch(code, v => {
+const sendSoon = () => {
   clearTimeout(beat);
-  beat = setTimeout(() => emit('code', v), 300);
-});
+  beat = setTimeout(() => emit('editor', { code: code.value, cursor: cursorAt }), BEAT);
+};
+const onCursor = n => { cursorAt = n; sendSoon(); };
+watch(code, sendSoon);
 onBeforeUnmount(() => clearTimeout(beat));
 
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
@@ -288,7 +299,7 @@ async function doReset() {
           <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
         </div>
         <CodeEditor v-model="code" :readonly="frozen" :peer-at="peerAt" :peer-name="peerName"
-                    @cursor="n => emit('cursor', n)" @run="doRun" />
+                    @cursor="onCursor" @run="doRun" />
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>

@@ -55,6 +55,19 @@
   --ice-bad-line: #dc2626;
   --ice-bad-fill: rgba(220, 38, 38, .08);
 
+  /* SOMEBODY ELSE IS IN YOUR SESSION. Deliberately outside the product's own palette and
+     deliberately not `bad`: being helped is not a failure, and a red bar across somebody's
+     editor reads as an alarm. Not `primary` either - that is the colour of every button on
+     the page, so a caret in it disappears into the furniture on the one screen where it must
+     not. Orange is the only weight left that means "look at this" without meaning "something
+     is wrong", which is the same gap the participants panel's idle dot already fills.
+     ONE DEFINITION for the caret and the band, because they say the same thing about the
+     same moment and two oranges would read as two different events. */
+  --ice-drive: #c2410c;
+  --ice-drive-line: #ea580c;
+  --ice-drive-fill: rgba(234, 88, 12, .12);
+  --ice-on-drive: #ffffff;
+
   --ice-syn-keyword: #1d4ed8;
   --ice-syn-string: #15803d;
   --ice-syn-number: #b45309;
@@ -88,6 +101,12 @@
   --ice-bad: #fca5a5;
   --ice-bad-line: #f87171;
   --ice-bad-fill: rgba(248, 113, 113, .08);
+
+  /* Lifted, like every other pair here: #c2410c on a near-black editor is a bruise. */
+  --ice-drive: #fdba74;
+  --ice-drive-line: #fb923c;
+  --ice-drive-fill: rgba(251, 146, 60, .14);
+  --ice-on-drive: #431407;
 
   --ice-syn-keyword: #93c5fd;
   --ice-syn-string: #86efac;

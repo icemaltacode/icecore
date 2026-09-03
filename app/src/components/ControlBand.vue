@@ -72,10 +72,21 @@ const emit = defineEmits(['stop', 'sharing']);
 .control { display: flex; align-items: center; gap: 12px; padding: 8px 16px;
            background: var(--ice-primary-soft); color: var(--ice-fg);
            border-bottom: 1px solid var(--ice-primary); font-size: 13px; }
-/* The one thing on screen that says a browser is not entirely yours. Heavier than the other
-   two bands by exactly one line, which is as far as it should go: this is not an alarm. */
-.control.driven { box-shadow: inset 0 3px 0 var(--ice-primary); }
 .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--ice-primary); }
+
+/* THE STUDENT'S SIDE WEARS THE CARET'S COLOUR, and it is the same token - `--ice-drive`,
+   defined once in styles.css. The bar at the top of their screen and the caret moving in
+   their editor are the same event seen twice, and in the product's own primary they read as
+   two unrelated pieces of chrome. It is the educator's side that stays primary: nothing is
+   happening TO them.
+
+   Not the danger colour, for WatchBanner's reason - being helped is not a failure, and a red
+   bar reads as an alarm that cannot be dismissed. */
+.control.driven { background: var(--ice-drive-fill); border-bottom-color: var(--ice-drive-line);
+                  box-shadow: inset 0 3px 0 var(--ice-drive-line); }
+.control.driven .dot { background: var(--ice-drive-line); }
+.control.driven .btn.primary { background: var(--ice-drive); border-color: var(--ice-drive);
+                               color: var(--ice-on-drive); }
 @media (prefers-reduced-motion: no-preference) {
   .dot { animation: pulse 2.4s ease-in-out infinite; }
 }

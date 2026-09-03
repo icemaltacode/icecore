@@ -243,6 +243,19 @@ on('ended', () => forget());
  * many are here and the panel may never be opened at all, so a roster that only arrived
  * while a component was mounted would leave the count blank on the screen that shows it. */
 function setControl(c) {
+  /* BEING RELEASED PUTS YOU BACK WITH THE CLASS.
+   *
+   * Without this the band came back saying "you have stopped following and are working on
+   * your own" the moment an educator let go - which the student had not done and could not
+   * have: they were being driven. `following` is the flag for a decision somebody took, and
+   * nothing about being controlled is their decision.
+   *
+   * It also restores the state the lesson needs: an educator who steered somebody to an
+   * exercise and let go expects the next thing they show the class to reach them too. It
+   * does not MOVE them - the follow watcher only fires when the educator next goes
+   * somewhere - so nobody is yanked off the thing they were just helped with. */
+  if (control.sub && control.sub === session.sub && !c) delivery.following = true;
+
   control.sub = c?.sub || null;
   control.name = c?.name || '';
   control.by = c?.by || null;
@@ -442,19 +455,34 @@ export function presenceOf(sub, now = Date.now()) {
  * with no session to be invited to is the ordinary case that should cost nothing beyond the
  * poll itself.
  */
-const ASK_EVERY = 60 * 1000;
+/* FIFTEEN SECONDS, NOT SIXTY. A minute was chosen on the reasoning that nobody is waiting on
+ * this to the second - which is true of the fact and false of the moment. An educator starts
+ * a lesson and says "join now"; a class that sits looking at an unchanged dashboard for the
+ * next fifty seconds concludes the thing is broken, and half of them will have reloaded
+ * before it arrives. The cost is one query per student per fifteen seconds, which for a class
+ * of thirty is two requests a second against a table billed per request. */
+const ASK_EVERY = 15 * 1000;
 let asking = null;
+
+const ask = () => { if (!delivery.cohort) refreshRunning().catch(() => {}); };
+
+/* AND IMMEDIATELY ON COMING BACK TO THE TAB, which is the case a timer cannot cover: a
+ * student told the lesson has started switches to a tab that has been in the background - and
+ * browsers throttle timers in background tabs hard, so the interval they are relying on may
+ * not have run for minutes. This is the one moment somebody is actually looking. */
+const woke = () => { if (document.visibilityState === 'visible') ask(); };
 
 export function watchForSessions() {
   if (asking) return;
-  const ask = () => { if (!delivery.cohort) refreshRunning().catch(() => {}); };
   ask();
   asking = setInterval(ask, ASK_EVERY);
+  addEventListener('visibilitychange', woke);
 }
 
 export function stopWatchingForSessions() {
   clearInterval(asking);
   asking = null;
+  removeEventListener('visibilitychange', woke);
 }
 
 /**

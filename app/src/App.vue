@@ -255,14 +255,6 @@ const classAnswers = computed(() => {
 let applying = 0;
 const applied = fn => { applying++; fn(); nextTick(() => { applying--; }); };
 
-/* The tutor moved. Only their moves, and only while following: everybody else's positions
- * are for the panel to draw, not for this screen to obey. */
-watch([() => followedPosition()?.exercise, flat], ([at]) => {
-  if (!delivery.cohort || delivery.mine || !delivery.following || at == null) return;
-  const row = flat.value.find(e => progressId(e.id) === progressId(at));
-  if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
-});
-
 /* Course > Module > Unit > Topic > exercises. Only topics hold exercises; the two levels
  * above exist to make 200-odd exercises navigable. */
 const topics = computed(() =>
@@ -278,6 +270,28 @@ const total = computed(() => flat.value.length);
  * Previous and Next move through. Progress counts only what can be solved: slides are
  * taught, not graded, and a bar that fills as you page past them measures nothing. */
 const exercises = computed(() => gradable(flat.value));
+
+/* The educator moved. Only their moves, and only while following: everybody else's positions
+ * are for the panel to draw, not for this screen to obey.
+ *
+ * IT WATCHES `flat` AS WELL AS THE POSITION, AND THEREFORE HAS TO LIVE BELOW IT. A watch
+ * source is read the moment `watch()` is called, so with this above the declaration the whole
+ * component threw `can't access lexical declaration` before it mounted - a blank site from
+ * one line that reads as a dependency list. The getter it replaced was lazy and did not care
+ * where it sat, which is exactly why the move was easy to miss.
+ *
+ * The walk is a source because of the race it exists to close: the roster can land before the
+ * course has finished loading, and a position that resolves to no row is a follower that
+ * never moves again. */
+watch([() => followedPosition()?.exercise, flat], ([at]) => {
+  if (!delivery.cohort || delivery.mine || !delivery.following || at == null) return;
+  /* WHILE SOMEBODY IS DRIVING THIS SCREEN, THE DRIVE IS THE AUTHORITY. With sharing off, the
+   * room still reports the educator's own tab, so following would drag the student back from
+   * wherever they had just been driven - the two would take turns, once per keystroke. */
+  if (beingDriven()) return;
+  const row = flat.value.find(e => progressId(e.id) === progressId(at));
+  if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
+});
 
 const solved = ref(new Set());
 /* Always through `solvedId`: the set holds strings and an exercise id is a number - see
@@ -662,16 +676,17 @@ const myCursor = ref(null);
  * exercise is also arriving at its starter code, and two messages would show one exercise's
  * prompt over another's buffer for as long as the second took to arrive. Already debounced
  * inside the exercise component. */
-/* The text and the caret go together, because the caret is an offset INTO that text: sent
- * apart, one arrives against a document the other has not reached yet and points at the wrong
- * character. Both watchers call the same send for that reason. */
-const driveNow = () => {
+/* ONE EVENT CARRYING BOTH, and one send. They were two watchers on two refs, which meant a
+ * caret change sent whatever text the debounce had last settled on - up to 300ms stale - and
+ * a text change sent a caret from before it. A caret is an offset into a buffer; the two
+ * cannot be allowed to arrive describing different documents. */
+function editorChanged({ code, cursor }) {
+  myCode.value = code;
+  myCursor.value = cursor ?? null;
   if (!controlSub.value || !drivingSomebody()) return;
   drive({ at: current.value?.id ?? null, title: current.value?.title,
-          slide: mySlide.value, code: myCode.value, cursor: myCursor.value });
-};
-watch(myCode, driveNow);
-watch(myCursor, driveNow);
+          slide: mySlide.value, code, cursor: myCursor.value });
+}
 
 /* Being driven: send what we have, ONCE, the moment control begins. This is the half that
  * actually helps - a progress row only ever holds the code that SOLVED an exercise, so a
@@ -1129,8 +1144,7 @@ watch(currentId, id => {
           :peer-at="beingDriven() ? driven.cursor : null"
           :peer-name="control.byName"
           @checked="(id, v) => reportMark({ at: id, ...v })"
-          @code="v => myCode = v"
-          @cursor="n => myCursor = n" />
+          @editor="editorChanged" />
 
         <footer v-if="total">
           <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>
