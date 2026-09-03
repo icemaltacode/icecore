@@ -29,7 +29,7 @@ in a month.
   decided because it costs nothing to defer: every path leaves the session itself unchanged
   and only decides what one person sees. See [LIVE.md](LIVE.md).
 
-- [x] **End a live session from the cohort screen.** Today the only End session button is on
+- [ ] **[TO TEST] End a live session from the cohort screen.** Today the only End session button is on
   the live screen itself, which is fine until that screen is the thing that is broken - and
   then the session is unendable and holds its cohort's lock until the `ttl` a day later. The
   takeover rule in the Lambda already allows any admin to end a session with nobody connected,
@@ -40,7 +40,7 @@ in a month.
   only way to end a lesson was from the screen that knew where it was, useless the moment it
   is ended from anywhere else. The educator's own moves now keep it up to date.
 
-- [x] **Sync exercise view with students**. In the live screen, by default, code written by the 
+- [ ] **[TO TEST] Sync exercise view with students**. In the live screen, by default, code written by the 
   Educator is not pushed to the students. Deliberately, because the students should be writing 
   their own code. But sometimes the Educator wants to show a solution, and the students should
   see it. So, we need a control in the top-bar (where there's End session), to allow the 
