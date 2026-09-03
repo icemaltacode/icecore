@@ -19,10 +19,14 @@
   ],
   "scripts": {
     "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content",
-    "test:python": "node test/python-artefacts.mjs",
+    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/walk.mjs && node test/room.mjs && node test/player.mjs",
+    "test:setup": "node test/setup-checks.mjs",
     "test:csv": "node test/csv.mjs",
-    "test:live": "node test/live.mjs",
-    "test:setup": "node test/setup-checks.mjs"
+    "test:walk": "node test/walk.mjs",
+    "test:room": "node test/room.mjs",
+    "test:player": "node test/player.mjs",
+    "test:python": "node test/python-artefacts.mjs",
+    "test:live": "node test/live.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.9.0",
@@ -39,5 +43,8 @@
     "pyodide": "^314.0.5",
     "vite": "^7.0.0",
     "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }

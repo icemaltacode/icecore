@@ -458,8 +458,8 @@ against data that exists and cannot be built at all against data nobody recorded
 
 What a student may see and change about themselves. `AccountPanel.vue`, `route.js` and
 `infra/lambda/account/`. [`ACCOUNT.md`](ACCOUNT.md) is the plan - five sections, a danger
-zone, and a full Article 15 export; **steps 1 to 6 of it are built**, leaving the export and
-the avatar. Recovery came first because it was not a feature but a lockout.
+zone, and a full Article 15 export - and **all of it is built**. Recovery came first because
+it was not a feature but a lockout.
 
 - **A STUDENT MAY CHANGE FACTS ABOUT THEMSELVES AND NEVER FACTS ABOUT THEIR COURSE.** The
   mirror of the admin area's rule and easier to break, because every violation looks like a
@@ -467,7 +467,7 @@ the avatar. Recovery came first because it was not a feature but a lockout.
   exercise is worth are set by an admin or by the course repo. The one bounded exception is
   resetting progress, which destroys their own record of a course without changing the
   course or their relationship to it. The read-only half is *stated on screen* rather than
-  implied by an absence of buttons - "your courses and class are set by your tutor" - because
+  implied by an absence of buttons - "your class is set by your educator" - because
   a student who could unenrol themselves would lose a course they were put on, and from the
   admin panel that looks exactly like an administrative mistake.
 - **The account function is separate from the admin one for BLAST RADIUS, not for code.**
@@ -862,6 +862,74 @@ affordance anyway, so hiding the solution bought almost nothing while forcing a 
 server-side content artifact and a fatter hint service. `build` writes `solution` and the
 `checks:` frontmatter into `index.json`; the hint Lambda gets everything from the client.
 Don't re-strip it.
+
+## Tests
+
+`npm test` is the whole local suite and takes about six seconds: `setup-checks`, `csv`,
+`walk`, `room`, `player`. `test:python` (real Pyodide, minutes) and `test:live` (real AWS,
+typed credentials) are deliberately out of it and run by name.
+
+**Nothing in this repo executed the app until `test/harness.mjs` existed**, and it cost a
+day: `nextTick` was never imported so every `applied()` threw and following only *appeared*
+to work; a slides row was built without its `deck` so the player rendered inside itself; and
+`report()` dropped the slide number so a class stopped following an educator paging a deck.
+Three bugs in code that had never once run, each invisible to reading. The first took a
+debugging browser to find.
+
+- **The harness BUILDS the player rather than transforming it module by module.** Vite's
+  `ssrLoadModule` is the obvious tool and is the wrong one: it compiles an SFC for SSR, and
+  an SSR-compiled component asks for a render context that does not exist and refuses to
+  mount. Running Vite's *client* environment in Node fails differently — the client
+  transform leaves bare `import.meta` in place, which cannot be evaluated as a function
+  body. A real `vite build` is the only one of the three that produces the component a
+  browser is actually given. It takes ~2s.
+- **A plain `import` cannot work at all.** `auth.js` reads `import.meta.env.BASE_URL` at
+  module level and `preview.js` reads `import.meta.env.DEV`, which is `undefined.DEV` under
+  Node. That is the same rule stated from the other side: anything the *builder* imports out
+  of `app/src` must stay free of `import.meta.env`. `walk.js`, `csv.js`, `compare.js` and
+  `dragdrop.js` obey it and their tests import them directly.
+- **`import.meta.env.DEV` is defined explicitly**, because a build is production by default
+  whatever `mode` says — and `preview.js` gates its entire stand-in API on it. Without it
+  `previewRole()` is null, `api()` goes to the network, and the first thing a test sees is a
+  fetch for `/api/live/session`, which reads as the harness being wrong rather than the flag.
+- **The wasm runtimes are aliased away** (`test/stubs/absent.js`). That is the difference
+  between a 3MB bundle and a **53MB** one — PGlite and Pyodide are inlined as data URIs — and
+  no test here has business booting a database. The stubs throw rather than returning
+  nothing, and every export is named, so a new import from either package fails the build of
+  the test rather than at some later moment.
+- **One entry, one module graph.** `test/stubs/player-entry.js` re-exports App.vue *and* the
+  channel, because `delivery.js` holds the session and the listener registry at module scope:
+  a test importing the component from one bundle and `live.js` from another would poke a
+  second copy of the channel while the mounted app listened to the first.
+- **The preview IS the stand-in.** Tests build with `VITE_ICECORE_PREVIEW`, so `previewApi`
+  answers every call — the same switch `icecore dev --as student` throws. A test that
+  invented its own fiction would be a test of the fiction. The one thing it does not cover is
+  content, which comes off the origin as static JSON; `dom.mjs`'s `serve()` supplies it and
+  **throws on an unserved path**, because a silent `{}` is how a test passes against a course
+  that was never loaded.
+- **Messages go in through `emitLocal`**, `live.js`'s own dispatcher and the preview's one
+  door in, so what runs is every real handler a real socket would reach. **Assertions are on
+  what a student SEES** — the band's sentence, the footer's `n / total` — because reaching
+  into App.vue's refs would test the implementation and would have passed with `applying`
+  stuck.
+- **`app.config.errorHandler` makes any in-app throw a failure.** This is most of the value:
+  Vue catches a watcher's exception, logs it and carries on, so the screen goes on looking
+  roughly right. Without the handler the run is green and the app is broken.
+- **jsdom needs the window promoted wholesale**, not a hand-written list — Vue's own runtime
+  reaches for `SVGElement` on mount and the next component reaches for something else. Two
+  categories are excluded and both bite: jsdom **delegates** `btoa`, `atob` and `performance`
+  to the globals, so promoting them makes each call itself (`btoa` surfaces as
+  InvalidCharacterError on plain ASCII, `performance.now` as a stack overflow); and jsdom's
+  timers stop when the window closes, so a test awaiting anything after `restore()` hangs
+  forever.
+- **What is NOT covered, so nobody assumes it is:** anything that *sends*. `send()` drops
+  silently with no socket — the honest behaviour for a channel, and the state a preview run
+  is in — so `report()`'s payload is not observable from here. `test/live.mjs` covers the
+  server's side of those messages against a real socket. And where a follower lands *inside*
+  a slide range is the frame's own hash, which jsdom has no history to push.
+- **jsdom is a devDependency and that is safe.** npm installs a git dependency's devDeps only
+  when it has a `prepare` script; this package has none, so a course repo's `npm ci` never
+  sees it.
 
 ## Gotchas
 

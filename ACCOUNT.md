@@ -466,14 +466,22 @@ a course without changing the course or their relationship to it.
    unenrolled since.
 6. ~~**The danger zone.** Reset needs step 4's counts to write an honest confirmation.~~
    **Done**, and it needed a route of its own: `DELETE /api/account/progress?course=`.
-7. **The access request.** *(next)* Not one query and one download any more: the copy is one query,
+7. ~~**The access request.** Not one query and one download any more: the copy is one query,
    and the supplementary statement is prose that has to be written once and then rendered in
    two places. Budget for the writing rather than the code — the recipients line, which says
    that a hint sends a student's code to OpenAI, is the part that needs to be *right* rather
-   than merely present.
-8. **The avatar.** Last, and deliberately: it is the only item that needs a CloudFront
+   than merely present.~~ **Done**, as `GET /api/account/export`. The budget was right: the
+   prose was the work, and it lives in `ABOUT` so that the screen and the file are two
+   renderings of one statement rather than two statements.
+8. ~~**The avatar.** Last, and deliberately: it is the only item that needs a CloudFront
    behaviour, a bucket prefix, a presigned POST and a change to the session response, and
-   every other thing on the screen is useful without it.
+   every other thing on the screen is useful without it.~~ **Done**, and *not* with a
+   presigned POST - the bytes go through the API. See the long note in the account function:
+   the argument for a presigned upload was API Gateway's payload limit meeting base64
+   inflation, and cropping to a small square on the client removes the premise.
+
+**All eight are built.** What is left of this plan is nothing; the file is kept as the record
+of why each part is shaped the way it is.
 
 ## Settled
 

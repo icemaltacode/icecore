@@ -1,5 +1,14 @@
 # Deferred
 
+- [x] **Nothing in this repo executed the app.** Everything under `app/src` that is not pure
+  had no test of any kind, and three bugs shipped in one day in code that had never once run
+  — a missing `nextTick` import that made every `applied()` throw, a slides row built without
+  its deck, and `report()` dropping the slide number. Each was invisible to reading; the
+  first took a debugging browser to find. Done: `npm test` mounts the player in jsdom against
+  the preview API and drives a live session through the channel's own dispatcher, plus a pure
+  test of the walk. Six seconds. See the Tests section of [CLAUDE.md](CLAUDE.md) for what it
+  covers and, more usefully, what it does not.
+
 Steps 8 and 9 of [ADMIN.md](ADMIN.md). Both are waiting on **data rather than on work** —
 neither is blocked, and building either today would produce a worse answer than building it
 in a month.

@@ -1,0 +1,171 @@
+/* The player, mounted, with a live session happening to it.
+ *
+ * THE FIRST TEST IN THIS REPO THAT EXECUTES THE APP. Everything under `app/src` that is not
+ * pure had none, and it cost a day: `nextTick` was never imported, so every `applied()` call
+ * threw after incrementing its guard, the guard was stuck for the life of the tab, and
+ * following only appeared to work. Three rounds of reading did not find it; a debugging
+ * browser did. This is the cheaper instrument.
+ *
+ * WHAT IT DRIVES IS THE ROOM, not the buttons. The messages go in through `emitLocal`, which
+ * is `live.js`'s own dispatcher and the preview's one door in - so what runs is every real
+ * handler a real socket would reach, in the same order. What it asserts is what a student
+ * SEES: the band's sentence and the footer's position, read out of the DOM. Reaching into
+ * App.vue's refs would test the implementation and would have passed with `applying` stuck.
+ *
+ * The fixtures are a course with a slides topic and three exercises, so the walk is
+ * `[slides, 101, 102, 103]` and the footer counts 1..4. See harness.mjs for how it is built
+ * and dom.mjs for what a jsdom window has to be lent.
+ */
+import { installDom } from './dom.mjs';
+
+let failures = 0;
+const check = (label, ok, detail = '') => {
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${!ok && detail ? `  -- ${detail}` : ''}`);
+  if (!ok) failures++;
+};
+
+const COURSE = {
+  id: 'c1', title: 'Course One',
+  modules: [{ module: '1', title: 'M', units: [{ unit: '1.1', title: 'U', topics: [
+    { topic: '1.1.1', title: 'Topic One',
+      slides: 'slides/c1/1.1/index.html', slide: 3, end: 9, slideCount: 31,
+      exercises: [
+        { id: 101, title: 'First', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 1' }] },
+        { id: 102, title: 'Second', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 2' }] },
+      ] },
+    { topic: '1.1.2', title: 'Topic Two', exercises: [
+      { id: 103, title: 'Third', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 3' }] } ] },
+  ] }] }],
+};
+
+const dom = installDom({ hash: '#/', search: '?course=c1' });
+dom.serve('/content/courses.json', [{ id: 'c1', title: 'Course One', exercises: 3, xp: 60 }]);
+dom.serve('/content/c1/index.json', COURSE);
+
+const { createApp } = await import('vue');
+const { buildPlayer } = await import('./harness.mjs');
+const player = await buildPlayer({ preview: 'student' });
+
+const app = createApp(player.App);
+/* ANY ERROR THE APP THROWS IS A FAILURE OF THIS TEST, named where it happened.
+ *
+ * This is most of the value here. The bug that prompted the file threw inside a watcher on
+ * every call - Vue caught it, logged it, and carried on, so the screen went on looking
+ * roughly right while a guard was left permanently set. Without this handler the run would
+ * be green and the app would be broken; with it, the first such throw is the failure.
+ *
+ * Vue's default handler swallows into console.error, so replacing it is the only way to see
+ * them at all. */
+app.config.errorHandler = (err, _vm, info) => {
+  check(`the app threw during "${info}"`, false, String(err?.stack || err).split('\n')[0]);
+};
+app.mount(document.getElementById('app'));
+
+/* Vue flushes on a microtask and the app's own load is a fetch away, so every step waits.
+ * A fixed sleep rather than a flush: the thing under test is a chain of watchers reacting to
+ * a message, and asserting after one tick would be asserting on a half-settled screen. */
+const settle = (ms = 120) => new Promise(r => setTimeout(r, ms));
+const text = () => document.body.textContent.replace(/\s+/g, ' ').trim();
+/** The footer's counter - "3 / 4" - which is the one unambiguous statement of where we are. */
+const at = () => (text().match(/(\d+) \/ (\d+)/) || [])[0] || '(nowhere)';
+
+await settle(400);
+
+// ---------------------------------------------------------------- it comes up
+check('the course opens', /Course One/.test(text()), text().slice(0, 120));
+/* Four rows for three exercises: the topic's slides are a step of the walk. A count of 3
+ * here would mean the slides row was dropped, which is how a topic loses its teaching. */
+check('the walk counts the slides row', at() === '1 / 4', at());
+
+/* THE DECK IS ON THE ROW, and the frame's src is where that shows. It was looked up
+ * separately and could come back empty, composing `/undefined#/3` - which the SPA fallback
+ * answers with index.html, so the player rendered inside itself. */
+{
+  const frame = document.querySelector('iframe');
+  check('the slides step points at its own deck, at its own first slide',
+        !!frame && frame.getAttribute('src') === '/slides/c1/1.1/index.html#/3',
+        frame ? frame.getAttribute('src') : 'no iframe');
+  check('and never at a path built out of nothing',
+        !/undefined/.test(frame?.getAttribute('src') || ''), frame?.getAttribute('src'));
+}
+
+// ------------------------------------------------------- joining a live session
+location.hash = '#/live/data-team';
+dispatchEvent(new window.Event('hashchange'));
+await settle(400);
+/* The preview seeds a session somebody else is running, and joining it starts a scripted
+ * room that walks the tutor every three seconds. Stopped, because this test is the script:
+ * two things moving the same screen is a test that passes or fails on timing. */
+player.stopPreviewRoom();
+
+check('the band says whose session it is',
+      /Following .* live/.test(text()), text().slice(0, 200));
+
+const tutor = { sub: 'preview-9', name: 'Sarah Mifsud', role: 'tutor', seen: new Date().toISOString() };
+const moved = (exercise, title, slide = null) => player.emitLocal({
+  type: 'moved', sub: tutor.sub, position: { exercise, title, slide },
+  at: new Date().toISOString(),
+});
+
+player.emitLocal({ type: 'roster', members: [], here: [{ ...tutor, position: null }] });
+await settle();
+
+// ------------------------------------------------------------------- following
+moved('102', 'Second');
+await settle();
+check('the class follows where the educator goes', at() === '3 / 4', at());
+
+moved('103', 'Third');
+await settle();
+check('and keeps following as they move on', at() === '4 / 4', at());
+
+/* A SLIDES STEP IS A RANGE, so paging inside one is a move even though the row has not
+ * changed - and the follower has to page with it or the class sits on slide 3 while the
+ * educator is nine slides in, which looks exactly like following being broken. */
+moved('slides:1.1.1', 'Topic One', 7);
+await settle();
+check('and back onto the slides when the educator goes back to them', at() === '1 / 4', at());
+/* WHERE INSIDE THE RANGE THEY LAND IS NOT ASSERTED HERE, and the reason is a real boundary
+ * rather than an oversight: the follower is moved by writing the frame's hash, and the frame
+ * is a browser navigating a published deck. jsdom loads nothing into it and has no history
+ * to push, so there is no observable difference between slide 7 and slide 3 from out here.
+ * What this run does prove is that the educator returning to the deck brings the class back
+ * to it - the step, not the page within it. The clamp and the hash are `SlidesStep`'s, and
+ * the only honest place to check them is a browser. */
+
+moved('102', 'Second');
+await settle();
+
+// ------------------------------------------------------- and striking out alone
+/* A move of their own is a decision, and it ends the following. THIS IS THE ONE THE MISSING
+ * `nextTick` BROKE: `applied()` threw every time, so the guard it increments was stuck above
+ * zero for the life of the tab and this branch was unreachable. The screen still followed,
+ * so nothing looked wrong until a student navigated and was dragged back. */
+const previous = [...document.querySelectorAll('footer button')]
+  .find(b => /Previous/.test(b.textContent));
+previous.click();
+await settle();
+check('navigating stops the following',
+      /stopped following/.test(text()), text().slice(0, 240));
+check('and it is their own move, so the screen stayed where they put it', at() === '2 / 4', at());
+
+moved('101', 'First');
+await settle();
+check('the educator moving no longer drags them', at() === '2 / 4', at());
+
+// ------------------------------------------------------------------- catch up
+const catchUp = [...document.querySelectorAll('button')].find(b => /Catch up/.test(b.textContent));
+check('and there is a way back, offered because the room said where to go', !!catchUp);
+catchUp?.click();
+await settle();
+/* Catching up does NOT move them on its own - the band's Catch up sets the flag and the next
+ * thing the educator does carries them. So the assertion is on the move after it. */
+moved('102', 'Second');
+await settle();
+check('and after it they follow again', at() === '3 / 4', at());
+check('and the band says so once more', /Following .* live/.test(text()), text().slice(0, 200));
+
+await player.dispose();
+dom.restore();
+console.log(failures ? `\n${failures} failing` : '\nall green');
+process.exit(failures ? 1 : 0);
