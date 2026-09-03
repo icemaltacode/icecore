@@ -74,6 +74,11 @@ watch(open, v => {
 });
 onMounted(() => emit('width', open.value));
 
+/* Something asked for the chat. The panel opens ITSELF rather than being opened, because it
+ * owns this preference and writes it to localStorage - a second writer would disagree with
+ * this one the first time either changed. */
+watch(() => chat.reveal, () => { open.value = true; });
+
 /* Idle is a function of elapsed time, so nothing changes on screen unless something asks
  * again. Once a minute is enough for a fifteen-minute threshold and is not a render loop. */
 const now = ref(Date.now());

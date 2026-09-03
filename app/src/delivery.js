@@ -65,7 +65,7 @@ export const control = reactive({
  * on screen, and the alternative - watching the position - silently drops the second of two
  * drives to the same row, which is exactly what paging back and forth in a deck looks like.
  */
-export const driven = reactive({ position: null, code: null, at: null });
+export const driven = reactive({ position: null, code: null, cursor: null, at: null });
 
 /**
  * WHAT THE STUDENT HAD WRITTEN when control began, as they sent it.
@@ -141,7 +141,7 @@ export function forget() {
   room.members = []; room.here = {};
   for (const k of Object.keys(marks)) delete marks[k];
   setControl(null);
-  driven.position = null; driven.code = null; driven.at = null;
+  driven.position = null; driven.code = null; driven.cursor = null; driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
   stopPreviewRoom();
   stopReporting();
@@ -164,16 +164,27 @@ const REPORT_EVERY = 60 * 1000;
 const WATCHED = ['pointerdown', 'keydown', 'wheel', 'touchstart'];
 let lastReport = 0;
 let lastAt = undefined;
+let lastSlide = null;
 let here = null;   // () => ({ at, title }) - where this client currently is
 
 const report = (force = false) => {
   if (!delivery.cohort || !here) return;
   const at = here();
-  const moved = at?.at !== lastAt;
+  const slide = at?.slide ?? null;
+  /* A SLIDES STEP IS A RANGE, so paging inside one is a move even though the row has not
+   * changed. This compared only the row, which made paging a deck both unreported AND
+   * throttled to once a minute - the educator walked through nine slides and the class sat on
+   * the first, which looks exactly like following being broken.
+   *
+   * The socket half was right all along and so was the test, because the test sends `active`
+   * itself. Nothing exercised the client's own reporting, which is where the slide was being
+   * dropped. */
+  const moved = at?.at !== lastAt || slide !== lastSlide;
   if (!force && !moved && Date.now() - lastReport < REPORT_EVERY) return;
   lastReport = Date.now();
   lastAt = at?.at;
-  send('active', { at: at?.at ?? null, title: at?.title || '' });
+  lastSlide = slide;
+  send('active', { at: at?.at ?? null, title: at?.title || '', slide });
 };
 
 const onActivity = () => report();
@@ -187,7 +198,7 @@ const onActivity = () => report();
  */
 export function reportActivity(whereAmI) {
   here = whereAmI;
-  lastReport = 0; lastAt = undefined;
+  lastReport = 0; lastAt = undefined; lastSlide = null;
   for (const e of WATCHED) addEventListener(e, onActivity, { passive: true });
   report(true);
 }
@@ -271,6 +282,7 @@ const HANDLERS = {
     driven.position = m.position;
     /* Undefined means "not sent", which is not the same as an empty editor - see `drive`. */
     if (m.code !== undefined) driven.code = m.code;
+    if (m.cursor !== undefined) driven.cursor = m.cursor;
     driven.at = m.at || new Date().toISOString();
   },
   /* What the student had written when we took over. Only a controller ever receives one. */
@@ -382,6 +394,7 @@ export const drive = where => send('drive', {
   /* Undefined rather than empty when there is nothing to send: a drive that is only a
    * navigation must not blank an editor the student is looking at. */
   code: typeof where?.code === 'string' ? where.code : undefined,
+  cursor: where?.cursor ?? undefined,
 });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */

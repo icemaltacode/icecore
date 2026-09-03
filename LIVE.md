@@ -768,6 +768,45 @@ screen that lists past sessions belongs with the platform page in [backlog.md](b
 which is where the per-course and per-cohort views already are. Writes before views, as
 everywhere else here.
 
+## Four things found by using it
+
+The first live run turned up three defects and one thing that had never been built. Worth
+recording because of what they have in common: **each of them looked exactly like a feature
+working**, and none was reachable from the test suite as it stood.
+
+- **Paging a deck never left the educator's browser.** `report()` in `delivery.js` took
+  `{ at, title, slide }` from the player and sent only `at` and `title` — and compared only
+  `at` when deciding whether anything had moved, so paging was both unreported *and* throttled
+  to once a minute. The educator walked through nine slides and the class sat on the first.
+  The socket half was right the whole time and so was the test, which sends `active` itself:
+  nothing exercised the client's own reporting, which is precisely where the slide was being
+  dropped. **A test that speaks the protocol does not test the thing that speaks it.**
+- **Joining landed on the bookmark rather than on the class.** Three answers to "where does
+  this open" and they need an order: where the educator IS beats the cohort's bookmark, which
+  beats where you personally left off. The bookmark is for whoever *starts* a lesson. What
+  made it a bug rather than a preference was a race — `open()` loads a course over the
+  network and the roster often lands first, so the following watcher fired against an empty
+  walk, found no row, and did nothing; the educator then never moved again and nothing
+  corrected it. Read after the course is open, the answer is simply there. The watcher now
+  also depends on the walk itself, so the other ordering is covered too.
+- **A chat badge says something was said; it does not say what.** A student mid-exercise will
+  not open a panel to find out, and being spoken to during a lesson is the one thing on that
+  screen that might need answering. So an unseen message gets a sentence, as a popup —
+  which is the opposite call from the invitation's band, and the difference is that a lesson
+  starting stays true until you join it where a message is a moment. One at a time, replaced
+  rather than queued. The panel opens *itself* by watching a counter, because it owns that
+  preference and writes it to localStorage; reaching in from the toast would be a second
+  writer for one fact.
+- **The named caret was never built.** It is in mock screen 10 and the build order never
+  picked it up — the same way the invitation was missed. It is a widget rather than a second
+  selection: a CodeMirror selection is something the user can extend and type over, and this
+  one belongs to a different person. The name is on it, because an anonymous bar blinking in
+  your editor while somebody drives is unsettling in a way the same bar labelled "Keith" is
+  not — the difference between something happening *to* the screen and somebody being in the
+  room. The position maps through document changes, or it lags a character behind every letter
+  typed, and it travels **with** the buffer because it is an offset into it: sent separately it
+  arrives against text that has not changed yet and points at the wrong character.
+
 ## `preview.js`
 
 `icecore dev --as admin` is the only way to look at any of this without AWS behind it, and

@@ -25,7 +25,8 @@ import ControlBand from './components/ControlBand.vue';
 import ControlStart from './components/ControlStart.vue';
 import LiveInvite from './components/LiveInvite.vue';
 import SessionSummary from './components/SessionSummary.vue';
-import { chat } from './chat.js';
+import ChatToast from './components/ChatToast.vue';
+import { chat, revealChat, hideToast } from './chat.js';
 import { live as channel } from './live.js';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
@@ -256,7 +257,7 @@ const applied = fn => { applying++; fn(); nextTick(() => { applying--; }); };
 
 /* The tutor moved. Only their moves, and only while following: everybody else's positions
  * are for the panel to draw, not for this screen to obey. */
-watch(() => followedPosition()?.exercise, at => {
+watch([() => followedPosition()?.exercise, flat], ([at]) => {
   if (!delivery.cohort || delivery.mine || !delivery.following || at == null) return;
   const row = flat.value.find(e => progressId(e.id) === progressId(at));
   if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
@@ -517,9 +518,22 @@ async function enterLive(cohort, driving = false) {
      * Through `progressId` on both sides, because a mark comes back from DynamoDB as a
      * string and an exercise id is a number - compared raw it never matches, and the lesson
      * would silently open at the top of the course every time. */
-    const mark = driving ? null : marks?.[s.course]?.exercise;
-    if (mark != null) {
-      const row = flat.value.find(e => progressId(e.id) === progressId(mark));
+    /* WHERE THE EDUCATOR IS BEATS THE BOOKMARK, and the bookmark beats where you left off.
+     *
+     * Three answers to "where does this open", in that order of authority. The bookmark is
+     * for the person STARTING a lesson - it is where the class got to last time. A student
+     * joining one already in progress wants the room, and landing on the bookmark drops them
+     * at the beginning of a lesson everyone else is twenty minutes into.
+     *
+     * It is read HERE rather than left to the following watcher because of the race that
+     * produced the bug: `open()` loads a course over the network, and the roster often lands
+     * first. The watcher then fired against an empty `flat`, found no row, and did nothing -
+     * after which the educator never moved again and nothing ever corrected it. Read after
+     * the course is open, the answer is simply available. */
+    const at = driving ? null
+      : followedPosition()?.exercise ?? marks?.[s.course]?.exercise;
+    if (at != null) {
+      const row = flat.value.find(e => progressId(e.id) === progressId(at));
       if (row) currentId.value = row.id;
     }
 
@@ -641,17 +655,23 @@ function startControl(sharing) {
 
 /** What this client currently has in its editor, from whichever exercise is on screen. */
 const myCode = ref('');
+/** And where its caret is, so the other end can see somebody in the room. */
+const myCursor = ref(null);
 
 /* Driving: every change goes with the position, because they change together - moving to an
  * exercise is also arriving at its starter code, and two messages would show one exercise's
  * prompt over another's buffer for as long as the second took to arrive. Already debounced
  * inside the exercise component. */
-watch(myCode, v => {
-  if (controlSub.value && drivingSomebody()) {
-    drive({ at: current.value?.id ?? null, title: current.value?.title,
-            slide: mySlide.value, code: v });
-  }
-});
+/* The text and the caret go together, because the caret is an offset INTO that text: sent
+ * apart, one arrives against a document the other has not reached yet and points at the wrong
+ * character. Both watchers call the same send for that reason. */
+const driveNow = () => {
+  if (!controlSub.value || !drivingSomebody()) return;
+  drive({ at: current.value?.id ?? null, title: current.value?.title,
+          slide: mySlide.value, code: myCode.value, cursor: myCursor.value });
+};
+watch(myCode, driveNow);
+watch(myCursor, driveNow);
 
 /* Being driven: send what we have, ONCE, the moment control begins. This is the half that
  * actually helps - a progress row only ever holds the code that SOLVED an exercise, so a
@@ -931,6 +951,12 @@ watch(currentId, id => {
     <LiveChat v-if="delivery.cohort && chat.popped && !controlSub" popped :here-at="currentId"
               @goto="goLive" />
 
+    <!-- Out of flow, so it takes no row of this grid. Never in a control tab: that screen is
+         somebody else's session and a message addressed to the educator does not belong on
+         top of it. -->
+    <ChatToast v-if="delivery.cohort && chat.toast && !controlSub" :message="chat.toast"
+               @open="revealChat" @close="hideToast" />
+
     <!-- User management is a whole mode of its own, not a pane of the player: it has no
          use for the exercise nav, and it has to be reachable from the grid, where there is
          none. -->
@@ -1100,8 +1126,11 @@ watch(currentId, id => {
           :frozen="beingDriven()"
           :driven-code="shownCode"
           @solved="markSolved"
+          :peer-at="beingDriven() ? driven.cursor : null"
+          :peer-name="control.byName"
           @checked="(id, v) => reportMark({ at: id, ...v })"
-          @code="v => myCode = v" />
+          @code="v => myCode = v"
+          @cursor="n => myCursor = n" />
 
         <footer v-if="total">
           <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>

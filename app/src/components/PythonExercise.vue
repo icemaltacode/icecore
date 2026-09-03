@@ -33,11 +33,16 @@ const props = defineProps({
    * holds the code that solved one. It is the half of control that actually helps. */
   frozen: Boolean,
   drivenCode: String,
+  /* Where the other person's caret is, and whose it is. Passed straight through - this
+   * component has no more business knowing about remote control than it does about the
+   * channel, and the editor is the only thing that can draw one. */
+  peerAt: { type: Number, default: null },
+  peerName: String,
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved', 'checked', 'code']);   // see McqExercise
+const emit = defineEmits(['solved', 'checked', 'code', 'cursor']);   // see McqExercise
 
 const mdx = text => md(text, {
   base: imageBase(props.courseId, props.exercise.topicId),
@@ -281,7 +286,9 @@ const ranQuietly = computed(() =>
     <section class="work">
       <div class="editor-pane">
         <div class="tabbar"><span class="tab active">script.py</span></div>
-        <CodeEditor v-model="code" language="python" :readonly="frozen" @run="doRun" />
+        <CodeEditor v-model="code" language="python" :readonly="frozen"
+                    :peer-at="peerAt" :peer-name="peerName"
+                    @cursor="n => emit('cursor', n)" @run="doRun" />
         <div class="actions">
           <span v-if="booting" class="muted kbd">Starting Python…</span>
           <span v-else-if="verdict" class="verdict prose inline"

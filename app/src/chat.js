@@ -33,11 +33,27 @@ const KEEP = 200;
 
 const POP_KEY = 'ice-live-chat-popped';
 
+/* How long a popup stays. Long enough to read a sentence and decide, short enough that three
+ * in a row do not queue up over the exercise somebody is working on. */
+const TOAST_MS = 7000;
+
 export const chat = reactive({
   /** Oldest first, which is the order a transcript is read in. */
   messages: [],
   /** How many have arrived since anything last drew them. Zero while something is. */
   unread: 0,
+  /* THE MOST RECENT MESSAGE NOBODY HAS SEEN, or null. A badge on a collapsed rail says that
+   * something was said; it does not say WHAT, and a student mid-exercise will not open a
+   * panel to find out. Being spoken to during a lesson is the one thing on this screen that
+   * might need answering, so it gets a sentence rather than a number.
+   *
+   * ONE AT A TIME, replaced rather than queued: three popups stacked over an exercise is a
+   * thing to dismiss rather than a thing to read, and the older ones are in the log anyway. */
+  toast: null,
+  /* Bumped when something asks for the chat to be shown. The panel owns whether it is open
+   * and reads this; a counter rather than a boolean, because asking twice in a row has to
+   * work and a flag would need resetting by whoever consumed it. */
+  reveal: 0,
   /* Docked in the participants panel, or floating over the player. Remembered per browser
    * like the panel's own collapse: it says something about how somebody wants to work, and
    * a window that returns to the dock every lesson reads as refusing to stay put. */
@@ -75,11 +91,37 @@ function merge(incoming) {
     .slice(-KEEP);
 }
 
+let toastTimer;
+
 on('said', m => {
   merge([m]);
-  if (readers > 0 || mine(m)) chat.unread = 0;
-  else chat.unread += 1;
+  /* Not our own, and not while something is already showing the log - a popup for a message
+   * you can already see is a popup that trains people to dismiss them. */
+  if (readers > 0 || mine(m)) { chat.unread = 0; return; }
+  chat.unread += 1;
+  chat.toast = m;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { chat.toast = null; }, TOAST_MS);
 });
+
+/** Put it away without reading the rest. */
+export function hideToast() {
+  clearTimeout(toastTimer);
+  chat.toast = null;
+}
+
+/**
+ * Show the chat, wherever it happens to live.
+ *
+ * The panel opens ITSELF, by watching `reveal`. Reaching in and setting its localStorage key
+ * from here would be a second writer for a preference that component owns, and the two would
+ * disagree the first time either changed.
+ */
+export function revealChat() {
+  hideToast();
+  chat.unread = 0;
+  if (!chat.popped) chat.reveal += 1;
+}
 
 on('history', m => merge(m.messages));
 
@@ -91,7 +133,10 @@ on('open', () => send('history'));
 /* A different session is a different conversation. Watching the session rather than being
  * told by it keeps the dependency one-way: delivery.js has no business knowing chat exists,
  * and a `clearChat()` call inside `forget()` would be the import that closes the loop. */
-watch(() => delivery.cohort, () => { chat.messages = []; chat.unread = 0; });
+watch(() => delivery.cohort, () => {
+  chat.messages = []; chat.unread = 0;
+  hideToast();
+});
 
 /**
  * Say something to the room. Returns false when there was nothing to say or nowhere to say

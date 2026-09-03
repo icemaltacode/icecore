@@ -22,11 +22,16 @@ const props = defineProps({
    * holds the code that solved one. It is the half of control that actually helps. */
   frozen: Boolean,
   drivenCode: String,
+  /* Where the other person's caret is, and whose it is. Passed straight through - this
+   * component has no more business knowing about remote control than it does about the
+   * channel, and the editor is the only thing that can draw one. */
+  peerAt: { type: Number, default: null },
+  peerName: String,
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved', 'checked', 'code']);   // see McqExercise
+const emit = defineEmits(['solved', 'checked', 'code', 'cursor']);   // see McqExercise
 
 // Figures and embedded apps are named bare in the markdown - a filename, an app
 // directory - and this is what turns them into URLs under the course's content.
@@ -282,7 +287,8 @@ async function doReset() {
           <span class="tab active">query.sql</span>
           <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
         </div>
-        <CodeEditor v-model="code" :readonly="frozen" @run="doRun" />
+        <CodeEditor v-model="code" :readonly="frozen" :peer-at="peerAt" :peer-name="peerName"
+                    @cursor="n => emit('cursor', n)" @run="doRun" />
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>

@@ -1045,6 +1045,12 @@ async function tallied(cohort, mark, seeded = false) {
          * however long the second took to arrive. Undefined rather than empty when there is
          * nothing to send, so a drive that is only a navigation does not blank an editor. */
         code: typeof msg.code === 'string' ? msg.code.slice(0, EDITOR_LIMIT) : undefined,
+        /* WHERE THE DRIVER'S CARET IS, so the student can see somebody in the room rather
+         * than text changing by itself. Travels with the buffer because it describes a
+         * position IN that buffer - sent separately, a caret would arrive against text that
+         * had not changed yet and point at the wrong character. */
+        cursor: Number.isFinite(Number(msg.cursor)) && msg.cursor != null
+          ? Number(msg.cursor) : undefined,
         at: now,
       }, { sub: c.sub });
       return { statusCode: 200, body: 'ok' };
