@@ -136,30 +136,42 @@ onMounted(() => {
              carries no colour of its own, so in dark mode it came out black on dark blue.
              Kept alongside so that adding drawSelection later does not reintroduce it. */
           '.cm-content': { caretColor: 'var(--ice-fg)' },
-          /* Zero-width, so inserting it between two characters does not move them. The bar is
-             absolutely placed against it and the label hangs above, out of the line's flow -
-             a label on the baseline would push the code sideways as somebody typed. */
-          '.cm-peer': { position: 'relative', display: 'inline-block', width: '0' },
-          /* IT BLINKS, because a static bar in a read-only editor reads as a decoration
-             rather than as a caret - and the whole point of it is that somebody is typing
-             there. The same 1.06s CodeMirror uses for its own, so the two never look like
-             different kinds of thing. Honoured off under reduced motion, where a solid bar
-             is still perfectly legible. */
+          /* ZERO WIDTH AND ZERO HEIGHT, so inserting it between two characters moves
+             neither them nor the line. Both children are absolutely placed against it and
+             measured in `em`, which is the only way to size a caret to the text when the
+             thing it hangs off has no size of its own.
+
+             The height was the bug: this was an inline-block of width 0 with the bar given
+             `top: 0; bottom: 0`, and an empty inline-block is zero pixels tall - so the bar
+             was drawn with no height at all and only the label ever appeared. `bottom: 0`
+             against a zero-height box also put the label's foot on the baseline, which is
+             why it sat across the code instead of above it. */
+          '.cm-peer': {
+            position: 'relative', display: 'inline-block', width: '0', height: '0',
+            verticalAlign: 'baseline',
+          },
+          /* From just under the baseline to just over the ascender: the em box, near enough,
+             which is where a caret belongs in a 1.6 line. IT BLINKS, because a static bar in
+             a read-only editor reads as a decoration rather than as somebody typing - the
+             whole point of it. CodeMirror's own 1.06s, so the two never look like different
+             kinds of thing. */
           '.cm-peer-bar': {
-            position: 'absolute', left: '-1px', top: '0', bottom: '0', width: '2px',
+            position: 'absolute', left: '-1px', bottom: '-.28em', height: '1.3em',
+            width: '2px', borderRadius: '1px',
             background: 'var(--ice-drive-line)',
             animation: 'ice-peer-blink 1.06s steps(1) infinite',
           },
-          '@keyframes ice-peer-blink': { '50%': { opacity: '0' } },
-          '@media (prefers-reduced-motion: reduce)': {
-            '.cm-peer-bar': { animation: 'none' },
-          },
+          /* Clear of the ascender, so it sits in the gap between lines rather than over the
+             code. Overlapping the line above is what every editor with this feature does and
+             is the right trade: the name is read once and the code is read continuously. */
           '.cm-peer-name': {
-            position: 'absolute', left: '-1px', bottom: '100%', whiteSpace: 'nowrap',
-            padding: '1px 5px', borderRadius: '4px 4px 4px 0', fontSize: '10px',
-            lineHeight: '1.5', fontFamily: 'var(--ice-font-sans, inherit)',
+            position: 'absolute', left: '-2px', bottom: '1.12em', whiteSpace: 'nowrap',
+            padding: '3px 8px', borderRadius: '6px 6px 6px 1px',
+            fontSize: '10.5px', lineHeight: '1.25', fontWeight: '600',
+            fontFamily: 'var(--ice-font-sans, inherit)',
             background: 'var(--ice-drive-line)', color: 'var(--ice-on-drive)',
             pointerEvents: 'none', userSelect: 'none',
+            boxShadow: '0 1px 4px rgb(0 0 0 / .25)',
           },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
           '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {

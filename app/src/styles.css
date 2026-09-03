@@ -231,3 +231,14 @@ button { font-family: inherit; }
 .prose a { color: var(--ice-primary-strong); }
 .prose.inline > p:last-child { margin-bottom: 0; }
 .prose.inline > p:first-child { margin-top: 0; }
+
+/* The peer caret's blink, for CodeEditor's remote cursor.
+ *
+ * HERE RATHER THAN IN `EditorView.theme`, where the rest of that caret's CSS lives. Theme
+ * rules go through style-mod, which scopes class names - a keyframe name is not a class, and
+ * an animation whose name does not survive that is an animation that silently never runs.
+ * `steps(1)` rather than a fade: a caret is on or off, and easing it makes it a pulse. */
+@keyframes ice-peer-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cm-peer-bar { animation: none !important; }
+}
