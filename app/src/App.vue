@@ -567,8 +567,19 @@ async function enterLive(cohort, driving = false) {
      * first. The watcher then fired against an empty `flat`, found no row, and did nothing -
      * after which the educator never moved again and nothing ever corrected it. Read after
      * the course is open, the answer is simply available. */
+    /* THE BOOKMARK BELONGS TO WHOEVER STARTS THE LESSON, and to nobody else.
+     *
+     * It records where the class got to last time, which is the right answer for an educator
+     * opening or resuming one and the wrong answer for a student walking in twenty minutes
+     * later. Offering it to them meant a hop to last week's position followed by a second hop
+     * to the educator when the roster landed - two moves, neither of which anybody asked for.
+     *
+     * A joining student goes to the class if the room has already said where it is, and
+     * otherwise stays exactly where they were: the roster is a second away, and standing
+     * still is a better guess than last term's. */
     const at = driving ? null
-      : followedPosition()?.exercise ?? marks?.[s.course]?.exercise;
+      : delivery.mine ? marks?.[s.course]?.exercise
+        : followedPosition()?.exercise ?? null;
     if (at != null) {
       const row = flat.value.find(e => progressId(e.id) === progressId(at));
       /* THROUGH `applied`, because arriving somewhere is not striking out on your own.
@@ -963,7 +974,16 @@ watch(currentId, () => {
    * lesson is not, not when a ref was assigned. */
   if (!applying && !delivery.mine && delivery.following) {
     const lead = followedPosition()?.exercise;
-    if (lead == null || progressId(lead) !== progressId(currentId.value)) wandered();
+    /* AND ONLY WHEN WE KNOW WHERE THE CLASS IS. Not knowing is not evidence of having left
+     * it: a client that has just joined has no roster yet, so `followedPosition()` is null
+     * for the first second of every session - and treating that as wandering told students
+     * they had stopped following a lesson they had that moment joined, with a Catch up button
+     * for a position nobody had reported.
+     *
+     * The cost is a second in which a student who navigates deliberately is still counted as
+     * following, and is then moved by the educator's next step. That is the lesser harm by
+     * far, and it self-corrects on their next move. */
+    if (lead != null && progressId(lead) !== progressId(currentId.value)) wandered();
   }
   mySlide.value = null;   // a new row starts a new range
   reportPosition();

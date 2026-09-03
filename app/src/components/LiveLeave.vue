@@ -14,23 +14,30 @@
  * Staying is the default action and reads first, because pressing Leave and then reading the
  * dialog is the exact sequence this exists to interrupt.
  */
-defineProps({
+import { computed } from 'vue';
+
+const props = defineProps({
   /** Whose lesson, so the question names the thing being left. */
   name: String,
   cohortTitle: String,
 });
 defineEmits(['leave', 'close']);
+
+/* BUILT AS A STRING, not assembled out of `<template v-if>` in the middle of a sentence.
+ * Vue condenses whitespace, and a leading space inside a conditional template is exactly the
+ * kind it eats - which is how this shipped reading "carries on teachingPython - ONEY 2026".
+ * A sentence with a hole in it is a string with a hole in it. */
+const lead = computed(() =>
+  `${props.name || 'Your educator'} carries on teaching`
+  + (props.cohortTitle ? ` ${props.cohortTitle}` : '')
+  + ', and your screen stops following theirs.');
 </script>
 
 <template>
   <div class="scrim" @click.self="$emit('close')">
     <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="leave-h">
       <h3 id="leave-h">Leave this lesson?</h3>
-      <p class="lead">
-        <template v-if="name">{{ name }}</template><template v-else>Your educator</template>
-        carries on teaching<template v-if="cohortTitle"> {{ cohortTitle }}</template>, and your
-        screen stops following theirs.
-      </p>
+      <p class="lead">{{ lead }}</p>
       <ul class="facts">
         <li>Everything you have done is kept.</li>
         <li>You can rejoin from the banner while the lesson is still running.</li>
