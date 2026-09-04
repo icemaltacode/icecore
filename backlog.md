@@ -22,22 +22,5 @@ in a month.
   got it", not an audit log.
 
 
-# Current Improvements
-
-1. [x] When adding a new Cohort, give the admin the ability to select one or more courses to be associated with that cohort. These should not be checkboxes, as in the future there will be many courses. Instead, there should be a selectable list, or a two pane list etc.
-
-2. [x] The 'Manage Users' button that appears in the top bar should be renamed to 'Admin'. 
-
-3. [x] When adding a new users, the 'can manage users' checkbox should be renamed to 'Admin'.
-
-4. [x] The checkboxes which appear when editing a cohort from the cohort list should be consistent with the new UI developed for point 1.
-
-5. [x] Move the 'forgot it' link in the login page to under the password field, not above it.
-
-6. [ ] If possible, when the educator highlights code whilst remote controlling or sharing their editor, the students should also see the code highlighted. This is a nice to have, but not critical. Ideally in the same orangey hue.
-
-7. [x] On narrow screens, the participant list panel overlaps the code editor, in a weirdly transparent way. It should
-  7.1: Not be transparent.
-  7.2: Collapse when it would otherwise overlap the code editor, and be accessible via the button.
-
-8. [x] The slides view is currently forced to be a panel on the right. Can we have a button to toggle between this view (which we'll call vertical) and horizontal, where the slides move to a horizontal panel at the bottom of the screen?
+# Future
+- [ ] Whiteboard during live lessons.
