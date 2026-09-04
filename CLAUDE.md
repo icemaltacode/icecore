@@ -255,6 +255,16 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   check looked at the prefixes already protected, so it could not catch it. Forgetting to add
   a new app file to the allowlist means it does not deploy, which is visible; forgetting to
   exclude someone else's prefix means it is deleted, which is not.
+- **The favicon rides in `assets/`, not at the bucket root**, and that is the allowlist's
+  doing rather than a preference. `app/index.html` links four hashed files that Vite emits into
+  `assets/*`, which `just deploy` already carries and already caches for a year. Moving them to
+  the root - the conventional place - would need a line in that allowlist and a copy step,
+  because the app's own `public/` is never served: `icecore dev` and `bundle` point Vite's
+  publicDir at the course's staging directory. The visible cost is that a bare `/favicon.ico`
+  404s, which only a browser with no `<link>` to read would ask for. There is no
+  `site.webmanifest` for the same reason - its icon paths are root-absolute and nothing
+  rewrites them.
+
 - **The invitation's logo is deployed by the stack, not by `just deploy`.** A mail client
   drops an inline `data:` URI and Cognito sends one body with no attachment, so a remote
   image is the only route — which makes the image a dependency of the email, and the email
