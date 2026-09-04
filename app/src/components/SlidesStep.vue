@@ -14,11 +14,12 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue';
 import DeckActions from './DeckActions.vue';
 import SplitPane from './SplitPane.vue';
 import Icon from './Icon.vue';
+import BoardClip from './BoardClip.vue';
 import { loadNotes } from '../content.js';
 import { md } from '../md.js';
 import { watchFrame } from '../pointer.js';
 
-const emit = defineEmits(['slide']);
+const emit = defineEmits(['slide', 'board']);
 const props = defineProps({
   /* Which slide to be on, when something outside is driving - a live session following the
    * tutor. Undefined means nobody is driving, which is every other use of this component.
@@ -395,6 +396,12 @@ const onLoad = () => {
                 @click="side = side === 'row' ? 'column' : 'row'">
           <Icon :name="side === 'row' ? 'rows' : 'columns'" :size="15" />
         </button>
+        <!-- A THIRD SMALL THING TO DO WITH THIS TOPIC, in the group that already means
+             exactly that. The footer's paperclip cannot serve this row: the Slides button it
+             sits beside is hidden on a slides step, so there is no footer group here to join.
+             Passed up rather than opened here, because the viewer covers the whole screen and
+             belongs to no pane. -->
+        <BoardClip bare :topic="row.topicId" @open="emit('board', $event)" />
         <DeckActions :deck="base" :open="src" :name="row.title" />
       </div>
     </header>

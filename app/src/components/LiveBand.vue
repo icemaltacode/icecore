@@ -28,6 +28,8 @@ const props = defineProps({
   mine: Boolean,
   cohortTitle: String,
   courseTitle: String,
+  /** Whether a whiteboard is up. Read back, never assumed - see the switch below. */
+  boarding: Boolean,
   /** How many are connected. */
   here: { type: Number, default: null },
   /** Whether this screen still moves with the tutor's. Meaningless when `mine`. */
@@ -47,7 +49,7 @@ const props = defineProps({
    * the switch to say one thing and the class to be doing another. */
   syncing: Boolean,
 });
-const emit = defineEmits(['end', 'leave', 'catch-up', 'sync']);
+const emit = defineEmits(['end', 'leave', 'catch-up', 'sync', 'board']);
 
 const now = ref(Date.now());
 let tick;
@@ -127,6 +129,17 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
             @click="emit('sync', !syncing)">
       <Icon name="edit" :size="14" />
       {{ syncing ? 'Sharing editor' : 'Share editor' }}
+    </button>
+    <!-- BESIDE Share editor, because it is the same kind of thing: something an educator
+         does to the ROOM rather than to one person. A board is not a place the class is sent
+         to - it is an overlay, so nothing underneath it moves and nobody loses their row. -->
+    <button v-if="mine" class="btn ghost sync" :class="{ on: boarding }" type="button"
+            :title="boarding
+              ? 'Put the whiteboard away. Everyone goes back to where they were.'
+              : 'Draw for the class on a blank board.'"
+            @click="emit('board', !boarding)">
+      <Icon name="board" :size="14" />
+      {{ boarding ? 'Whiteboard on' : 'Whiteboard' }}
     </button>
     <button v-if="mine" class="btn danger" type="button" @click="emit('end')">End session</button>
     <template v-else>

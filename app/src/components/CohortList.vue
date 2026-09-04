@@ -187,7 +187,10 @@ const finish = c => run('end', async () => {
 const destroy = c => run('delete', async () => {
   const r = await api(`admin/cohorts?id=${encodeURIComponent(c.id)}`, { method: 'DELETE' });
   confirming.value = '';
-  return `${c.title} deleted. ${r.removed} ${r.removed === 1 ? 'person is' : 'people are'} no longer in it, and no longer on its courses. Nothing else about them changed.`;
+  const boards = r.boards
+    ? ` ${r.boards} saved ${r.boards === 1 ? 'board' : 'boards'} went with it.`
+    : '';
+  return `${c.title} deleted. ${r.removed} ${r.removed === 1 ? 'person is' : 'people are'} no longer in it, and no longer on its courses.${boards} Nothing else about them changed.`;
 });
 
 /* One listener for the whole list rather than one per row: two of them would each have to
@@ -274,7 +277,12 @@ onUnmounted(() => removeEventListener('click', shut));
             keep their account and their progress, but lose access to
             {{ (c.courses || []).length ? courseTitles(c) : 'its courses' }} until they are
             put in another cohort that takes {{ (c.courses || []).length === 1 ? 'it' : 'them' }}.
-            Archive it instead to end an intake without that.</span>
+            <!-- AND IT DESTROYS THE ONLY COPY OF SOMETHING. Every other loss here is
+                 recoverable by putting the class in another intake; a saved whiteboard is
+                 not, and it is a lesson somebody taught. Said out loud rather than left to
+                 the word "cohort" to imply. -->
+            Any whiteboards kept for this class go with it, and those cannot be brought back.
+            Archive it instead to end an intake without any of that.</span>
           <button class="btn danger" type="button" :disabled="!!busy" @click="destroy(c)">Delete</button>
           <button class="link" type="button" @click="confirming = ''">Cancel</button>
         </template>

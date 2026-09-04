@@ -23,4 +23,7 @@ in a month.
 
 
 # Future
-- [ ] Whiteboard during live lessons.
+- [ ] **Whiteboard during live lessons** — an educator draws on a blank overlay, the class
+  sees it, and a saved board comes back as an attachment on the topic it was drawn for.
+  Planned in [WHITEBOARD.md](WHITEBOARD.md); `drauu` is already in the stack and
+  `decksync.js` already proves the transport.

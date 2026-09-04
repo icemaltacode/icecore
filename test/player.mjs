@@ -258,6 +258,52 @@ await settle(300);
 check('a drive that moves them to another exercise carries its code with it',
       at() === '4 / 4' && /driven_across_a_move/.test(editorText()), `${at()} ${editorText()}`);
 
+// ------------------------------------------------- the educator goes to the board
+/* THE STUDENT'S SIDE OF THE WHITEBOARD, which is the half `--as admin` cannot show: an
+ * educator's board is drauu drawing on their own screen, and a student's is markup arriving
+ * from somewhere else.
+ *
+ * THE ASSERTION THAT MATTERS IS THE LAST ONE. The board is an overlay and not a row in the
+ * walk, and the whole design rests on that: it is why a board can simply be shown to the room
+ * with no invitation, and why a student who has stopped following keeps their place under it.
+ * As a row, showing it would be a MOVE - so the number in the footer being the same before
+ * and after is the design, not a detail.
+ */
+{
+  const wb = () => document.querySelector('.whiteboard');
+  const ink = () => wb()?.querySelector('.wbsurface')?.innerHTML || '';
+  const before = at();
+
+  player.emitLocal({ type: 'boarding', on: true, page: 0 });
+  await settle(150);
+  check('a board put up in the room reaches the class', !!wb());
+  check('and a student gets no chrome on it - they are watching one, not using one',
+        !wb()?.querySelector('.wbbar'));
+
+  player.emitLocal({ type: 'paged', page: 0, svg: '<path d="M10,10 L90,90" stroke="#f00"/>' });
+  await settle(150);
+  check('the page arrives and is drawn', /M10,10/.test(ink()), ink().slice(0, 120));
+
+  player.emitLocal({ type: 'stroked', page: 0, node: '<rect x="5" y="6" width="8" height="9"/>' });
+  await settle(150);
+  check('and a stroke is appended to it rather than replacing it',
+        /M10,10/.test(ink()) && /width="8"/.test(ink()), ink().slice(0, 200));
+
+  /* Filtered on the way in, and this is the only place that can prove it end to end: the
+   * string goes through the channel, the store and `v-html` exactly as a real one does. */
+  player.emitLocal({ type: 'paged', page: 0,
+                     svg: '<rect x="1" onmouseover="alert(1)"/><script>alert(2)<\/script>' });
+  await settle(150);
+  check('what arrives is filtered before it becomes DOM',
+        /x="1"/.test(ink()) && !/onmouseover|alert/.test(ink()), ink().slice(0, 200));
+
+  player.emitLocal({ type: 'boarding', on: false, page: 0 });
+  await settle(150);
+  check('the board goes away when the educator puts it away', !wb());
+  check('AND THE STUDENT IS EXACTLY WHERE THEY WERE - an overlay moves nobody',
+        at() === before, `${at()} was ${before}`);
+}
+
 // ------------------------------------- the educator's annotations, arriving
 /* THE PLAYER'S OWN WIRING, which is the half a browser harness cannot reach: `decked` off
  * the channel -> delivery.js -> decksync.js -> a postMessage into whatever deck is on screen.
@@ -288,6 +334,42 @@ await settle(150);
   check("an educator's annotation reaches the deck on screen",
         got.some(m => m?.kind === 'ice:deck-sync' && m.data?.['3']),
         JSON.stringify(got).slice(0, 200));
+}
+
+// ------------------------------------------------------- the paperclip, afterwards
+/* WHAT A STUDENT FINDS LATER. The board itself is live and gone; this is the half that
+ * survives it, and the half a student who missed the lesson is actually served by.
+ *
+ * TWO HOMES, AND THIS COVERS THE SLIDES ONE. The footer's paperclip sits beside the Slides
+ * button, which is hidden on a slides step - so on this row the header's is the only one
+ * there is, which is exactly why there are two.
+ */
+{
+  const clip = () => document.querySelector('.slidestep .boardclip button');
+  check('a topic with kept boards draws a paperclip', !!clip());
+
+  clip().click();
+  await settle(120);
+  const items = [...document.querySelectorAll('.clipmenu button')];
+  check('several boards are chosen from rather than guessed between', items.length === 2,
+        `${items.length} in the menu`);
+
+  items[0].click();
+  await settle(200);
+  const surface = document.querySelector('.boardview .bvsurface');
+  check('opening one draws it', !!surface && /ellipse|path/.test(surface.innerHTML || ''),
+        (surface?.innerHTML || 'no surface').slice(0, 120));
+  check('and says which board it is', /Joins, on the board/.test(text()), text().slice(0, 160));
+
+  /* Two pages, so the pager is there. A board of one page must NOT draw it - a control that
+   * says there is somewhere else to go and then refuses is worse than no control. */
+  check('a board of more than one page can be paged',
+        /1 \/ 2/.test(document.querySelector('.bvfoot')?.textContent || ''),
+        document.querySelector('.bvfoot')?.textContent || 'no pager');
+
+  [...document.querySelectorAll('.boardview button')].find(b => /Close/.test(b.textContent))?.click();
+  await settle(120);
+  check('and it closes again', !document.querySelector('.boardview'));
 }
 
 await player.dispose();

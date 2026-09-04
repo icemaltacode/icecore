@@ -111,6 +111,25 @@ const CHAT_CHARS = 500;
  * somebody was being helped. */
 const EDITOR_LIMIT = 20000;
 
+/* THE BOARD LIVES ON THE SESSION ROW, for the reason `sync` does: a student joining ten
+ * minutes into a lesson has to arrive already knowing there is one, and a fact held only in
+ * the educator's browser cannot tell them.
+ *
+ * STORED AS A LIST OF NODES, NOT A STRING. A stroke is an APPEND, and DynamoDB can append to
+ * a list (`list_append`) and cannot concatenate a string - so this shape is what lets a
+ * stroke be one small write with no read in front of it. A full page replaces the list with
+ * a single entry; a joiner is handed `nodes.join('')`, which is the same markup either way.
+ *
+ * The three bounds are a backstop rather than the mechanism - board.js refuses to send a page
+ * over its own PAGE_LIMIT and says so to the educator, which is the version a person can act
+ * on. What these guard is the ROW: a DynamoDB item is capped at 400KB and the session row
+ * also carries 200 chat messages. */
+const BOARD_NODES = 600;
+const BOARD_NODE_CHARS = 8 * 1024;
+const BOARD_PAGE_CHARS = 24 * 1024;
+/* A board of a thousand pages is a bug rather than a lesson. */
+const BOARD_PAGES = 200;
+
 /* Same shape as the admin function's: a single group arrives as a string and several as an
  * array, and Cognito does not promise which. */
 const isAdmin = claims => {
@@ -1330,6 +1349,114 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
+    /* THE WHITEBOARD. A blank surface over everyone's player, drawn on by the educator.
+     *
+     * A WRITE, LIKE `sync`, AND FOR THE SAME REASON - and gated the same way: the DELIVERER,
+     * not any tutor. A second admin watching the lesson may take control of one student;
+     * putting a board over every screen in the room is the lesson itself, and the lesson has
+     * one owner.
+     *
+     * It moves nobody. The board is an overlay on the other side, so a student who has
+     * stopped following keeps their place under it and gets it back when it goes - which is
+     * why this can simply be shown to the room with no invitation and no negotiation. See
+     * board.js.
+     */
+    case 'board': {
+      if (row.role !== 'tutor') return { statusCode: 200, body: 'not yours' };
+      const on = !!msg.on;
+      try {
+        await ddb.send(new UpdateCommand({
+          TableName: TABLE, Key: sessionKey(row.cohort),
+          UpdateExpression: on ? 'SET #b = :b' : 'REMOVE #b',
+          ConditionExpression: 'attribute_exists(sk) AND #by = :me',
+          ExpressionAttributeNames: { '#b': 'board', '#by': 'by' },
+          ExpressionAttributeValues: on
+            ? { ':b': { page: 0, nodes: [] }, ':me': row.sub }
+            : { ':me': row.sub },
+        }));
+      } catch (e) {
+        if (e.name !== 'ConditionalCheckFailedException') throw e;
+        return { statusCode: 200, body: 'not yours' };
+      }
+      /* To everybody, the sender included: the educator's own overlay opens off the flag
+       * coming back rather than off the click, which is `sync`'s rule - a board that says it
+       * is up when the write was refused is worse than one that lags. */
+      await emit(event, row.cohort, { type: 'boarding', on, page: 0 });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* A PAGE IN FULL. Sent when the page TURNS, and whenever a change is not an append -
+     * undo, redo, clear, a stroke erased. Those remove or reorder nodes, so a stream of
+     * appends cannot express them and the page is sent whole instead.
+     *
+     * It is also what makes the row good enough for a joiner: `nodes` is reset to this one
+     * entry, so what is stored is always the current page and never a history of it. */
+    case 'page': {
+      const held = await sessionFor(row.cohort);
+      if (row.role !== 'tutor' || held?.by !== row.sub || !held?.board) {
+        return { statusCode: 200, body: 'no board of yours' };
+      }
+      const page = Math.max(0, Math.min(BOARD_PAGES - 1, Math.trunc(Number(msg.page) || 0)));
+      const svg = String(msg.svg ?? '');
+      /* Refused rather than truncated. Half an SVG is not a smaller drawing, it is a parse
+       * error blamed on the wrong thing - decksync.js says the same about a slide. */
+      if (svg.length > BOARD_PAGE_CHARS) return { statusCode: 200, body: 'page too big' };
+      await ddb.send(new UpdateCommand({
+        TableName: TABLE, Key: sessionKey(row.cohort),
+        UpdateExpression: 'SET #b.#p = :page, #b.#n = :nodes',
+        ConditionExpression: 'attribute_exists(#b)',
+        ExpressionAttributeNames: { '#b': 'board', '#p': 'page', '#n': 'nodes' },
+        ExpressionAttributeValues: { ':page': page, ':nodes': svg ? [svg] : [] },
+      }));
+      /* NOT BACK TO THE SENDER, and this is where the board differs from `sync`. A flag is
+       * read back because a refused write must not leave a toggle claiming to be on; a
+       * drawing is the educator's own DOM and it is already on their screen. Echoed, their
+       * own page would be loaded back underneath the pen. */
+      await emit(event, row.cohort, { type: 'paged', page, svg }, { except: id });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* ONE STROKE, the moment the pen lifts. The common case by far, and the reason the whole
+     * page is not sent on every change: a page accumulates for the length of a lesson, and
+     * `stylus` mode emits a filled outline with a point every few pixels.
+     *
+     * A STROKE FOR A PAGE NOBODY IS ON IS DROPPED. Turning a page and finishing a stroke can
+     * cross on the wire, and appending it to the new page would draw it somewhere it was
+     * never drawn. */
+    case 'stroke': {
+      const held = await sessionFor(row.cohort);
+      if (row.role !== 'tutor' || held?.by !== row.sub || !held?.board) {
+        return { statusCode: 200, body: 'no board of yours' };
+      }
+      const page = Math.trunc(Number(msg.page));
+      if (page !== held.board.page) return { statusCode: 200, body: 'stale page' };
+      const node = String(msg.node ?? '');
+      if (!node || node.length > BOARD_NODE_CHARS) {
+        return { statusCode: 200, body: 'not a stroke' };
+      }
+      try {
+        await ddb.send(new UpdateCommand({
+          TableName: TABLE, Key: sessionKey(row.cohort),
+          UpdateExpression: 'SET #b.#n = list_append(#b.#n, :one)',
+          /* The row's ceiling, and the only one that can be enforced without reading it
+           * back first. Reaching it is told to the EDUCATOR rather than swallowed: a page
+           * that has silently stopped reaching the class still looks perfect on the one
+           * screen that does not matter. */
+          ConditionExpression: 'attribute_exists(#b) AND size(#b.#n) < :max',
+          ExpressionAttributeNames: { '#b': 'board', '#n': 'nodes' },
+          ExpressionAttributeValues: { ':one': [node], ':max': BOARD_NODES },
+        }));
+      } catch (e) {
+        if (e.name !== 'ConditionalCheckFailedException') throw e;
+        await to(event, id, { type: 'boardfull', page });
+        return { statusCode: 200, body: 'page full' };
+      }
+      // Not back to the sender, for the reason `paged` gives - and here it would double
+      // every stroke the educator drew.
+      await emit(event, row.cohort, { type: 'stroked', page, node }, { except: id });
+      return { statusCode: 200, body: 'ok' };
+    }
+
     /* The buffer itself, on its way to the room.
      *
      * IT NAMES THE EXERCISE IT BELONGS TO, and the other side applies it only there. A
@@ -1427,6 +1554,12 @@ async function tallied(cohort, mark, seeded = false) {
          * otherwise sit with a writable editor in the middle of a demonstration until the
          * educator happened to switch it off. */
         sync: !!held?.sync,
+        /* And the board, in full. Same reason again, and the one case where the answer is
+         * not a flag: a student arriving mid-lesson has to see what is ALREADY drawn, not
+         * only be told that a board is up. `nodes` joins back into the page it came from. */
+        board: held?.board
+          ? { on: true, page: held.board.page || 0, svg: (held.board.nodes || []).join('') }
+          : null,
         members: await membersOf(row.cohort),
         here: (await connectionsIn(row.cohort)).map(c => ({
           sub: c.sub, name: c.name, role: c.role, seen: c.seen, position: c.position || null,

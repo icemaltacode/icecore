@@ -44,8 +44,14 @@ import SlidesPanel from './components/SlidesPanel.vue';
 import SplitPane from './components/SplitPane.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
+import { board, startBoard, keepBoard, loadSaved, reopen } from './board.js';
 import SignIn from './components/SignIn.vue';
 import Playground from './components/Playground.vue';
+import Whiteboard from './components/Whiteboard.vue';
+import BoardSave from './components/BoardSave.vue';
+import BoardClip from './components/BoardClip.vue';
+import BoardOpen from './components/BoardOpen.vue';
+import BoardViewer from './components/BoardViewer.vue';
 
 const manifest = ref([]);
 const course = ref(null);
@@ -489,6 +495,10 @@ async function open(id) {
       history.replaceState({}, '', url);
       return;
     }
+    /* Whatever boards this person's intakes were left with on this course. Not awaited: a
+     * paperclip is an extra, and a course must not wait to open on a list of attachments -
+     * `loadSaved` swallows its own failure for the same reason. */
+    loadSaved(id);
     const { solved: done, last, xp: earnedHere, code } = await subject.value.load(id);
     solved.value = done;
     earned.value = earnedHere;
@@ -1115,6 +1125,54 @@ async function endLiveHere() {
   goAdmin('cohorts');
 }
 
+/* THE BOARD, from this screen's side, and it is one line because it is one gesture: a send.
+ * The overlay opens when the flag comes back off the session row, never off the click -
+ * `sync`'s rule, and the reason `board.on` is read rather than set here. */
+const setBoard = on => startBoard(on);
+
+/* KEEPING THE BOARD. The dialog asks for a title and says where it lands; this hands over
+ * the two facts the educator's screen knows and the Lambda cannot - which course is open and
+ * which topic they are on. The cohort is not among them: the function reads that off the live
+ * session row, so a board cannot be filed against a class somebody is not delivering to. */
+/* Which kept board is open, or null. One at a time, and owned here rather than by either
+ * paperclip: the two of them are different places on the screen and a viewer belonging to one
+ * would close when that row went away. */
+const viewingBoard = ref(null);
+const keeping = ref(false);
+const keepBusy = ref(false);
+const keepError = ref('');
+
+function saveBoard() {
+  keepError.value = '';
+  keeping.value = true;
+}
+
+/* CARRYING ON FROM A KEPT BOARD. `unsaved` is the one fact the dialog cannot work out for
+ * itself and must not get wrong: a board with pages on it that has never been kept exists
+ * nowhere else, and opening another replaces it. */
+const opening = ref(false);
+const boardUnsaved = computed(() =>
+  !board.id && board.pages.some(p => p && p.length));
+
+async function reopenBoard(entry) {
+  opening.value = false;
+  try { await reopen(entry); }
+  catch (e) { liveError.value = e.message; }
+}
+
+async function keepBoardHere(title) {
+  keepBusy.value = true;
+  keepError.value = '';
+  try {
+    await keepBoard({ course: course.value?.id, topic: currentTopic.value?.topic, title });
+    keeping.value = false;
+  } catch (e) {
+    keepError.value = e.message;
+  } finally {
+    keepBusy.value = false;
+  }
+}
+
 /** Back to where the tutor is, and following again from there. */
 function catchUpHere() {
   catchUp();
@@ -1357,8 +1415,22 @@ watch(currentId, id => {
               :leader-at="followedPosition()?.title"
               :shared-name="control.sharing ? control.name : ''"
               :syncing="sync.on"
+              :boarding="board.on"
               @end="endLiveHere" @leave="leaving = true" @catch-up="catchUpHere"
-              @sync="setSync" />
+              @sync="setSync" @board="setBoard" />
+
+    <!-- Last of the live overlays, and over all of them: while a board is up it IS the
+         lesson. Drawn here rather than inside anything, for the same reason the floating chat
+         is - it belongs to no pane and must not go away with one. -->
+    <Whiteboard v-if="board.on" @close="setBoard(false)" @save="saveBoard"
+                @open="opening = true" />
+    <BoardOpen v-if="opening" :course="course?.id" :cohort-title="delivery.title"
+               :unsaved="boardUnsaved" @pick="reopenBoard" @close="opening = false" />
+    <BoardViewer v-if="viewingBoard" :entry="viewingBoard" @close="viewingBoard = null" />
+    <BoardSave v-if="keeping" :pages="board.pages.length"
+               :topic-title="currentTopic?.label" :topic="currentTopic?.topic"
+               :cohort-title="delivery.title" :busy="keepBusy" :error="keepError"
+               @save="keepBoardHere" @close="keeping = false" />
 
     <LiveLeave v-if="leaving" :name="delivery.name"
                :cohort-title="delivery.title"
@@ -1546,7 +1618,7 @@ watch(currentId, id => {
           :note-count="currentTopic?.notes"
           :goto="followSlide"
           :row="current"
-          @slide="onDeckSlide" />
+          @slide="onDeckSlide" @board="viewingBoard = $event" />
         <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there are two
              ways to end up with two: somebody driving this screen, and the educator writing
              in every screen at once. Hence `frozen` in both cases, and a band for each. -->
@@ -1581,6 +1653,10 @@ watch(currentId, id => {
                   :class="{ on: showSlides }" @click="showSlides = !showSlides">
             {{ showSlides ? 'Hide slides' : 'Slides' }}
           </button>
+          <!-- Beside Slides, and here for the same reason it is: in the footer rather than
+               inside an exercise, so every exercise type gets it. This is the home that
+               covers a topic with no deck, which has no slides header to hang one on. -->
+          <BoardClip :topic="currentTopic?.topic" @open="viewingBoard = $event" />
           <!-- Urging only while there is somewhere to go: a disabled button that pulses is
                asking for something it will not accept. -->
           <button class="btn ghost" :class="{ urge: urgeNext && index < total - 1 }"

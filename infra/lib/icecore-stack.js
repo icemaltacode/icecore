@@ -352,6 +352,14 @@ export class IcecoreStack extends Stack {
     const progress = fn('Progress', 'progress');
     table.grantReadWriteData(progress);
 
+    /* Saved whiteboards. Writes only into `COHORT#<id>` partitions, and only for a cohort
+     * the caller is delivering to right now - which it checks by reading the live session
+     * row, so the gate is a fact rather than a role. Separate from the live function because
+     * that one is a socket and this is durable state, and separate from the admin function
+     * because a student has to be able to read a board of their own class's. */
+    const boards = fn('Boards', 'boards');
+    table.grantReadWriteData(boards);
+
     // Holds the API key and the tutoring prompt; the exercise itself comes from the client,
     // which already has the reference solution.
     const hint = fn('Hint', 'hint', {
@@ -466,6 +474,11 @@ export class IcecoreStack extends Stack {
       path: '/api/progress',
       methods: [HttpMethod.GET, HttpMethod.PUT],
       integration: new HttpLambdaIntegration('ProgressIntegration', progress),
+    });
+    api.addRoutes({
+      path: '/api/boards',
+      methods: [HttpMethod.GET, HttpMethod.POST],
+      integration: new HttpLambdaIntegration('BoardsIntegration', boards),
     });
     // The admin group check happens inside the function - a JWT authorizer can't see groups.
     api.addRoutes({

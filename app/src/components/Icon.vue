@@ -77,6 +77,23 @@ const PATHS = {
   tick: 'M5 13l4 4L19 7',
   plus: 'M12 5v14M5 12h14',
   close: 'M6 6l12 12M18 6L6 18',
+  // a board on legs with a stroke drawn across it. The legs are what stop it reading as a
+  // window or a card at 15px - a bare rectangle is already three other things in this set.
+  board: 'M3 4h18v12H3ZM9 20l3-4 3 4M7 12s2-4 4-4 1 3 2 3 2.5-3 4-3',
+  // the three shapes, each its own tool. Drawn plain: they ARE the thing they select, so
+  // any decoration would make them a picture of a shape rather than the shape.
+  line: 'M5 19L19 5',
+  rect: 'M4 6h16v12H4Z',
+  ellipse: 'M12 18c4.4 0 8-2.7 8-6s-3.6-6-8-6-8 2.7-8 6 3.6 6 8 6Z',
+  // a wedge with its trailing edge and the line it is lifting off. drauu erases whole
+  // strokes rather than pixels, and a block eraser is the honest picture of that.
+  eraser: 'M8 20h12M18.5 12.5l-6-6-8 8a2 2 0 0 0 0 2.8l2.7 2.7h4l7.3-7.3a2 2 0 0 0 0-2.8Z',
+  // an arrow curving back on itself, which is undo everywhere. The head is on the left so
+  // it reads as going back at a glance rather than being read as a refresh.
+  undo: 'M4 9h11a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4',
+  // a paperclip. The inner return at the bottom is what makes it a clip instead of a hook.
+  attach: 'M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.7 8.7a1.7 1.7'
+        + ' 0 0 1-2.3-2.3l8-8',
 };
 </script>
 

@@ -56,6 +56,8 @@
  * both connections carry it. The tab says which it is and the Lambda checks it is entitled to
  * say so: `room` needs the session, `driven` needs the control.
  */
+import { clean } from './svgclean.js';
+
 const MESSAGE = 'ice:deck-sync';
 /* WELL UNDER A WEBSOCKET FRAME, per message.
  *
@@ -205,7 +207,10 @@ function fromDeck(e) {
  * watching the session's state, and the caller already knows which kind of tab it is. `send` arrives the same way and
  * for a second reason: importing it would pull in `delivery.js`, and with it `auth.js` and an
  * `import.meta.env` Node cannot evaluate - which would put the policy above out of reach of
- * any test that did not build the whole player. This file imports NOTHING.
+ * any test that did not build the whole player.
+ *
+ * So this file imports NOTHING BUT `svgclean.js`, which is of the same kind as this one -
+ * pure, dependency-free, no `import.meta.env` - and so costs the property nothing.
  */
 export function watchDecks(whoFor, send) {
   audience = whoFor;
@@ -222,6 +227,30 @@ export function watchDecks(whoFor, send) {
   };
 }
 
+/* A DRAWING OFF THE SOCKET IS FILTERED BEFORE IT CROSSES INTO THE DECK.
+ *
+ * Slidev applies each value with drauu's `load()`, which is `innerHTML`, so a patch is
+ * markup from another browser being built into the DOM of a same-origin frame. See
+ * svgclean.js for what that reaches. The boundary is here rather than inside the deck
+ * because this is the last place the payload is ours: past `postMessage` it is Slidev's.
+ *
+ * ONLY INCOMING. What the educator drew is their own DOM and filtering it on the way out
+ * would be filtering ourselves - and would hide, rather than fix, a drawing this cannot
+ * represent.
+ *
+ * The values are drauu dumps: `useDrawings.ts` stores `drauu.dump()` per slide number. A
+ * value that will not filter arrives as an empty slide, which is the honest rendering of a
+ * message we do not understand.
+ */
+function filtered(channel, data) {
+  if (kindOf(channel) !== 'drawings') return data;
+  const out = {};
+  for (const [slide, svg] of Object.entries(data)) {
+    out[slide] = typeof svg === 'string' ? clean(svg) : svg;
+  }
+  return out;
+}
+
 /**
  * A patch off the channel, on its way into the deck.
  *
@@ -236,5 +265,5 @@ export function watchDecks(whoFor, send) {
  */
 export function applyDeck(channel, data) {
   const keep = carried(channel, data);
-  if (keep) intoDecks(channel, keep);
+  if (keep) intoDecks(channel, filtered(channel, keep));
 }

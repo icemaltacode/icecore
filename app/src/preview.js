@@ -675,6 +675,71 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     }
   }
 
+  /* KEPT BOARDS, on the topics of the real course that is open.
+   *
+   * SEEDED FROM THE WALK rather than from made-up topic numbers, for the reason the room
+   * script walks real rows: a topic id nobody is ever on draws no paperclip, and a paperclip
+   * that never appears looks exactly like the feature not working. The first two topics of
+   * whatever course is open get one, and the first gets two - because one board is a button
+   * and several is a menu, and only the second of those has anything to get wrong.
+   *
+   * THE CATALOGUE IS NOT KEYED ON THE TOPIC, because the second call does not carry a course
+   * and so cannot resolve one. That is not a quirk of the stand-in: the real function reads a
+   * board by its own keys and never re-derives a walk either.
+   *
+   * The pages are in BOARD UNITS, like the room script's strokes, which is the whole point of
+   * the fixed stage: they render here exactly as they would have in the room.
+   */
+  if (route === 'boards' && method === 'GET') {
+    const ink = 'fill="none" stroke="#1f2328" stroke-width="6" stroke-linecap="round"';
+    const KEPT = [
+      { board: 'pv-board-1', title: 'Joins, on the board', at: '2026-09-02T10:14:00.000Z', pages: 2, nth: 0 },
+      { board: 'pv-board-2', title: 'The one Ryan asked about', at: '2026-09-02T10:41:00.000Z', pages: 1, nth: 0 },
+      { board: 'pv-board-3', title: 'Why the row count changed', at: '2026-09-03T09:20:00.000Z', pages: 1, nth: 1 },
+    ].map(b => ({ ...b, cohort: 'sept-2026', byName: 'Sarah Mifsud' }));
+
+    const PAGES = [
+      `<path d="M200,200 L560,200" ${ink} /><path d="M200,200 L200,520" ${ink} />`
+        + '<ellipse cx="1050" cy="360" rx="260" ry="160" fill="transparent"'
+        + ' stroke="#1570ef" stroke-width="6" />'
+        + '<path d="M560,360 L790,360" fill="none" stroke="#d92d20" stroke-width="6"'
+        + ' stroke-linecap="round" />',
+      '<rect x="300" y="220" width="1000" height="440" rx="16" fill="transparent"'
+        + ' stroke="#099250" stroke-width="6" />',
+    ];
+
+    if (q.get('board')) {
+      const one = KEPT.find(b => b.board === q.get('board'));
+      if (!one) throw new Error('no such board');
+      return {
+        board: { ...one, topic: q.get('topic') || '' },
+        pages: PAGES.slice(0, one.pages),
+      };
+    }
+
+    const rows = walkCourse(await loadCourse(q.get('course') || '').catch(() => null));
+    const topics = [...new Set(rows.map(r => r.topicId).filter(Boolean))];
+    return {
+      boards: KEPT
+        .map(({ nth, ...b }) => ({ ...b, topic: topics[nth] }))
+        .filter(b => b.topic),
+    };
+  }
+
+  /* KEEPING A BOARD. There is no table here, so this answers the way the Lambda does and
+   * remembers nothing - which is the honest stand-in for step four, where the rows are
+   * written and nothing reads them yet. The id is generated the same way so that pressing
+   * Keep twice updates one board rather than making two, which is the behaviour worth being
+   * able to try locally. */
+  if (route === 'boards' && method === 'POST') {
+    return {
+      board: body?.board || `${Date.now().toString(36)}-prev`,
+      pages: (body?.pages || []).length,
+      at: new Date().toISOString(),
+      title: body?.title || 'Whiteboard',
+    };
+  }
+
   throw new Error(`No preview stub for ${method} /api/${path}`);
 }
 
@@ -762,6 +827,36 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
         });
       }, 3000 * (i + 1)));
     }
+  }
+
+  /* THE EDUCATOR GOES TO THE BOARD, on the student's side of it.
+   *
+   * The one part of the whiteboard `--as admin` cannot reach: an educator's board is drawn by
+   * drauu on their own screen, and a student's is markup arriving from somewhere else. A
+   * refusal or a rendering nobody can reach locally is one nobody reads before shipping, so
+   * this is what a page looks like coming off the wire - opened, drawn on a stroke at a time,
+   * turned, and taken away again. AFTER THE LAST SCRIPTED ROSTER, deliberately: a roster
+   * carries the board and is authoritative about it, so one arriving mid-script would close
+   * this board exactly as a real one would - correctly, and confusingly.
+   *
+   * The strokes are in BOARD UNITS, 1600x900, which is the whole point of the fixed stage:
+   * these five numbers render the same on every screen that ever shows them. */
+  if (!leading) {
+    const ink = 'fill="none" stroke="#1f2328" stroke-width="6" stroke-linecap="round"';
+    play(12000, { type: 'boarding', on: true, page: 0 });
+    play(12200, { type: 'paged', page: 0,
+                 svg: `<path d="M180,180 L520,180" ${ink} data-drauu_index="0" />` });
+    play(13500, { type: 'stroked', page: 0,
+                  node: `<path d="M180,300 C320,180 460,420 620,300" ${ink} data-drauu_index="1" />` });
+    play(15000, { type: 'stroked', page: 0,
+                  node: `<rect x="800" y="220" width="420" height="240" rx="12" fill="transparent" stroke="#1570ef" stroke-width="6" data-drauu_index="2" />` });
+    play(17000, { type: 'stroked', page: 0,
+                  node: `<path d="M620,340 L800,340" fill="none" stroke="#d92d20" stroke-width="6" stroke-linecap="round" data-drauu_index="3" />` });
+    // A page turn arrives as a page in full, which is also what a joiner is handed.
+    play(20000, { type: 'paged', page: 1,
+                  svg: `<ellipse cx="800" cy="450" rx="300" ry="180" fill="transparent" stroke="#099250" stroke-width="6" data-drauu_index="0" />` });
+    // And it goes away, which must put every student back exactly where they were.
+    play(24000, { type: 'boarding', on: false, page: 0 });
   }
 
   play(2500, { type: 'joined', who: conn('preview-3', 'Katherine Johnson') });

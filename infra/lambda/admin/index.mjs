@@ -919,12 +919,38 @@ async function putCohort({ id, title, courses, archived }) {
  * goes empty in between, and the screen has to say so before the button is pressed.
  * Archiving is the gesture for an intake that has finished; this one is for one created by
  * mistake. */
+/* Everything in the cohort's OWN partition, which today is its saved whiteboards - see
+ * infra/lambda/boards. A board is the record of a lesson taught to this class, so it goes
+ * when the class does: there is nobody left it belonged to, and it was never course
+ * material. Archiving keeps them, which is the whole difference between an intake that
+ * finished and one that is being erased. */
+async function cohortOwned(id) {
+  const rows = [];
+  let start;
+  do {
+    const r = await ddb.send(new QueryCommand({
+      TableName: TABLE,
+      KeyConditionExpression: 'pk = :pk',
+      ExpressionAttributeValues: { ':pk': `COHORT#${id}` },
+      ProjectionExpression: 'pk, sk',
+      ExclusiveStartKey: start,
+    }));
+    rows.push(...(r.Items || []));
+    start = r.LastEvaluatedKey;
+  } while (start);
+  return rows;
+}
+
 async function deleteCohort(id) {
   if (!id) return json(400, { error: 'id is required' });
   const members = await cohortMembers(id);
-  for (let i = 0; i < members.length; i += 25) {
+  /* Membership rows live in each PERSON's partition and the boards live in the cohort's own,
+   * so this is two reads and one delete loop rather than one of each. */
+  const owned = await cohortOwned(id);
+  const rows = [...members, ...owned];
+  for (let i = 0; i < rows.length; i += 25) {
     let unprocessed = {
-      [TABLE]: members.slice(i, i + 25)
+      [TABLE]: rows.slice(i, i + 25)
         .map(m => ({ DeleteRequest: { Key: { pk: m.pk, sk: m.sk } } })),
     };
     for (let attempt = 0; unprocessed[TABLE]?.length && attempt < 5; attempt++) {
@@ -936,7 +962,7 @@ async function deleteCohort(id) {
   // The catalogue row last: a half-deleted cohort that still lists is one somebody can
   // press delete on again, where members left under a cohort nobody can see are not.
   await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: COHORTS, sk: `COHORT#${id}` } }));
-  return json(200, { ok: true, removed: members.length });
+  return json(200, { ok: true, removed: members.length, boards: owned.length });
 }
 
 async function deleteUser(sub, me) {
