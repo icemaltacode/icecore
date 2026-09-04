@@ -46,6 +46,8 @@ const props = defineProps({
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
+  /** What was last in the editor here, finished or not - see progress-store.js. */
+  draft: Object,
 });
 const emit = defineEmits(['solved', 'checked', 'editor', 'act']);   // see McqExercise
 
@@ -78,7 +80,11 @@ let cursorAt = null;
 let beat;
 const sendSoon = () => {
   clearTimeout(beat);
-  beat = setTimeout(() => emit('editor', { code: code.value, cursor: cursorAt }), BEAT);
+  beat = setTimeout(
+    /* The STEP travels with the text, for the caret's reason one line up: a buffer
+     * belongs to a step of an exercise, and the one writer that keeps drafts outside this
+     * component has no other way to know which. */
+    () => emit('editor', { code: code.value, cursor: cursorAt, step: stepIndex.value }), BEAT);
 };
 const onCursor = n => { cursorAt = n; sendSoon(); };
 watch(code, sendSoon);
@@ -140,11 +146,33 @@ const steps = computed(() => props.exercise.steps || []);
 const step = computed(() => steps.value[stepIndex.value] || {});
 const multi = computed(() => steps.value.length > 1);
 
+/* WHAT THE EDITOR OPENS ON, in order of authority.
+ *
+ *   1. a buffer being driven into it from outside - remote control, or the educator's
+ *      demonstration. It arrives as a PROP, and a prop that is already set when this
+ *      component mounts fires no watcher, so a drive that also MOVED the student to this
+ *      exercise used to land on a fresh component that had never heard of it and showed the
+ *      starter instead. The code simply never arrived.
+ *   2. what was last in this editor, finished or not - see progress-store.js. The component
+ *      is keyed by row, so leaving an exercise and coming back is a remount, and without
+ *      this every unfinished attempt went with it. Including one an educator had just
+ *      written into it, which is where it was noticed.
+ *   3. what SOLVED it, so returning to finished work shows their answer and not the starter.
+ *   4. the starter.
+ */
+const opensOn = () => {
+  if (typeof props.drivenCode === 'string') return props.drivenCode;
+  return props.draft?.[stepIndex.value]
+      ?? props.saved?.[stepIndex.value]
+      ?? step.value.sample
+      ?? '';
+};
+
 watch(() => [props.exercise.id, stepIndex.value], () => {
   /* Their own answer wins over the sample on an exercise they have already solved: coming
    * back to finished work and finding the starter code in the editor reads as the work
    * having been thrown away. */
-  code.value = props.saved?.[stepIndex.value] ?? step.value.sample ?? '';
+  code.value = opensOn();
   output.value = ''; error.value = ''; verdict.value = null;
   figures.value = []; files.value = [];
   showHint.value = false; showSolution.value = false;

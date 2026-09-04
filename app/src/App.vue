@@ -823,10 +823,32 @@ watch(currentId, () => { beforeSync.value = null; });
  * caret change sent whatever text the debounce had last settled on - up to 300ms stale - and
  * a text change sent a caret from before it. A caret is an offset into a buffer; the two
  * cannot be allowed to arrive describing different documents. */
-function editorChanged({ code, cursor }) {
+function editorChanged({ code, cursor, step }) {
   myCode.value = code;
   myCursor.value = cursor ?? null;
   myAt.value = current.value?.id ?? null;
+  /* KEEP IT, so that leaving the exercise and coming back does not throw it away. The
+   * exercise component is keyed by row, so a remount reloads its starter - which is every
+   * navigation, and was where an educator's fix went after remote control ended.
+   *
+   * ONE WRITER, HERE. Both editor components already report every change on this one
+   * debounced beat, and a second writer inside each of them would be the same record kept
+   * two ways.
+   *
+   * AND NOT FOR SOMEBODY ELSE'S SESSION. `subject.watching` covers both a watched session
+   * and a control tab, and it is the boundary `subject.js` already draws: these keys are
+   * this browser's own, so a tab looking at a student's work would leave that work in the
+   * admin's store and hand it back to them the next time they opened the exercise
+   * themselves. The same reason `watching()` reads nothing from localStorage either.
+   *
+   * NOT WHILE A DEMONSTRATION IS ON THIS ROW. That text is the educator's, shown to the
+   * whole class at once, and `beforeSync` exists precisely so a student gets their own back
+   * when it stops - storing it as theirs would keep the wrong half of that promise. A DRIVE
+   * is the opposite case and is kept: remote control is help written into this student's own
+   * work, and leaving them with it is the entire point. */
+  if (course.value && current.value && !subject.value.watching
+      && !(synced.value && syncedHere.value))
+    store.saveDraft(course.value.id, current.value.id, step ?? 0, code);
   /* A CONTROL TAB DRIVES AND NEVER SYNCS. Its editor holds one student's work rather than
    * the educator's, and pushing that to the room would put somebody's half-finished attempt
    * on thirty screens - with their name nowhere near it. */
@@ -874,6 +896,14 @@ const relayAct = what => {
 watch(() => control.sub, sub => {
   if (sub && sub === session.sub) sendBuffer(current.value?.id ?? null, myCode.value);
 });
+
+/* What was last in this exercise's editor, read when the row changes and not otherwise: the
+ * component is remounted on every move, so this is only ever asked at the moment it opens.
+ * localStorage is not reactive and does not need to be - writing a draft cannot want to
+ * change an editor that already holds it. */
+const draftHere = computed(() => (course.value && currentId.value && !subject.value.watching
+  ? store.draftFor(course.value.id, currentId.value)
+  : null));
 
 /* And the educator applying it. Only for the exercise it was written against: control can be
  * taken while the tab is still landing on the student's position, and dropping somebody's
@@ -1359,6 +1389,7 @@ watch(currentId, id => {
           :exercise="current"
           :done="isSolved(current.id)"
           :saved="savedCode[current.id]"
+          :draft="draftHere"
           :class-answers="classAnswers"
           :frozen="beingDriven() || synced"
           :driven-code="shownCode"

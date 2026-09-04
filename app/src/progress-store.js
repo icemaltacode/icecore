@@ -28,6 +28,56 @@ const read = k => {
   try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; }
 };
 
+/* THE WORKING BUFFER - what is in the editor RIGHT NOW, finished or not.
+ *
+ * `code` above is what SOLVED an exercise. Nothing kept what had not solved one yet, so the
+ * component reloaded its starter on every remount and any unfinished work went with it - and
+ * the exercise component is keyed by row, so that is every time a student leaves an exercise
+ * and comes back. It surfaced as an educator's fix vanishing after remote control ended,
+ * which is the same loss arriving where somebody was watching for it: the drive writes into
+ * the student's editor, the student is then carried off by the lesson, and the fix they were
+ * given is thrown away by the component remounting.
+ *
+ * LOCAL, AND ONLY LOCAL. A solve is progress and belongs on a row; a half-written query is
+ * neither a fact about the student's record nor something to spend a write on per keystroke.
+ * The cost is stated rather than designed around: an unfinished attempt does not follow
+ * anybody to another device.
+ *
+ * BOUNDED, because it is text from an editor going into a five-megabyte store that has no
+ * second chance when it fills: a step longer than a very long answer is not kept at all, and
+ * only the most recently touched exercises are. Evicted by `at` rather than by insertion
+ * order, because an exercise id is integer-like and a JavaScript object sorts those
+ * numerically however they went in.
+ */
+const draftKey = course => `ice-platform-draft:${course}`;
+const DRAFT_STEP_LIMIT = 20000;
+const DRAFT_KEEP = 40;
+
+/** Every kept draft, as `{ exerciseId: { at, steps: { stepIndex: source } } }`. */
+export function drafts(course) {
+  const raw = read(draftKey(course));
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+/** One exercise's steps, or null. Always through `progressId`'s rule: keys are STRINGS. */
+export const draftFor = (course, exercise) => drafts(course)[String(exercise)]?.steps || null;
+
+export function saveDraft(course, exercise, step, source) {
+  if (typeof source !== 'string' || source.length > DRAFT_STEP_LIMIT) return;
+  const rec = drafts(course);
+  const id = String(exercise);
+  rec[id] = { at: Date.now(), steps: { ...(rec[id]?.steps || {}), [String(step)]: source } };
+  const ids = Object.keys(rec);
+  if (ids.length > DRAFT_KEEP) {
+    ids.sort((a, b) => (rec[a].at || 0) - (rec[b].at || 0));
+    for (const gone of ids.slice(0, ids.length - DRAFT_KEEP)) delete rec[gone];
+  }
+  /* A full store must not take the editor down with it. There is nothing useful to do about
+   * a quota that is already spent, and losing a draft is the failure this whole record is
+   * a best effort against in the first place. */
+  try { localStorage.setItem(draftKey(course), JSON.stringify(rec)); } catch { /* full */ }
+}
+
 /* WHICH ANSWERS HAVE BEEN LOOKED AT, and the warning preference that guards them.
  *
  * Revealing a solution forfeits the exercise's XP, so this has to outlive the page: a
@@ -75,6 +125,9 @@ export function forget(course) {
   localStorage.removeItem(key(course));
   localStorage.removeItem(placeKey(course));
   localStorage.removeItem(codeKey(course));
+  // Including what was never finished. A student starting a course again means the editors
+  // are empty again, and a half-written query surviving a reset is the reset not working.
+  localStorage.removeItem(draftKey(course));
   // Starting a course again means the answers are unseen again - otherwise a reset course
   // is one a student can never earn anything on.
   localStorage.removeItem(revealKey(course));

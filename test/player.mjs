@@ -202,6 +202,62 @@ player.emitLocal({ type: 'acting', do: 'run', at: '101', when: new Date().toISOS
 await settle(300);
 check("the educator pressing Run runs it on the STUDENT's screen", reached(), text().slice(-240));
 
+// --------------------------------- and what the editor is left holding afterwards
+/* THE POINT OF DRIVING SOMEBODY'S EDITOR IS THAT THEY KEEP WHAT YOU WROTE, and they did
+ * not. The exercise component is keyed by row, so every move remounts it and it reloaded
+ * its own starter - and being released puts a student back with the class, so the
+ * educator's next step carried them off the exercise they had just been helped with. The
+ * fix was gone by the time they walked back to it, which reads as remote control undoing
+ * itself.
+ */
+const editorText = () => document.querySelector('.cm-content')?.textContent ?? '(no editor)';
+const FIX = 'SELECT the_fix_the_educator_typed;';
+const holdsFix = () => editorText().includes('the_fix_the_educator_typed');
+
+player.emitLocal({
+  type: 'driven', position: { exercise: '101', title: 'First', slide: null },
+  code: FIX, at: new Date().toISOString(),
+});
+await settle(250);
+check('a drive writes the educator\'s fix into the student\'s editor', holdsFix(), editorText());
+
+player.emitLocal({ type: 'controlling', control: null });
+await settle(250);
+check('letting go does not take it back on its own', holdsFix(), editorText());
+
+/* And the half that was actually failing: being released puts them back with the class, so
+ * the educator's next move is what carries them away from it. */
+/* Somewhere the educator is not already standing: the follow watcher fires on a CHANGE of
+ * reported position, so re-reporting the row they are on moves nobody. */
+moved('103', 'Third');
+await settle();
+check('the lesson carries them off the exercise', at() === '4 / 4', at());
+const previousAgain = () =>
+  [...document.querySelectorAll('footer button')].find(b => /Previous/.test(b.textContent)).click();
+previousAgain(); await settle(200);
+previousAgain(); await settle(250);
+check('and the fix is still there when they walk back to it', holdsFix(), editorText());
+
+/* A DRIVE THAT ALSO MOVES THEM CARRIES ITS CODE. The buffer arrives as a prop, and a prop
+ * that is already set when a component mounts fires no watcher - so a drive to an exercise
+ * the student was not already on landed on a fresh component that had never heard of it and
+ * showed the starter. The code never arrived at all. */
+player.emitLocal({
+  type: 'controlling',
+  control: {
+    sub: player.session.sub, name: 'Ada Lovelace',
+    by: tutor.sub, byName: tutor.name, sharing: false, at: new Date().toISOString(),
+  },
+});
+await settle(150);
+player.emitLocal({
+  type: 'driven', position: { exercise: '103', title: 'Third', slide: null },
+  code: 'SELECT driven_across_a_move;', at: new Date().toISOString(),
+});
+await settle(300);
+check('a drive that moves them to another exercise carries its code with it',
+      at() === '4 / 4' && /driven_across_a_move/.test(editorText()), `${at()} ${editorText()}`);
+
 await player.dispose();
 dom.restore();
 console.log(failures ? `\n${failures} failing` : '\nall green');
