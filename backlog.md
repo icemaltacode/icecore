@@ -36,8 +36,8 @@ in a month.
 
 6. [ ] If possible, when the educator highlights code whilst remote controlling or sharing their editor, the students should also see the code highlighted. This is a nice to have, but not critical. Ideally in the same orangey hue.
 
-7. [ ] On narrow screens, the participant list panel overlaps the code editor, in a weirdly transparent way. It should
+7. [x] On narrow screens, the participant list panel overlaps the code editor, in a weirdly transparent way. It should
   7.1: Not be transparent.
   7.2: Collapse when it would otherwise overlap the code editor, and be accessible via the button.
 
-8. [ ] The slides view is currently forced to be a panel on the right. Can we have a button to toggle between this view (which we'll call vertical) and horizontal, where the slides move to a horizontal panel at the bottom of the screen?
+8. [x] The slides view is currently forced to be a panel on the right. Can we have a button to toggle between this view (which we'll call vertical) and horizontal, where the slides move to a horizontal panel at the bottom of the screen?

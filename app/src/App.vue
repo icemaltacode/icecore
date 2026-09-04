@@ -67,7 +67,16 @@ const showSlides = ref(false);
  * ways of saying "put this the other way round" in one app is a tic rather than a
  * vocabulary. */
 const SLIDES_SIDE = 'ice-slides-side';
-const slidesSide = ref(localStorage.getItem(SLIDES_SIDE) === 'bottom' ? 'bottom' : 'right');
+/* UNDER BY DEFAULT. The exercise is the thing being worked in and it is the one that wants
+ * width - a brief with a 320px floor and an editor beside it leave a 16:9 slide a stamp on
+ * anything but a very wide screen, whereas height is the cheaper thing for a deck to take.
+ *
+ * A remembered answer outranks it and only an unrecognised one falls through, so nobody who
+ * has already put the deck on the right is moved. Same shape as the sidebar's pin and the
+ * participants panel: the default is consulted once per browser and never again. */
+const rememberedSide = localStorage.getItem(SLIDES_SIDE);
+const slidesSide = ref(rememberedSide === 'right' || rememberedSide === 'bottom'
+  ? rememberedSide : 'bottom');
 watch(slidesSide, v => localStorage.setItem(SLIDES_SIDE, v));
 /* The deck belongs to the topic the current row sits in, so it follows the student through
  * the topic and swaps when they cross into the next one. Taken off the row rather than by
