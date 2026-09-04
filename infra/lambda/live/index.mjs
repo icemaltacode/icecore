@@ -1341,7 +1341,12 @@ async function tallied(cohort, mark, seeded = false) {
      * error blamed on the wrong thing. */
     case 'deck': {
       const held = await sessionFor(row.cohort);
-      const channel = String(msg.channel || '').slice(0, 40);
+      /* SLIDEV NAMES A CHANNEL AFTER THE DECK - the whole slide title with ` - drawings` or
+       * ` - shared` on the end - so 40 characters truncated every real one. The far side
+       * compares the name it is given against its own and ignores a mismatch, which is what
+       * makes a patch for one deck harmless on another's; a truncated name matches nothing
+       * at all, and the patch simply vanished. */
+      const channel = String(msg.channel || '').slice(0, 300);
       const body = JSON.stringify(msg.data ?? null);
       if (!channel || body.length > DECK_LIMIT) return { statusCode: 200, body: 'not carried' };
       /* WHO IT IS FOR, ASKED FOR BY THE SENDER AND CHECKED HERE.

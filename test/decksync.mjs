@@ -27,6 +27,14 @@ globalThis.Event = class { constructor(type) { this.type = type; } };
 globalThis.document = { querySelectorAll: () => [] };
 import { carried, watchDecks } from '../app/src/decksync.js';
 
+/* THE NAME SLIDEV ACTUALLY USES. `setup/root.ts` names each channel after the deck -
+ * `${slidesTitle} - shared` and `${slidesTitle} - drawings` - so a relay keyed on the bare
+ * word matched nothing that ever arrived, and every annotation was dropped one line into
+ * the filter. The whole name travels; only the suffix is read. */
+const TITLE = 'Python for ONEY \u2014 1.1 Using NumPy - Slidev';
+const DRAWINGS = `${TITLE} - drawings`;
+const SHARED = `${TITLE} - shared`;
+
 let failures = 0;
 const check = (label, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${!ok && detail ? `  -- ${detail}` : ''}`);
@@ -37,13 +45,13 @@ const check = (label, ok, detail = '') => {
 {
   const drawings = { 3: '<svg>one</svg>', 7: '<svg>two</svg>' };
   check('annotations travel whole, keyed by slide',
-        JSON.stringify(carried('drawings', drawings)) === JSON.stringify(drawings),
-        JSON.stringify(carried('drawings', drawings)));
+        JSON.stringify(carried(DRAWINGS, drawings)) === JSON.stringify(drawings),
+        JSON.stringify(carried(DRAWINGS, drawings)));
 }
 
 {
   const state = { page: 12, clicks: 3, clicksTotal: 5, timer: { status: 'running' } };
-  const out = carried('shared', state);
+  const out = carried(SHARED, state);
   check('the click step travels', out.clicks === 3 && out.clicksTotal === 5, JSON.stringify(out));
   /* THE ONE THAT MATTERS. */
   check('and the page does NOT', !('page' in out), JSON.stringify(out));
@@ -54,18 +62,20 @@ const check = (label, ok, detail = '') => {
   /* A patch carrying only a page is nothing to send at all - not an empty object, which
    * would be a message the other side has to receive and discard. */
   check('a patch of nothing but the page is not sent',
-        carried('shared', { page: 12 }) === null,
-        JSON.stringify(carried('shared', { page: 12 })));
+        carried(SHARED, { page: 12 }) === null,
+        JSON.stringify(carried(SHARED, { page: 12 })));
 }
 
 // ------------------------------------------------- channels nobody asked for
 {
-  check('an unknown channel is not relayed', carried('snapshot', { a: 1 }) === null);
+  check('the bare word is not a channel - it never arrives that way',
+        carried('drawings', { 3: '<svg/>' }) === null);
+  check('an unknown channel is not relayed', carried(`${TITLE} - snapshot`, { a: 1 }) === null);
   check('and neither is a missing one', carried(undefined, { a: 1 }) === null);
   /* The theme announces a channel with a null body when a deck starts listening. It is not a
    * state and must not be forwarded as one. */
-  check('an announcement is not a patch', carried('shared', null) === null);
-  check('nor is something that is not an object', carried('drawings', 'oops') === null);
+  check('an announcement is not a patch', carried(SHARED, null) === null);
+  check('nor is something that is not an object', carried(DRAWINGS, 'oops') === null);
 }
 
 // ------------------------------------------------- what actually goes on the wire
@@ -77,7 +87,7 @@ const check = (label, ok, detail = '') => {
   const seen = [];
   const stop = watchDecks(() => 'room', (channel, data) => seen.push([channel, data]));
   const post = data => dispatchEvent(Object.assign(new Event('message'), {
-    origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: 'drawings', data },
+    origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: DRAWINGS, data },
   }));
 
   post({ 3: '<svg>a</svg>' });

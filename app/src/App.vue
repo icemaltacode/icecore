@@ -295,6 +295,11 @@ const drivenSlide = ref(null);
  */
 const followSlide = computed(() => {
   if (!delivery.cohort) return null;
+  /* A CONTROL TAB IS DRIVEN BY THE STUDENT IT OPENED ON, once. It belongs to whoever is
+   * delivering, so `delivery.mine` is true here and the class's answer below is the wrong
+   * one - it would leave the tab at the top of the topic while the student is nine slides
+   * into it. Checked before `beingDriven`, which a control tab never is. */
+  if (controlSub.value) return landOn.value;
   if (beingDriven()) return drivenSlide.value;
   return !delivery.mine && delivery.following ? followedPosition()?.slide || null : null;
 });
@@ -715,14 +720,27 @@ watch(() => channel.status, st => {
  *
  * Applied, so it is not mistaken for the educator striking out on their own. */
 const landed = ref(false);
+/* AND WHICH SLIDE THEY WERE ON, not only which row.
+ *
+ * A slides step is a RANGE, so landing on the row alone opened the educator's control tab at
+ * the top of the topic while the student sat nine slides in - which is exactly the failure
+ * `followSlide` exists to prevent for the class, arriving here by the other door. Worse in a
+ * live lesson, where everybody had been walked to the same slide together and the tab that
+ * takes over is the one screen that goes back to the beginning.
+ *
+ * Set ONCE, with the row, and then left alone: `goto` moves the frame when it CHANGES, so a
+ * value that stays put is a landing rather than a leash. The educator pages freely
+ * afterwards, which is the same reason `landed` stops the row being re-applied. */
+const landOn = ref(null);
 watch(() => (controlSub.value ? room.here[controlSub.value]?.position?.exercise : null), at => {
   if (!controlSub.value || landed.value || at == null) return;
   const row = flat.value.find(e => progressId(e.id) === progressId(at));
   if (!row) return;
   landed.value = true;
+  landOn.value = room.here[controlSub.value]?.position?.slide || null;
   applied(() => { currentId.value = row.id; });
 });
-watch(controlSub, () => { landed.value = false; });
+watch(controlSub, () => { landed.value = false; landOn.value = null; });
 
 /* BEING DRIVEN. The instruction rather than the destination - `at` changes on every drive,
  * including one back to where the screen already is, and watching the position would drop

@@ -56,10 +56,29 @@ const CAP = 24 * 1024;
  * far more than an annotation needs and is a tenth of what the pointer already costs. */
 const EVERY = 100;
 
+/* KEYED BY WHAT A CHANNEL IS, NOT BY WHAT IT IS CALLED.
+ *
+ * Slidev names its channels after the deck - `setup/root.ts` does
+ *
+ *     initSharedState(`${slidesTitle} - shared`)
+ *     initDrawingState(`${slidesTitle} - drawings`)
+ *
+ * so the key that actually arrives is the whole title with a suffix on it:
+ * "Python for ONEY - 1.1 Using NumPy... - Slidev - drawings". Matching `drawings` exactly
+ * meant nothing was ever carried and annotations silently went nowhere - the relay ran, the
+ * theme posted, and every patch was dropped one line into this file.
+ *
+ * The suffix is the kind and the rest is which deck. Both matter: the title being in the key
+ * is what stops a patch for one unit's deck being applied to another's, because the theme
+ * compares the name against its own and ignores a mismatch. So the name travels WHOLE and
+ * only the suffix is interpreted. */
 const KEEP = {
   drawings: null,                        // null means the whole channel
   shared: ['clicks', 'clicksTotal'],
 };
+const kindOf = channel => (typeof channel === 'string'
+  ? Object.keys(KEEP).find(k => channel.endsWith(` - ${k}`)) || null
+  : null);
 
 /**
  * Only the fields worth sending, or null when the channel is not one we carry.
@@ -68,8 +87,9 @@ const KEEP = {
  * to state - and because a rule nothing can test is a rule that quietly stops being true.
  */
 export function carried(channel, data) {
-  if (!(channel in KEEP) || !data || typeof data !== 'object') return null;
-  const keys = KEEP[channel];
+  const kind = kindOf(channel);
+  if (!kind || !data || typeof data !== 'object') return null;
+  const keys = KEEP[kind];
   if (!keys) return data;
   const out = {};
   for (const k of keys) if (data[k] !== undefined) out[k] = data[k];
