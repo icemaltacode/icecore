@@ -267,6 +267,25 @@ const onLoad = () => {
   const both = () => { clamp(); track(); emit('slide', current.value); };
   const push = win.history.pushState;
   win.history.pushState = function (...a) { const r = push.apply(this, a); both(); return r; };
+  /* AND replaceState, WHICH IS HOW THE DECK MOVES ITSELF.
+   *
+   * vue-router calls `replaceState` for its own housekeeping on every navigation - harmless,
+   * and the reason this is guarded on the slide number actually changing rather than run
+   * unconditionally. But `router.replace()` goes through the same call, and Slidev uses it:
+   * applying a shared-state patch does `router.replace(getSlidePath(state.page))`. That fires
+   * no `hashchange` and no `popstate`, so a deck moved that way slipped past the clamp AND
+   * past the report - the frame sat on a different slide from the one this client was telling
+   * the room it was on, with nothing anywhere saying so.
+   *
+   * Nothing sends such a patch today (see decksync.js), which is exactly why it is worth
+   * catching here: the next thing that does will be found in a minute rather than in a week. */
+  const replace = win.history.replaceState;
+  win.history.replaceState = function (...a) {
+    const was = at();
+    const r = replace.apply(this, a);
+    if (at() !== was) both();
+    return r;
+  };
   win.addEventListener('popstate', both);
   win.addEventListener('hashchange', both);
   both();

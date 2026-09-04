@@ -14,17 +14,35 @@
  * WHAT IS RELAYED, AND WHAT IS DELIBERATELY NOT:
  *
  *   drawings   in full. This is the feature: what the educator drew, per slide.
- *   shared     `clicks` and `clicksTotal` ONLY.
  *
- * `page` IS DROPPED, and that is the important line in this file. Where the class is looking
- * is already answered - the room reports the educator's position, the walk resolves it to a
- * row, and `SlidesStep` drives the frame's hash and clamps it to the topic. Letting Slidev's
- * own `page` through would be a SECOND authority for one fact, and the two would not merely
- * duplicate: our clamp walls a student inside their topic's range, so a synced page pointing
- * past it would be pushed back, re-sent, and pushed back again. One authority for where we
- * are; Slidev adds only the step within the slide it is already on.
+ * AND NOTHING ELSE. The click step was carried here too, and it never once worked - which is
+ * worth writing down, because the reason is structural rather than a bug to go and fix.
  *
- * The timer and snapshots are dropped for a duller reason: nothing shows them.
+ * Slidev only ever WRITES `clicks` into its shared channel from `setup/root.ts`:
+ *
+ *     if (!isPresenter.value && !TRUST_ORIGINS.includes(location.host.split(':')[0])) return
+ *
+ * TRUST_ORIGINS is `['localhost', '127.0.0.1']`. Our decks are viewers on icecampus.com, so
+ * that returns on every navigation and the channel never changes: there is nothing to relay
+ * and never was. Confirmed on the wire - a whole lesson of `deck` frames, not one of them
+ * `- shared`.
+ *
+ * Relaying it was also actively unsafe in the one case it could have fired. The receiving
+ * side applies a shared patch through Slidev's own `onPatch`, which does
+ * `router.replace(getSlidePath(state.page))` - and `page` is the one field we must never
+ * carry, so it would still be the default 1. A student would be sent to the first slide of
+ * the deck by a patch about clicks. Worse, `router.replace` moves the deck through
+ * `history.replaceState`, which fires no event at all: the clamp in `SlidesStep` would not
+ * see it and the frame would not report it. Silent, and blamed on anything but this.
+ *
+ * `page` cannot travel because where the class is looking already has one authority - the
+ * room reports the educator's position, the walk resolves it to a row, and `SlidesStep`
+ * drives the frame and clamps it to the topic. So the click step cannot travel either, and
+ * the honest thing is to stop pretending it does. Doing it properly means teaching the theme
+ * to substitute the deck's OWN current page into an incoming shared patch, which is a change
+ * in `slidev-theme-ice` and a rebuild of every deck.
+ *
+ * The timer and snapshots were dropped for a duller reason: nothing shows them.
  *
  * WHO A PATCH IS FOR IS THE TAB'S OWN QUESTION, and there are two answers.
  *
@@ -74,7 +92,6 @@ const EVERY = 100;
  * only the suffix is interpreted. */
 const KEEP = {
   drawings: null,                        // null means the whole channel
-  shared: ['clicks', 'clicksTotal'],
 };
 const kindOf = channel => (typeof channel === 'string'
   ? Object.keys(KEEP).find(k => channel.endsWith(` - ${k}`)) || null

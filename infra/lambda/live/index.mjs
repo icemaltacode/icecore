@@ -854,12 +854,33 @@ async function message(event) {
       const slide = Number(msg.slide) || null;
       const position = at === null ? null
         : { exercise: at, title: String(msg.title || '').slice(0, 200), slide };
-      await ddb.send(new UpdateCommand({
+      /* NEWEST WINS, AND AN OLDER ONE IS REFUSED RATHER THAN APPLIED LAST.
+       *
+       * Two reports milliseconds apart are two CONCURRENT invocations of this function, and
+       * nothing orders their writes. Observed on the wire: a student paged twice in 41ms,
+       * the second write landed first, and the row was left saying they were on the slide
+       * they had already left - permanently, because reporting is throttled and a client
+       * that has stopped moving never says so again. Everything reading the roster then
+       * believed it, and a control tab opened on the wrong slide and drove them back to it.
+       *
+       * `posAt` rather than `seen`, and this is the point of a second attribute: `seen` is
+       * bumped by anything that proves somebody is there - a ping, a message in the chat -
+       * so a condition on it would let an unrelated keep-alive refuse a real move for a
+       * minute. This one is touched by position writes and nothing else.
+       *
+       * A same-millisecond tie is refused too. Two reports that close are indistinguishable
+       * in order anyway, and the loser is a slide the next report restates. */
+      const stale = await ddb.send(new UpdateCommand({
         TableName: TABLE, Key: { pk: row.pk, sk: row.sk },
-        UpdateExpression: 'SET seen = :now, #p = :p',
+        UpdateExpression: 'SET seen = :now, #p = :p, posAt = :now',
+        ConditionExpression: 'attribute_not_exists(posAt) OR posAt < :now',
         ExpressionAttributeNames: { '#p': 'position' },
         ExpressionAttributeValues: { ':now': now, ':p': position },
-      })).catch(() => {});
+      })).then(() => false).catch(e => e.name === 'ConditionalCheckFailedException');
+      /* And a stale report is not broadcast either. Sending it would walk every follower
+       * BACKWARDS to a slide the educator has already left, which is the same failure this
+       * exists to prevent, arriving by the other door. */
+      if (stale) return { statusCode: 200, body: 'stale' };
       /* Only when they have actually MOVED. A student answering a multiple-choice question
        * is active every few seconds and in the same place all the while; broadcasting that
        * would be a dozen posts per person per minute telling eleven other clients nothing

@@ -292,6 +292,49 @@ const mySlide = ref(null);
  * writes `mySlide`, so what this client says is what it is showing, never what it was told
  * to show. Same rule `followedPosition()` already states for a shared screen. */
 const drivenSlide = ref(null);
+
+/* WHETHER THIS ROW'S FRAME HAS SAID ANYTHING YET.
+ *
+ * A DECK'S FIRST WORD IS A REPORT, NEVER AN INSTRUCTION - and that distinction is the whole
+ * of the worst bug this feature has had.
+ *
+ * `SlidesStep` boots its iframe at the topic's FIRST slide, because that is what `src` has to
+ * be, and announces it on load like every later move. In a control tab every announcement is
+ * relayed as a `drive`, so taking over a student who was nine slides into a topic drove them
+ * back to the top of it before the tab had even landed on where they were - and then landed
+ * and drove them forward again. The student ended in the right place, so it looked like
+ * nothing had happened.
+ *
+ * What it actually left behind was two `active` reports from the student, milliseconds apart,
+ * which raced in the Lambda and stored the FIRST - so the room then believed that student was
+ * at the top of the topic. The next control tab read that, landed there, and dragged them
+ * back for real. Two symptoms, one cause: the educator was then drawing on a slide the class
+ * was not on, and annotations "did not work" for a week.
+ *
+ * So the first announcement of each frame moves nobody. Reset per ROW, because the iframe is
+ * keyed on its src and a new row is a new frame with a new boot position to announce. */
+const deckBooted = ref(false);
+/**
+ * The frame saying which slide it is on - its own, always, and never one it was sent to.
+ *
+ * A control tab DRIVES what it reports and every other client REPORTS it. Both are the same
+ * fact about the same frame, which is why they are one handler rather than two paths that
+ * could disagree about where this screen is.
+ */
+function onDeckSlide(n) {
+  const booting = !deckBooted.value;
+  deckBooted.value = true;
+  mySlide.value = n;
+  if (controlSub.value) {
+    if (drivingSomebody() && !booting) {
+      drive({ at: current.value?.id ?? null, title: current.value?.title, slide: n });
+    }
+    return;
+  }
+  /* A student's boot position IS reported, and has to be: it is how the room learns where
+   * somebody is sitting when they arrive. Only the instruction is suppressed. */
+  if (delivery.cohort) reportPosition();
+}
 /**
  * Which slide the frame is being sent to, by whoever has the right to send it.
  *
@@ -1240,6 +1283,7 @@ watch(currentId, () => {
   if (controlSub.value) {
     if (drivingSomebody()) drive({ at: current.value?.id ?? null, title: current.value?.title, slide: null });
     mySlide.value = null;
+    deckBooted.value = false;
     return;
   }
   /* A move of their own is a decision, and it ends the following. The educator is exempt:
@@ -1264,6 +1308,7 @@ watch(currentId, () => {
     if (lead != null && progressId(lead) !== progressId(currentId.value)) wandered();
   }
   mySlide.value = null;   // a new row starts a new range
+  deckBooted.value = false;
   reportPosition();
 });
 watch(currentId, id => {
@@ -1501,9 +1546,7 @@ watch(currentId, id => {
           :note-count="currentTopic?.notes"
           :goto="followSlide"
           :row="current"
-          @slide="n => { mySlide = n;
-                         if (controlSub) { if (drivingSomebody()) drive({ at: current?.id ?? null, title: current?.title, slide: n }); }
-                         else if (delivery.cohort) reportPosition(); }" />
+          @slide="onDeckSlide" />
         <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there are two
              ways to end up with two: somebody driving this screen, and the educator writing
              in every screen at once. Hence `frozen` in both cases, and a band for each. -->

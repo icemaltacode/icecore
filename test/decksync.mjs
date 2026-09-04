@@ -49,21 +49,25 @@ const check = (label, ok, detail = '') => {
         JSON.stringify(carried(DRAWINGS, drawings)));
 }
 
+/* NOTHING OFF THE SHARED CHANNEL TRAVELS, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+ *
+ * The click step used to be carried from here and it never once worked: Slidev only writes
+ * `clicks` into that channel from a presenter or from a TRUSTED ORIGIN - localhost and
+ * 127.0.0.1 - so on our own domain the channel never changes and there is nothing to relay.
+ * A whole lesson on the wire produced not one `- shared` frame.
+ *
+ * It could only have done harm if it had fired. `page` must never travel - the room already
+ * says where the class is looking - and the receiving deck applies a shared patch through
+ * Slidev's own `onPatch`, which navigates to `state.page`. That would have been the default
+ * 1: a patch about clicks sending a student to the first slide of the deck, through
+ * `history.replaceState`, which fires no event for the clamp to catch. */
 {
   const state = { page: 12, clicks: 3, clicksTotal: 5, timer: { status: 'running' } };
-  const out = carried(SHARED, state);
-  check('the click step travels', out.clicks === 3 && out.clicksTotal === 5, JSON.stringify(out));
-  /* THE ONE THAT MATTERS. */
-  check('and the page does NOT', !('page' in out), JSON.stringify(out));
-  check('nor the timer, which nothing shows', !('timer' in out), JSON.stringify(out));
-}
-
-{
-  /* A patch carrying only a page is nothing to send at all - not an empty object, which
-   * would be a message the other side has to receive and discard. */
-  check('a patch of nothing but the page is not sent',
-        carried(SHARED, { page: 12 }) === null,
-        JSON.stringify(carried(SHARED, { page: 12 })));
+  check('nothing off the shared channel is relayed',
+        carried(SHARED, state) === null, JSON.stringify(carried(SHARED, state)));
+  /* THE ONE THAT MATTERS, stated on its own so it survives the day somebody makes the
+   * shared channel work properly: whatever else travels, the page does not. */
+  check('and the page above all', carried(SHARED, { page: 12 }) === null);
 }
 
 // ------------------------------------------------- channels nobody asked for
@@ -74,7 +78,7 @@ const check = (label, ok, detail = '') => {
   check('and neither is a missing one', carried(undefined, { a: 1 }) === null);
   /* The theme announces a channel with a null body when a deck starts listening. It is not a
    * state and must not be forwarded as one. */
-  check('an announcement is not a patch', carried(SHARED, null) === null);
+  check('an announcement is not a patch', carried(DRAWINGS, null) === null);
   check('nor is something that is not an object', carried(DRAWINGS, 'oops') === null);
 }
 
