@@ -360,6 +360,7 @@ async function cmdDev() {
   // parent to put it under, and the first is the one you were standing in.
   const staging = path.join(contentDir, '..', '.icecore', String(port));
   await buildAll(staging);
+  copyRootFiles(staging);
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
   // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
   // `bundle` sets false - preview cannot leak into anything that ships.
@@ -673,6 +674,35 @@ function writeManifest(outRoot, course, built, all) {
     JSON.stringify({ course, built, all }, null, 2));
 }
 
+/* WHAT THE SITE SERVES AT ITS ROOT, and it is the platform's, not a course's.
+ *
+ * Favicons, the touch icon and the web manifest have to be AT THE ROOT: `/favicon.ico` is
+ * what a browser guesses when there is nothing to read, and the manifest's icon paths are
+ * root-absolute with nothing anywhere to rewrite them. Content-hashed into `assets/` they
+ * would be neither.
+ *
+ * COPIED INTO THE STAGING DIRECTORY, which is exactly what Vite's `publicDir` is - "the files
+ * served at /" - and is why this needs no copy step after a build and no plugin. It also means
+ * `dev` gets them on the same terms as a deployment, which is the only way the links in
+ * index.html are ever exercised locally.
+ *
+ * The app's own `public/` cannot be used for this: `dev` and `bundle` both point publicDir at
+ * the course's staging directory, so it is never served. See CLAUDE.md.
+ *
+ * Run AFTER `buildAll`, which wipes and recreates that directory.
+ */
+/* The directory is resolved INSIDE the function, not held in a const beside it. The command
+ * dispatch at the top of this file is top-level code: it runs while the module body is still
+ * being evaluated, so a `const` declared down here is in its temporal dead zone by the time a
+ * command calls into it - `Cannot access 'X' before initialization`, on a line that looks
+ * entirely ordinary. */
+function copyRootFiles(staging) {
+  const from = path.join(APP, 'root');
+  for (const name of fs.readdirSync(from)) {
+    fs.copyFileSync(path.join(from, name), path.join(staging, name));
+  }
+}
+
 async function cmdBundle() {
   const outDir = path.resolve(flag('out', 'dist'));
   // Its own staging directory, deliberately: building the content wipes and recreates it,
@@ -680,6 +710,7 @@ async function cmdBundle() {
   // every content request with the index page instead.
   const staging = path.join(contentDir, '..', '.icecore-bundle');
   await buildAll(staging);
+  copyRootFiles(staging);
   const { build } = await import('vite');
   await build({
     configFile: path.join(APP, 'vite.config.js'),

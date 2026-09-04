@@ -4,25 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>icecore</title>
-    <!-- THROUGH THE BUNDLE, NOT AT THE BUCKET ROOT, and that is a deployment decision rather
-         than a preference. `just deploy` syncs an ALLOWLIST - `assets/*`, `index.html` and
-         `auth.json` - because everything else in the bucket belongs to a course pipeline or
-         to the stack. Referenced from here, Vite content-hashes these into `assets/`, where
-         they are already carried and already cached for a year; put at the root they would
-         need a line in that allowlist and a copy step, for a file whose whole job is to be
-         named by the two links below.
+    <!-- AT THE SITE ROOT, not content-hashed into `assets/`, and the two that must be there
+         are why: `/favicon.ico` is what a browser guesses when it has no link to read, and the
+         manifest's icon paths are root-absolute with nothing anywhere to rewrite them. The
+         rest keep them company rather than living somewhere else for no reason.
 
-         The href is root-relative to the VITE root, which is `app/` - the same form the
-         module script at the bottom of this file uses. -->
-    <link rel="icon" type="image/png" sizes="32x32" href="/src/assets/favicon-32x32.png" />
-    <link rel="icon" type="image/png" sizes="16x16" href="/src/assets/favicon-16x16.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/src/assets/apple-touch-icon.png" />
-    <!-- Last, so a browser that understands the PNGs above prefers them. It is reached only
-         through this link: there is no `/favicon.ico` at the bucket root and the distribution
-         has no 404 rewrite, so a browser guessing that path gets a 404 rather than the icon.
-         Every browser that matters reads the links, and the ones that guess do so only when
-         there are none. -->
-    <link rel="icon" href="/src/assets/favicon.ico" sizes="any" />
+         They get there through `copyRootFiles` in bin/icecore.mjs, which puts app/root/ into
+         the staging directory Vite serves as publicDir - so `icecore dev` exercises these exact
+         paths too. `just deploy` carries them in a third sync pass with a week's cache: unlike
+         `assets/*` these URLs are stable, so `immutable` would strand a changed icon. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <!-- Last, so a browser that understands the PNGs above prefers them. -->
+    <link rel="icon" href="/favicon.ico" sizes="any" />
     <!-- Before the bundle, or the first paint is the wrong theme and the page flips. Kept
          in step with app/src/theme.js, which owns the same key and the same resolution. -->
     <script>

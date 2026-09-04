@@ -255,15 +255,18 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   check looked at the prefixes already protected, so it could not catch it. Forgetting to add
   a new app file to the allowlist means it does not deploy, which is visible; forgetting to
   exclude someone else's prefix means it is deleted, which is not.
-- **The favicon rides in `assets/`, not at the bucket root**, and that is the allowlist's
-  doing rather than a preference. `app/index.html` links four hashed files that Vite emits into
-  `assets/*`, which `just deploy` already carries and already caches for a year. Moving them to
-  the root - the conventional place - would need a line in that allowlist and a copy step,
-  because the app's own `public/` is never served: `icecore dev` and `bundle` point Vite's
-  publicDir at the course's staging directory. The visible cost is that a bare `/favicon.ico`
-  404s, which only a browser with no `<link>` to read would ask for. There is no
-  `site.webmanifest` for the same reason - its icon paths are root-absolute and nothing
-  rewrites them.
+- **The favicon and the manifest are at the site ROOT, and they get there through
+  `publicDir`.** Two of them have to be: `/favicon.ico` is what a browser guesses when it has
+  no `<link>` to read, and `site.webmanifest`'s icon paths are root-absolute with nothing
+  anywhere to rewrite them. So they cannot be content-hashed into `assets/`.
+
+  The app's own `public/` is never served - `dev` and `bundle` both point Vite's publicDir at
+  the course's staging directory - so `copyRootFiles` in `bin/icecore.mjs` copies `app/root/`
+  into that staging directory after `buildAll`, which is exactly what publicDir means. `dev`
+  therefore exercises the same paths a deployment does. **`just deploy` carries them in a
+  third sync pass**, named one by one like the rest of the allowlist, with a week's cache
+  rather than `immutable`: these URLs are stable, so a year would strand a changed icon in
+  every browser that had loaded the old one.
 
 - **The invitation's logo is deployed by the stack, not by `just deploy`.** A mail client
   drops an inline `data:` URI and Cognito sends one body with no attachment, so a remote

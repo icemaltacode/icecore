@@ -205,7 +205,7 @@ deploy: bundle _auth-json
     # post-deploy check looked at courses and decks, which were the prefixes already
     # protected, so it could not have caught it.
     #
-    # The app owns exactly these three things. Everything else in the bucket belongs to a
+    # The app owns exactly these things. Everything else in the bucket belongs to a
     # course pipeline, to the stack, or to something not yet invented. Forgetting to add a
     # new APP file here means it does not deploy, which is visible immediately; forgetting to
     # exclude someone else's prefix means it is deleted, which is not. Fail in the direction
@@ -231,6 +231,22 @@ deploy: bundle _auth-json
     aws s3 sync dist/ "s3://$bucket/" --delete \
       --exclude '*' --include 'index.html' --include 'auth.json' \
       --cache-control 'no-cache'
+    # A THIRD PASS, because the icons are a third kind of file. They are NOT content-hashed -
+    # `/favicon.ico` is what a browser guesses when it has no link to read, and the manifest's
+    # icon paths are root-absolute with nothing to rewrite them - so their URLs are stable and
+    # `immutable` would strand a changed logo in every browser that had ever loaded the old
+    # one. A week is long enough that nobody fetches them twice and short enough that a
+    # rebrand lands without an invalidation being the only thing that saves it.
+    #
+    # NAMED ONE BY ONE, like everything else here. A `--include '*.png'` would be an
+    # exclude list wearing a different hat: it would adopt whatever PNG somebody drops in
+    # dist/ next, which is exactly how the `brand/` prefix got deleted.
+    aws s3 sync dist/ "s3://$bucket/" --delete \
+      --exclude '*' \
+      --include 'favicon.ico' --include 'favicon-16x16.png' --include 'favicon-32x32.png' \
+      --include 'apple-touch-icon.png' --include 'site.webmanifest' \
+      --include 'android-chrome-192x192.png' --include 'android-chrome-512x512.png' \
+      --cache-control 'public,max-age=604800'
     aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
     domain=$(aws cloudfront get-distribution --id "$dist" \
       --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text 2>/dev/null)
