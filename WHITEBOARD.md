@@ -224,6 +224,26 @@ A fresh partition rather than a new prefix in a crowded one — the cohort row i
 key* is unused. The attachment for a topic is `begins_with(sk, 'BOARD#<topic>#')`; the
 educator's own list of past boards is `begins_with(sk, 'BOARD#')`.
 
+**Opening the whiteboard carries on from this topic's board.** A board in a room is not blank
+because somebody walked in; if the class already has one for the topic being taught, opening
+loads it and Keep updates it in place. That is also what stops the ordinary rhythm — open,
+draw, keep, close, open again — from filing two documents with the same title, which is what
+it did on the first afternoon it was used. **New board** is the way out, and it drops the
+identity as well as the pages: what is drawn next is its own document, so "start again" and
+"throw away what the class already has" never become the same gesture.
+
+The resume is held in the client and acted on when the flag comes back, never sent — it is one
+browser's intention, not a fact about the room. A student receiving the same `boarding` resumes
+nothing, and a second one (a reconnection, somebody else's lesson) does not act on it twice. It
+has to run *after* `applyBoarding` rather than before, because that resets the pages.
+
+**Deleting is gated exactly like saving, and deliberately not like reading.** `mayRead` lets a
+member in, because a board is theirs to look at; removing it is not, and a student deleting
+their class's lesson would be the same gesture as tidying up their own notes. Whoever may write
+may delete, which today means the person standing in front of the class. Gone means gone —
+there is no archive flag and no soft delete, so the confirmation says the pages go for good and
+that the class loses it from that topic. The header row goes last, mirroring the save.
+
 **One row per page, not one per board.** A DynamoDB item is capped at 400KB and a ten-page
 board at the transport ceiling is most of that. Pages are already the unit everything else
 here works in.
