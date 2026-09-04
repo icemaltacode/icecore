@@ -14,5 +14,9 @@
 export { default as App } from '../../app/src/App.vue';
 export { emitLocal, live as channel, send, on } from '../../app/src/live.js';
 export * as delivery from '../../app/src/delivery.js';
-export { previewRole, stopPreviewRoom } from '../../app/src/preview.js';
+/* `previewApi` is the stand-in's own front door, and a test uses it the way the app does -
+ * to change what the stand-in will answer next. That is what makes "the class is told when
+ * the list changes" checkable at all: without it the list is a constant, and a test that a
+ * re-read happened could only assert that nothing changed. */
+export { previewRole, stopPreviewRoom, previewApi } from '../../app/src/preview.js';
 export { session, restore, startSession } from '../../app/src/auth.js';

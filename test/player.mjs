@@ -370,6 +370,24 @@ await settle(150);
   [...document.querySelectorAll('.boardview button')].find(b => /Close/.test(b.textContent))?.click();
   await settle(120);
   check('and it closes again', !document.querySelector('.boardview'));
+
+  /* AND THE CLASS IS TOLD WHEN THE LIST CHANGES. The paperclip is read when a course opens
+   * and when the lesson changes - deliberately, so drawing one on every row costs no round
+   * trip - which left exactly one gap: a board kept in the middle of the lesson it was drawn
+   * in. A student had to reload the page to see it, at the moment it is most worth seeing.
+   *
+   * Driven by changing what the stand-in will answer NEXT and then sending the nudge, which
+   * is the only way to tell a re-read from a list that was never going to change. */
+  await player.previewApi('boards?cohort=sept-2026&topic=x&board=pv-board-2', { method: 'DELETE' });
+  player.emitLocal({ type: 'kept', course: 'c1', topic: '1.1.1' });
+  await settle(250);
+  const after = document.querySelector('.slidestep .boardclip button');
+  after?.click();
+  await settle(120);
+  check('a board filed mid-lesson reaches the class without a reload',
+        [...document.querySelectorAll('.clipmenu button')].length === 1
+          || !document.querySelector('.clipmenu'),
+        `${document.querySelectorAll('.clipmenu button').length} still listed`);
 }
 
 await player.dispose();

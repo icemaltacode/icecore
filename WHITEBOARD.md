@@ -237,6 +237,18 @@ browser's intention, not a fact about the room. A student receiving the same `bo
 nothing, and a second one (a reconnection, somebody else's lesson) does not act on it twice. It
 has to run *after* `applyBoarding` rather than before, because that resets the pages.
 
+**The class is told when the list changes.** The paperclip is read when a course opens and
+when the lesson changes — deliberately, so that drawing one on every row costs no round trip —
+which left exactly one gap: a board kept in the middle of the lesson it was drawn in, which is
+when it is most worth seeing. A student had to reload the page. A `kept` message on the channel
+closes it, and it carries a **nudge rather than the board**: the list is per caller — a student
+sees their intakes' boards and the educator sees the room's — so the only honest thing to
+broadcast is that it changed. A removal sends it too, or the paperclip is left behind on a
+board that is gone and opens onto a 404.
+
+The boards function is HTTP and cannot reach the room itself; it has no connection list and no
+business acquiring one. So the educator's client says so.
+
 **Deleting is gated exactly like saving, and deliberately not like reading.** `mayRead` lets a
 member in, because a board is theirs to look at; removing it is not, and a student deleting
 their class's lesson would be the same gesture as tidying up their own notes. Whoever may write

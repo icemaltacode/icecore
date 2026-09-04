@@ -156,6 +156,15 @@ on('stroked', m => applyStroke(m.page, m.node));
  * seeing it. Same sentence the local ceiling produces, from the other end. */
 on('boardfull', () => { board.full = true; });
 
+/* THE CLASS'S KEPT BOARDS HAVE CHANGED. The list is read when a course opens and when the
+ * lesson changes, which is what keeps a paperclip off the navigation path - and leaves one
+ * gap: a board kept in the middle of the lesson it was drawn in, which is when it matters
+ * most. This closes it.
+ *
+ * Only for the course this client actually has open. A cohort can take two, and re-reading a
+ * list about the other one would be a request for nothing. */
+on('kept', m => { if (saved.course && saved.course === m.course) loadSaved(saved.course); });
+
 /* Off the roster, like control and the editor switch - a client that has just connected, or
  * come back from a tunnel, would otherwise sit under no board at all in the middle of one.
  * This is also the only message that carries what is ALREADY DRAWN, because a joiner needs
@@ -305,6 +314,11 @@ export async function keepBoard({ course, topic, title }) {
    * appears nowhere until the course is opened again - which reads exactly like saving having
    * failed, and the save is the one moment somebody is looking for the result of it. */
   await loadSaved(course);
+  /* And everybody else's, who would otherwise not see it until they reloaded the page. The
+   * class is told rather than the board being sent: the list is per caller - a student sees
+   * their intakes' and the educator sees the room's - so the only honest thing to broadcast
+   * is that it changed. */
+  send('kept', { course, topic });
   return answer;
 }
 
@@ -422,6 +436,9 @@ export async function dropBoard(entry) {
    * new document rather than trying to update a row that is gone. */
   if (board.id === entry.board) { board.id = null; board.title = ''; }
   await loadSaved(saved.course);
+  /* A removal is as much a change to the class's list as a save, and the paperclip left
+   * behind on a board that is gone opens onto a 404. */
+  send('kept', { course: saved.course, topic: entry.topic });
 }
 
 /**

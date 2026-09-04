@@ -1385,6 +1385,34 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
+    /* THE CLASS'S KEPT BOARDS HAVE CHANGED - one was filed, or one was removed.
+     *
+     * A NUDGE, NOT THE BOARD. What travels is "re-read your list", because the list is behind
+     * an HTTP route that already answers the question properly and per caller: a student sees
+     * their intakes' boards and the educator sees the room's, and neither of those is
+     * something this function knows or should learn.
+     *
+     * IT EXISTS BECAUSE THE LIST IS READ TWICE A SESSION. The paperclip is loaded when a
+     * course opens and when the lesson changes - deliberately, so that drawing one on every
+     * row costs no round trip - which leaves exactly one gap: a board kept in the middle of
+     * the lesson it was drawn in. The class had to reload the page to see it, which is the
+     * moment it is most worth seeing.
+     *
+     * The boards function is HTTP and cannot reach the room itself; it has no connection
+     * list and no business acquiring one. So the educator's client says so, here. */
+    case 'kept': {
+      const held = await sessionFor(row.cohort);
+      if (row.role !== 'tutor' || held?.by !== row.sub) {
+        return { statusCode: 200, body: 'not yours' };
+      }
+      await emit(event, row.cohort, {
+        type: 'kept',
+        course: String(msg.course || '').slice(0, 100),
+        topic: String(msg.topic || '').slice(0, 40),
+      }, { except: id });
+      return { statusCode: 200, body: 'ok' };
+    }
+
     /* A PAGE IN FULL. Sent when the page TURNS, and whenever a change is not an append -
      * undo, redo, clear, a stroke erased. Those remove or reorder nodes, so a stream of
      * appends cannot express them and the page is sent whole instead.
