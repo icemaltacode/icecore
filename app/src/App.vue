@@ -235,9 +235,39 @@ const leaderAt = computed(() => (delivery.mine
  * without it a follower lands at the top of a topic the tutor is nine slides into - which
  * looks exactly like following not working. */
 const mySlide = ref(null);
-const followSlide = computed(() => (delivery.cohort && !delivery.mine && delivery.following
-  ? followedPosition()?.slide || null
-  : null));
+/* THE SLIDE A DRIVE ASKED FOR, kept apart from `mySlide` - which is where the frame actually
+ * IS, reported outwards by the frame itself.
+ *
+ * They were one ref, and that is the whole of a bug: a drive wrote the tutor's slide number
+ * straight into `mySlide`, nothing consumed it, and the frame never moved. So driving a
+ * student through a deck moved their row and left them on the first slide of it while the
+ * educator talked over slides they could not see. Worse, `mySlide` is what this client
+ * REPORTS, so the screen then told the room it was on slide 12 while showing slide 3 - and
+ * with sharing on, the class was sent to a slide the shared screen was not on. The one
+ * screen everybody had been told to look at was the odd one out.
+ *
+ * Separating them makes the report honest by construction: only the frame's own `@slide`
+ * writes `mySlide`, so what this client says is what it is showing, never what it was told
+ * to show. Same rule `followedPosition()` already states for a shared screen. */
+const drivenSlide = ref(null);
+/**
+ * Which slide the frame is being sent to, by whoever has the right to send it.
+ *
+ * THE DRIVE BEATS THE ROOM, for the reason the followed ROW does one screen down: with
+ * sharing off the room still reports the educator's own tab, so a driven student would be
+ * dragged back to wherever the educator's other tab happens to be, once per keystroke.
+ *
+ * A residual, stated rather than hidden: this is a destination, not an instruction, so a
+ * drive to the slide the student is already being sent to does not re-assert itself if they
+ * have since paged away inside the frame. The educator's next page corrects it, because
+ * every page they make is a different number. Fixing it properly means giving the drive a
+ * nonce, which is a prop on `SlidesStep` bought for a case that lasts one keypress.
+ */
+const followSlide = computed(() => {
+  if (!delivery.cohort) return null;
+  if (beingDriven()) return drivenSlide.value;
+  return !delivery.mine && delivery.following ? followedPosition()?.slide || null : null;
+});
 
 /* HOW THE CLASS DID ON THE THING ON SCREEN. Only for the tutor, and only on a row that can
  * be answered - the Lambda already refuses to send anybody else a mark, so this is about
@@ -677,7 +707,12 @@ watch(() => driven.at, () => {
   if (at == null) return;
   const row = flat.value.find(e => progressId(e.id) === progressId(at));
   if (row && row.id !== currentId.value) applied(() => { currentId.value = row.id; });
-  if (driven.position?.slide != null) applied(() => { mySlide.value = driven.position.slide; });
+  /* AFTER the row and NOT cleared by it. The `currentId` watcher below resets `mySlide` on
+   * every move, and it runs on the flush after this - so a slide written into that ref here
+   * survived only while the row did not change, which is to say never when it mattered.
+   * `drivenSlide` is written per drive and read only while `beingDriven()`, so it needs no
+   * clearing: the next drive states it again, null included. */
+  drivenSlide.value = driven.position?.slide ?? null;
 });
 
 /* Control ending, from either side. The educator's tab says so and stops rather than
