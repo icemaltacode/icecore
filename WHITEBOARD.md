@@ -358,6 +358,18 @@ these are the educator's.
   projection, which closes the part of that gap that fits on a page — and is the third thing
   in that file written because it shipped.
 
+- **The slides header's paperclip opened its menu off the top of the screen.** One control in
+  two homes, and the menu was positioned for one of them: `bottom: calc(100% + 6px)` is right
+  in the exercise footer and wrong in a header that sits at the very top of the pane. It opens
+  downward there now.
+
+  **The suite cannot see this class of bug and it is worth knowing which.** `test/player.mjs`
+  clicks that exact control and asserts both entries are in the menu — and passes, because
+  jsdom has no layout: everything is at 0×0 and nothing is ever off-screen or clipped. So the
+  DOM is checkable here and the *position* of it is not, which is the same boundary the slide
+  clamp and the frame's hash already sit on. Anything about where a thing lands on a screen
+  needs a browser.
+
 The shape of the miss is worth keeping. Both halves were *designed* — the cohort scoping is
 the rule this feature exists to hold, and the once-per-course fetch is what keeps a paperclip
 off the navigation path. What was never asked is what the two of them do to the one person who

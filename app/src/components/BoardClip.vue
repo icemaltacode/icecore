@@ -61,7 +61,12 @@ onBeforeUnmount(() => watchAway(false));
 
     <!-- Titles and dates rather than "Board 1, Board 2": the title is typed at the moment
          somebody knew what they had drawn, which is the whole reason it is asked for. -->
-    <ul v-if="open" class="clipmenu">
+    <!-- WHICH WAY IT OPENS IS THE HOME'S QUESTION, not a style. The footer's clip sits at the
+         bottom of the pane and the menu belongs above it; the slides header's sits at the very
+         TOP, where opening upward puts the menu off the top of the screen - present in the DOM,
+         asserted by the test, and invisible. Tied to `bare` because that is exactly the header
+         variant; a control that could be anywhere would have to measure. -->
+    <ul v-if="open" class="clipmenu" :class="{ down: bare }">
       <li v-for="b in list" :key="b.board">
         <button type="button" @click="open = false; watchAway(false); emit('open', b)">
           <strong>{{ b.title }}</strong>
@@ -89,6 +94,8 @@ onBeforeUnmount(() => watchAway(false));
   min-width: 220px; margin: 0; padding: 4px; list-style: none;
   background: var(--ice-bg); border: 1px solid var(--ice-border);
   border-radius: 10px; box-shadow: 0 12px 30px rgb(0 0 0 / .2); }
+/* Downward, for the clip that lives in a header. See the template. */
+.clipmenu.down { bottom: auto; top: calc(100% + 6px); }
 .clipmenu button { display: block; width: 100%; padding: 7px 9px; text-align: left;
   border: 0; border-radius: 6px; background: none; color: var(--ice-fg); cursor: pointer;
   font: inherit; }
