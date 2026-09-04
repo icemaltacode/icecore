@@ -148,7 +148,14 @@ on('roster', m => {
 
 /* A different session is a different board. Watched rather than being told, so that
  * delivery.js goes on having no idea this file exists - chat.js's rule. */
-watch(() => delivery.cohort, () => { board.on = false; board.mine = false; board.pages = ['']; board.page = 0; });
+watch(() => delivery.cohort, () => {
+  board.on = false; board.mine = false; board.pages = ['']; board.page = 0;
+  /* WHOSE BOARDS ARE VISIBLE CHANGES WITH THE LESSON, in both directions: starting one is how
+   * an educator comes to see the room's, and ending it is how they stop. Re-read rather than
+   * left as it was, or the paperclip goes on offering a class's boards to somebody who is no
+   * longer standing in front of them. */
+  if (saved.course) loadSaved(saved.course);
+});
 
 /* ------------------------------------------------------------------ the educator's gestures
 
@@ -262,6 +269,10 @@ export async function keepBoard({ course, topic, title }) {
     },
   });
   board.id = answer?.board || board.id;
+  /* THE PAPERCLIP IS A READ OF A LIST THIS JUST CHANGED. Without it a board is kept and
+   * appears nowhere until the course is opened again - which reads exactly like saving having
+   * failed, and the save is the one moment somebody is looking for the result of it. */
+  await loadSaved(course);
   return answer;
 }
 
@@ -296,8 +307,20 @@ export async function loadSaved(course) {
   if (!course) { saved.course = null; saved.byTopic = {}; return; }
   saved.course = course;
   saved.byTopic = {};
+  /* THE EDUCATOR IS NOT IN THE CLASS, and without this they are the one person who cannot
+   * see the board they just drew. The listing answers "what may I, whoever I am, see", and an
+   * admin is in no cohorts by design - the same reason their enrolment list is empty. So while
+   * they are DELIVERING, the room is named: `mayRead` in the boards function already blesses
+   * exactly that case, member or deliverer, which is the rule step six established for
+   * reopening a board and is no wider here.
+   *
+   * Only when it is their lesson. A student in one is a member already, and naming the room
+   * for them would narrow their list to it - hiding a board kept for another intake they are
+   * also in. */
+  const q = new URLSearchParams({ course });
+  if (delivery.mine && delivery.cohort) q.set('cohort', delivery.cohort);
   let answer;
-  try { answer = await api(`boards?course=${encodeURIComponent(course)}`); }
+  try { answer = await api(`boards?${q}`); }
   catch { return; }
   // A course opened while this was in flight owns the index now.
   if (saved.course !== course) return;

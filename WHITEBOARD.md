@@ -290,6 +290,34 @@ because those are the two states a list derived from rows could not draw.
 reaches a child component's root — the trap `SlidesStep`, `DataGrid` and `Playground` each
 spell out at length.
 
+## Two things found by using it
+
+Both on the read side, both the same afternoon it went out, and both invisible to the suite
+for the reason stated above: `test/player.mjs` drives the room from a student's side, and
+these are the educator's.
+
+- **The person who drew the board was the one person who could not see it.** The listing the
+  paperclip reads answers "what may I, whoever I am, see" — the caller's own cohorts — and an
+  educator is in none of them, by the same design that gives an admin an empty enrolment list.
+  So a board saved correctly, stored correctly, and appeared nowhere. The fix is not a wider
+  listing: while they are **delivering**, the client names the room, and `mayRead` in the
+  boards function already blesses exactly that — member or deliverer, the rule step six
+  established for reopening. Only when it is their lesson: a student in one is a member
+  already, and naming the room for them would *narrow* their list to it and hide a board kept
+  for another intake they are also in.
+
+- **Nothing re-read the list after a save.** `loadSaved` ran when a course opened and never
+  again, so a kept board appeared only after reopening the course — which reads exactly like
+  saving having failed, at the one moment somebody is looking for the result of it. `keepBoard`
+  now refreshes, and so does a change of lesson: whose boards are visible moves in both
+  directions, and an educator who has ended a session must stop being offered that class's
+  boards.
+
+The shape of the miss is worth keeping. Both halves were *designed* — the cohort scoping is
+the rule this feature exists to hold, and the once-per-course fetch is what keeps a paperclip
+off the navigation path. What was never asked is what the two of them do to the one person who
+is not in the class and is standing in front of it.
+
 ## Order I would build it
 
 1. **The surface, local only.** drauu mounted in a `viewBox`'d fixed-ratio overlay, brush
