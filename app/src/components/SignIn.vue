@@ -141,13 +141,15 @@ const SUBMIT = { signin: submit, newpassword: setPassword, forgot: sendCode, res
         <label for="email">Email</label>
         <input id="email" v-model="email" type="email" autocomplete="username" required autofocus>
 
-        <div class="row">
-          <label for="password">Password</label>
-          <!-- Beside the field it belongs to, not below the button: this is reached by
-               someone who has just failed to remember it, at the moment they look here. -->
+        <label for="password">Password</label>
+        <input id="password" v-model="password" type="password" autocomplete="current-password" required>
+        <!-- UNDER the field rather than beside its label. Both put it next to the thing it
+             is about; this one puts it after the attempt rather than before it, which is the
+             order the person reaching for it actually goes in - they type a password first
+             and look for this when it does not work. -->
+        <div class="forgot">
           <button type="button" class="link" @click="to('forgot')">Forgot it?</button>
         </div>
-        <input id="password" v-model="password" type="password" autocomplete="current-password" required>
       </template>
 
       <template v-else-if="stage === 'newpassword'">
@@ -224,6 +226,10 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 
 /* The label and its escape hatch on one line, so the hatch is where the trouble is. */
 .row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* Pulled up against the field above it and out of the label rhythm below: the inputs carry a
+   bottom margin meant to separate one labelled field from the next, and the link is part of
+   the field it sits under rather than a step of its own. */
+.forgot { display: flex; justify-content: flex-end; margin: -6px 0 4px; }
 .row label { margin-bottom: 6px; }
 
 .link { background: none; border: 0; padding: 0; font: inherit; font-size: 12px;

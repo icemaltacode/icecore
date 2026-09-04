@@ -72,6 +72,11 @@ const PATHS = {
   // makes it a pencil rather than an arrow at 15px - without it the body is just a
   // diagonal, which is why the plain "slash" edit glyphs read as a share or a link.
   edit: 'M4 20l1-5L16 4a2.83 2.83 0 0 1 4 4L9 19l-5 1Z M13.5 6.5l4 4',
+  // chosen / choose / drop it again - the three states of a picker, drawn as one pair of
+  // strokes each so they read at 13px, which is the size they are used at.
+  tick: 'M5 13l4 4L19 7',
+  plus: 'M12 5v14M5 12h14',
+  close: 'M6 6l12 12M18 6L6 18',
 };
 </script>
 

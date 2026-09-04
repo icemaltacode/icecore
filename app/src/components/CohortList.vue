@@ -38,6 +38,7 @@ import { api } from '../auth.js';
 import { live as running, refreshRunning, whyNotLive, mineAlready, end as endLive } from '../delivery.js';
 import Icon from './Icon.vue';
 import LiveStart from './LiveStart.vue';
+import CoursePicker from './CoursePicker.vue';
 
 const props = defineProps({
   cohorts: Array,
@@ -57,11 +58,18 @@ const confirming = ref('');
  * cohort so that cancelling leaves the row as it was - the list is only what the API says it
  * is once it has said so. */
 const choosing = ref('');
-const chosen = ref(new Set());
+/* AN ARRAY RATHER THAN A SET, because it is a `v-model` now and the picker proposes whole
+ * lists rather than mutations. It is also what the API takes, so nothing has to convert on
+ * the way out. */
+const chosen = ref([]);
 /* Naming a new intake. Closed until asked for: a create field that is always open is one
  * somebody types into by accident on a screen whose other rows are destructive. */
 const creating = ref(false);
 const fresh = ref('');
+/* WHAT A NEW INTAKE WILL TAKE, chosen before it exists. Naming a class and then having to
+ * find it in the list below to say what it is on was two steps for one decision - and the
+ * second is the one people skip, which leaves an intake whose members are on nothing. */
+const freshCourses = ref([]);
 /* Ending a lesson from HERE rather than from the live screen. The recovery path, not the
  * ordinary one - see the menu item below. */
 const finishing = ref('');
@@ -102,12 +110,7 @@ const startRename = c => { menu.value = ''; renaming.value = c.id; title.value =
 const startCourses = c => {
   menu.value = '';
   choosing.value = c.id;
-  chosen.value = new Set(c.courses || []);
-};
-const pick = id => {
-  const next = new Set(chosen.value);
-  next.has(id) ? next.delete(id) : next.add(id);
-  chosen.value = next;
+  chosen.value = [...(c.courses || [])];
 };
 
 /* THE WHOLE DESIRED SET, so a course unticked is a course withdrawn from everybody in the
@@ -126,15 +129,23 @@ const setCourses = c => run('courses', async () => {
 
 const create = () => run('create', async () => {
   const named = fresh.value.trim();
-  const r = await api('admin/cohorts', { method: 'POST', body: { title: named } });
+  const want = [...freshCourses.value];
+  const r = await api('admin/cohorts', { method: 'POST', body: { title: named, courses: want } });
   creating.value = false;
   fresh.value = '';
+  freshCourses.value = [];
   /* Naming one that already exists is not an error on the API's side - it hands back the one
    * that is there - so this says which of the two happened rather than claiming to have made
-   * something it found. */
-  return r.created
-    ? `${r.cohort.title} created. Give it a course, then add people to it.`
-    : `${r.cohort.title} already exists.`;
+   * something it found.
+   *
+   * AND THE COURSES ARE NOT APPLIED TO IT. A create that quietly rewrote what an existing
+   * intake takes would be the one gesture on this screen that withdraws a course from a
+   * class without saying so - the second half of the sentence exists to send somebody to the
+   * row, where taking one away is stated in terms of the people it happens to. */
+  if (!r.created) return `${r.cohort.title} already exists. Its courses are unchanged - use its own row to change them.`;
+  return want.length
+    ? `${r.cohort.title} created, taking ${want.map(courseTitle).join(', ')}. Add people to it.`
+    : `${r.cohort.title} created. Give it a course, then add people to it.`;
 });
 
 const rename = c => run('save', async () => {
@@ -202,11 +213,21 @@ onUnmounted(() => removeEventListener('click', shut));
          creating one is a button here and not only a side effect of an import. -->
     <div class="make">
       <template v-if="creating">
-        <input v-model="fresh" type="text" placeholder="Sept 2026 evening"
-               @keydown.enter.prevent="fresh.trim() && create()">
-        <button class="btn primary" type="button" :disabled="!fresh.trim() || !!busy"
-                @click="create">{{ busy === 'create' ? 'Creating…' : 'Create' }}</button>
-        <button class="link" type="button" @click="creating = false; fresh = ''">Cancel</button>
+        <div class="new">
+          <input v-model="fresh" type="text" placeholder="Sept 2026 evening"
+                 @keydown.enter.prevent="fresh.trim() && create()">
+          <!-- The courses come with the name, because they are the same decision. An intake
+               created with none is a class whose grid is empty, and the step that fills it
+               is the one nobody comes back for. -->
+          <label class="what">What it takes</label>
+          <CoursePicker v-model="freshCourses" :courses="courses" :disabled="!!busy" />
+          <div class="go">
+            <button class="btn primary" type="button" :disabled="!fresh.trim() || !!busy"
+                    @click="create">{{ busy === 'create' ? 'Creating…' : 'Create' }}</button>
+            <button class="link" type="button"
+                    @click="creating = false; fresh = ''; freshCourses = []">Cancel</button>
+          </div>
+        </div>
       </template>
       <button v-else class="btn" type="button" @click="creating = true">New cohort</button>
     </div>
@@ -227,26 +248,15 @@ onUnmounted(() => removeEventListener('click', shut));
           <button class="link" type="button" @click="finishing = ''">Cancel</button>
         </template>
         <template v-else-if="choosing === c.id">
-          <!-- The tick list, inline like the rename: a dialog for four checkboxes is a
-               dialog nobody wants, and this is a row-level edit. -->
+          <!-- Inline like the rename: this is a row-level edit, and a dialog for it would
+               be a dialog nobody wants. THE SAME CONTROL THE CREATE FLOW USES - two
+               spellings of one choice is how the two end up disagreeing about it. -->
           <div class="picking">
             <strong>What {{ c.title }} takes</strong>
-            <ul class="ticks">
-              <li v-for="x in (courses || [])" :key="x.id">
-                <label>
-                  <input type="checkbox" :checked="chosen.has(x.id)" @change="pick(x.id)">
-                  <span>{{ x.title }}</span>
-                  <!-- An open course is on everybody's grid anyway, so ticking it changes
-                       nothing a student can see. Said rather than hidden: leaving it out
-                       would read as the course being missing. -->
-                  <em v-if="x.open">open to everyone</em>
-                  <em v-else-if="x.playground">playground</em>
-                </label>
-              </li>
-              <li v-if="!(courses || []).length" class="none">No courses are published yet.</li>
-            </ul>
-            <p class="note">Everyone in this cohort is on what is ticked. Unticking takes a
-              course away from all {{ counts[c.id] || 0 }} of them; their progress is kept.</p>
+            <CoursePicker v-model="chosen" :courses="courses" :disabled="!!busy" />
+            <p class="note">Everyone in this cohort is on what is listed. Removing one takes
+              that course away from all {{ counts[c.id] || 0 }} of them; their progress is
+              kept.</p>
           </div>
           <button class="btn primary" type="button" :disabled="!!busy" @click="setCourses(c)">
             {{ busy === 'courses' ? 'Saving…' : 'Save' }}</button>
@@ -359,6 +369,15 @@ input:focus { outline: none; border-color: var(--ice-primary); }
 .make input { flex: 1; max-width: 340px; font: inherit; font-size: 14px; padding: 7px 10px;
               background: var(--ice-bg); color: var(--ice-fg);
               border: 1px solid var(--ice-border); border-radius: 8px; }
+/* Naming it and saying what it takes is one form, so it is a stack rather than the row the
+   name alone used to be. Held to the width of a reading column: the picker's list is short
+   lines, and a filter box the width of the screen looks like a search over the whole page. */
+.new { display: flex; flex-direction: column; gap: 10px; width: 100%; max-width: 420px;
+       padding: 14px; border: 1px solid var(--ice-border); border-radius: var(--ice-radius);
+       background: var(--ice-bg-soft); }
+.new input { max-width: none; }
+.new .what { font-size: 12px; color: var(--ice-fg-muted); margin-bottom: -4px; }
+.new .go { display: flex; align-items: center; gap: 8px; }
 
 /* What it takes, under the name. Chips rather than prose: a cohort on three courses is a
    list, and a comma-separated sentence at 12px is one nobody parses at a glance. */
@@ -370,17 +389,12 @@ input:focus { outline: none; border-color: var(--ice-primary); }
    away. A greyed sentence saying the same words would be a dead end. */
 .takes .empty { font-size: 11.5px; color: var(--ice-bad); }
 
-.picking { flex: 1; min-width: 0; }
+/* Held to a reading column rather than filling the row: the picker's list is short lines,
+   and its own list scrolls, so a row that grew to the height of the catalogue would push the
+   Save button it belongs to off the bottom of the screen. */
+.picking { flex: 1; min-width: 0; max-width: 420px; }
 .picking > strong { display: block; font-weight: 500; font-size: 13px; margin-bottom: 6px; }
-.ticks { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
-.ticks li { display: block; padding: 0; border: 0; }
-.ticks label { display: inline-flex; align-items: center; gap: 7px; font-size: 13px;
-               cursor: pointer; padding: 3px 0; }
-.ticks input { accent-color: var(--ice-primary); width: 15px; height: 15px; }
-.ticks em { font-style: normal; font-size: 10.5px; text-transform: uppercase;
-            letter-spacing: .05em; color: var(--ice-fg-muted); }
-.ticks li.none { color: var(--ice-fg-muted); font-size: 13px; }
-.picking .note { margin: 0; font-size: 12px; color: var(--ice-fg-muted); line-height: 1.45; }
+.picking .note { margin: 6px 0 0; font-size: 12px; color: var(--ice-fg-muted); line-height: 1.45; }
 
 .acts { display: flex; align-items: center; gap: 8px; flex: none; }
 .iconbtn { display: inline-flex; padding: 6px; border-radius: 6px; cursor: pointer;

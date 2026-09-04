@@ -240,7 +240,7 @@ watch(confirming, v => { if (!v) typed.value = ''; });
         <label class="tick admin" :class="{ off: isSelf }">
           <input type="checkbox" v-model="admin" :disabled="isSelf">
           <span>
-            <strong>Can manage users</strong>
+            <strong>Admin</strong>
             <small>Invite, edit and remove people, and see this screen.</small>
           </span>
         </label>
