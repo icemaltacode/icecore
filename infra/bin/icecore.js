@@ -15,5 +15,12 @@ if (!account || !region)
 
 new IcecoreStack(app, 'Icecore', {
   env: { account, region },
-  description: 'ICE practice platform — static site, private content, auth',
+  /* ASCII ONLY, AND THE HYPHEN IS THE POINT. This was an em-dash, and a stack
+   * description goes to CloudFormation and comes back through `cdk diff`'s own
+   * renderer, which mangles it - so every diff reported the description as CHANGED,
+   * for ever, against a template that had not moved. CDK hides it behind "Omitted 1
+   * changes because they are likely mangled non-ASCII characters", which is worse than
+   * showing it: a diff that always says one stack differs cannot be read as "nothing to
+   * deploy", and the one line it hides is the one nobody can check. */
+  description: 'ICE practice platform - static site, private content, auth',
 });
