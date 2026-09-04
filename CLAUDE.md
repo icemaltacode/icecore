@@ -135,6 +135,18 @@ that ordinal.
   out of a topic skips the exercises that practise it. Hooked on the patched `pushState`
   rather than `hashchange`: vue-router's hash mode drives the History API directly, so a
   `hashchange` listener sees nothing at all.
+- **A frame is sent to a slide by an ABSOLUTE url, never a bare `#/<n>`.**
+  `location.replace()` resolves a relative URL against the *entry* settings object - the
+  realm of the script that called it - and the caller is the player, not the deck. So
+  `frame.contentWindow.location.replace('#/12')` composed the fragment onto the PLAYER's own
+  URL, navigated the iframe to `/?course=<id>#/12`, and the site answered that with
+  `index.html` because `/` is the distribution's default root object: the whole application
+  rendered inside the pane where the slides belong, every time an educator advanced a slide.
+  Read the frame's own `href` and hand `replace` an absolute URL. `location.hash =` resolves
+  correctly but pushes a history entry per slide, which makes Back a slow walk backwards
+  through the lesson. **jsdom does not reproduce it** - it resolves `replace()` against the
+  frame's own document - so `test/player.mjs` passes either way and the only honest
+  instrument is a browser.
 - **Speaker notes are shown to students**, in a panel beside the slide step. That is only
   safe because of the house rule that a note is a handout rather than a stage direction -
   it is a property of the content, not of the code, and a course that wrote "pause here"

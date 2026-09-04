@@ -197,6 +197,38 @@ const onLoad = () => {
 
   const { slide: lo, end: hi } = props.row;
   const at = () => Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]) || 0;
+  /**
+   * SEND THE FRAME TO A SLIDE, BY ABSOLUTE URL. This is not tidiness, it is the whole of
+   * the bug that made an educator advancing a slide render the player inside the frame.
+   *
+   * `location.replace()` resolves a relative URL against the ENTRY settings object - the
+   * realm of the script that called it - and the script calling it here is the PLAYER, not
+   * the deck. So `win.location.replace('#/12')` composed the fragment onto the player's own
+   * URL and navigated the iframe to `/?course=<id>#/12`, which the site answers with
+   * `index.html`, because `/` is the distribution's default root object. The frame loaded
+   * the application. Measured in Chromium rather than reasoned about: from a parent at
+   * `/parent.html?course=c1#/live/a`, a frame on `/deck/index.html#/3` told to replace
+   * `#/12` ends up on `/parent.html?course=c1#/12`, with the parent's title.
+   *
+   * That is the same SYMPTOM as the `/undefined#/12` bug fixed in 14ce371 and a completely
+   * different cause, which is why fixing that one did not fix this - the src was right all
+   * along and the navigation away from it was not.
+   *
+   * `win.location.hash = ...` would resolve correctly, since it only touches the fragment of
+   * the location's own URL - but it pushes a history entry per slide, and following a tutor
+   * through nine slides would make Back a slow walk backwards through the lesson. Reading
+   * the frame's own href and handing back an absolute URL keeps `replace` and takes the
+   * ambiguity out of it entirely.
+   *
+   * NOT COVERED BY `test/player.mjs`: jsdom resolves `replace()` against the frame's own
+   * document, so the broken version passes there too. The only honest instrument is a
+   * browser, and that is where this was both found and checked.
+   */
+  const goTo = n => {
+    const u = new URL(win.location.href);
+    u.hash = `#/${n}`;
+    win.location.replace(u.href);
+  };
   /* The notes panel rides on the clamp's hash watch rather than installing a second one.
    * Same reasoning as the clamp itself: vue-router hash mode drives pushState and fires no
    * hashchange, so anything watching the hash on its own would sit still while the deck
@@ -215,7 +247,7 @@ const onLoad = () => {
     win.setTimeout(() => {
       fixing = false;
       const m = at();
-      if (m && (m < lo || m > hi)) win.location.replace(`#/${m < lo ? lo : hi}`);
+      if (m && (m < lo || m > hi)) goTo(m < lo ? lo : hi);
     }, 80);
   };
 
@@ -244,7 +276,7 @@ const onLoad = () => {
      * the replacement has finished loading. A drive arriving in that gap would be written
      * into a window the browser has already discarded. */
     if (frame.value?.contentWindow !== win) return;
-    win.location.replace(`#/${n}`);
+    goTo(n);
   }, { immediate: true });
 };
 
