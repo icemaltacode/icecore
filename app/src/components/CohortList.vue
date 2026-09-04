@@ -338,7 +338,11 @@ onUnmounted(() => removeEventListener('click', shut));
         somebody, and it appears here.</li>
     </ul>
 
+    <!-- The head count is passed rather than recomputed there: this list already says
+         "8 people in it" beside the cohort, and a dialog opening on top of it with a
+         different number is worse than one with no number at all. -->
     <LiveStart v-if="starting" :cohort="starting" :courses="courses"
+               :people="counts[starting.id] || 0"
                @close="starting = null" />
   </section>
 </template>

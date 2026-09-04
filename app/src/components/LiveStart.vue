@@ -26,6 +26,18 @@ const props = defineProps({
   cohort: Object,
   /** The catalogue, for titles and exercise counts. Not what the cohort takes - see below. */
   courses: Array,
+  /* HOW MANY PEOPLE ARE IN THE INTAKE, counted by the list this opened from.
+   *
+   * The sentence below used to count them here, from a `users` array that was never declared
+   * and never passed - so every render of this dialog threw
+   * `Cannot read properties of undefined (reading 'filter')`, Vue abandoned the render, and
+   * the educator got a course picker with its explanation missing. Silent, because Vue logs a
+   * render error and carries on; found by reading an educator's console during a real lesson.
+   *
+   * Passed rather than derived for the reason it is now a number and not an array: the list
+   * underneath already says how many people are in this intake, and two counts of one thing
+   * are two chances to disagree on screen at the same moment. */
+  people: Number,
 });
 const emit = defineEmits(['close']);
 
@@ -90,9 +102,13 @@ async function begin() {
       <p v-if="loading" class="sub">Checking…</p>
 
       <template v-else>
-        <p class="sub">These {{ users.filter(u => !u.admin && (u.cohorts || []).includes(cohort.id)).length }}
-          people are all on {{ titled.length }} courses. Pick the one you are teaching now —
-          everyone who joins will follow you through it.</p>
+        <!-- The count is dropped rather than printed as nought when it is not known: an
+             intake being described as "these 0 people" reads as a broken class list at the
+             moment somebody is about to teach it. -->
+        <p class="sub"><template v-if="people">These {{ people }} people are</template>
+          <template v-else>This intake is</template> all on {{ titled.length }} courses.
+          Pick the one you are teaching now — everyone who joins will follow you through
+          it.</p>
 
         <div class="opts">
           <label v-for="c in titled" :key="c.id" class="opt" :class="{ on: picked === c.id }">
