@@ -38,6 +38,7 @@ import AccountPanel from './components/AccountPanel.vue';
 import Icon from './components/Icon.vue';
 import Badge from './components/Badge.vue';
 import SlidesPanel from './components/SlidesPanel.vue';
+import SplitPane from './components/SplitPane.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
 import SignIn from './components/SignIn.vue';
@@ -57,6 +58,17 @@ const playground = ref(null);
 const needsSignIn = ref(false);
 const authed = ref(false);
 const showSlides = ref(false);
+/* WHICH EDGE THE DECK TAKES - 'right' or 'bottom'. Remembered per browser, because it is a
+ * fact about the screen somebody is sitting at rather than about the course: a 16:9 slide
+ * beside an exercise on a laptop leaves both too narrow to read, and under it on an ultrawide
+ * wastes the half of the width nothing is using.
+ *
+ * THE SAME GESTURE THE NOTES PANEL ALREADY HAS, down to the icon - see SlidesStep.vue. Two
+ * ways of saying "put this the other way round" in one app is a tic rather than a
+ * vocabulary. */
+const SLIDES_SIDE = 'ice-slides-side';
+const slidesSide = ref(localStorage.getItem(SLIDES_SIDE) === 'bottom' ? 'bottom' : 'right');
+watch(slidesSide, v => localStorage.setItem(SLIDES_SIDE, v));
 /* The deck belongs to the topic the current row sits in, so it follows the student through
  * the topic and swaps when they cross into the next one. Taken off the row rather than by
  * searching the exercises: a slide row is not in any topic's exercise list. */
@@ -139,6 +151,11 @@ const slidesUrl = computed(() => {
   const s = currentTopic.value?.slides;
   return s ? (/^https?:\/\//.test(s) ? s : `${import.meta.env.BASE_URL}${s}`) : null;
 });
+/* The deck BESIDE the exercise, which is not the same question as whether the course has one:
+ * on a slides step the deck is the step, and offering a second copy of it in a panel reads as
+ * a bug. Named once because the split, the panel and the footer button all ask it. */
+const deckBeside = computed(() => !!(showSlides.value && slidesUrl.value
+  && current.value?.kind !== 'slides'));
 const allCourses = ref([]);   // unfiltered - an admin enrols people onto courses they aren't on
 const courseProgress = ref({});   // course id -> { done, xp }, for the cards on the grid
 const isAdmin = computed(() => session.admin);
@@ -1357,7 +1374,19 @@ watch(currentId, id => {
         </aside>
       </div>
 
-      <main :class="{ 'with-slides': showSlides && slidesUrl }">
+      <!-- THE EXERCISE AND THE DECK SHARE ONE SPLIT, rather than the deck being a column of
+           the shell. It was a column, which is why it could only ever be on the right: a
+           grid column cannot become a row under its neighbour without every combination of
+           railed / live / tucked being written twice. As a split it is one `direction`, the
+           ratio is draggable and remembered per orientation, and four `:has(> .slides)`
+           column rules stopped existing.
+
+           `single` folds it away without unmounting anything - see SplitPane. -->
+      <SplitPane class="stage" :direction="slidesSide === 'bottom' ? 'column' : 'row'"
+                 :single="!deckBeside" :storage-key="`slides-${slidesSide}`"
+                 :initial="slidesSide === 'bottom' ? 58 : 62" :min="25" :max="85" :min-px="220">
+      <template #a>
+      <main>
         <div v-if="loadError" class="state error">
           <h2>Couldn't load the course</h2>
           <p>{{ loadError }}</p>
@@ -1417,11 +1446,15 @@ watch(currentId, id => {
                   :disabled="index >= total - 1" @click="go(1)">Next</button>
         </footer>
       </main>
+      </template>
 
-      <SlidesPanel
-        v-if="showSlides && slidesUrl && current?.kind !== 'slides'"
-        :src="slidesUrl" :label="currentTopic?.label"
-        @close="showSlides = false" />
+      <template #b>
+        <SlidesPanel v-if="deckBeside" :src="slidesUrl" :label="currentTopic?.label"
+                     :side="slidesSide"
+                     @flip="slidesSide = slidesSide === 'right' ? 'bottom' : 'right'"
+                     @close="showSlides = false" />
+      </template>
+      </SplitPane>
 
       <!-- Last in the row, so the deck and the exercise keep the middle. It is the room
            rather than the lesson: a tutor glances at it, and a student mostly does not. -->
@@ -1468,10 +1501,14 @@ watch(currentId, id => {
 }
 .livegone { margin: 0; padding: 8px 16px; font-size: 13px; color: var(--ice-bad);
             background: var(--ice-bad-fill); border-bottom: 1px solid var(--ice-border); }
-.shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
-.shell:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%); }
+/* Sidebar, stage, room. THE DECK IS NOT A COLUMN HERE any more - it shares the stage with
+   the exercise through a SplitPane, which is what lets it sit under them as well as beside
+   them. That removed four `:has(> .slides)` variants: every combination of railed, live and
+   tucked had to state a slides width too, and none of them could have expressed a row. */
+.shell { position: relative;
+         display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100%; min-height: 0; }
 .shell.railed { grid-template-columns: 44px minmax(0, 1fr); }
-.shell.railed:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%); }
+.stage { min-width: 0; min-height: 0; }
 /* The room, as a fixed last column. Fixed rather than a fraction because it is a list of
    names: it does not get more useful with more room, and every pixel it took would come
    off the exercise, which does. The slides pane gives up the width instead - it is the one
@@ -1480,16 +1517,12 @@ watch(currentId, id => {
    336 rather than 300 because it holds the chat as well now, and a message wrapping every
    four words is a log nobody reads. That is also the width the mock screens were drawn at. */
 .shell.live { grid-template-columns: 272px minmax(0, 1fr) 336px; }
-.shell.live:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 30%) 336px; }
 .shell.railed.live { grid-template-columns: 44px minmax(0, 1fr) 336px; }
-.shell.railed.live:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 30%) 336px; }
 /* Collapsed, it is the same 44px rail the sidebar leaves - and it gives its width back to
    the exercise rather than to the slides, because the exercise is what a student collapsed
    it to make room for. */
 .shell.live.tucked { grid-template-columns: 272px minmax(0, 1fr) 44px; }
-.shell.live.tucked:has(> .slides) { grid-template-columns: 272px minmax(0, 1fr) minmax(0, 38%) 44px; }
 .shell.railed.live.tucked { grid-template-columns: 44px minmax(0, 1fr) 44px; }
-.shell.railed.live.tucked:has(> .slides) { grid-template-columns: 44px minmax(0, 1fr) minmax(0, 38%) 44px; }
 
 /* The hover target. Unpinned it is only as wide as the rail, and the panel floats out of
    it over the exercise - hovering an edge must never reflow the page under the pointer. */
@@ -1568,7 +1601,9 @@ nav { overflow: auto; padding: 6px 10px 18px; flex: 1; min-height: 0; }
 .navitem.done .badge { background: var(--ice-primary-soft); border-color: transparent; color: var(--ice-fg); }
 .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-main { display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+/* `flex: 1` because it is a SplitPane pane's child now, and a pane is a flex column: without
+   it `main` sizes to its own content along the split axis and collapses. */
+main { flex: 1; display: grid; grid-template-rows: 1fr auto; min-height: 0; min-width: 0; }
 .state { display: grid; place-content: center; text-align: center; color: var(--ice-fg-muted); gap: 6px; }
 .state.error h2 { color: var(--ice-fg); margin: 0; font-size: 18px; }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 12px;

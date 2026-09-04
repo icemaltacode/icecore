@@ -68,11 +68,43 @@ const remembered = localStorage.getItem(OPEN_KEY);
  * pin: a remembered answer outranks the default, and the default is only ever consulted
  * once per browser. */
 const open = ref(remembered === null ? !!props.canControl : remembered === 'yes');
-watch(open, v => {
-  localStorage.setItem(OPEN_KEY, v ? 'yes' : 'no');
-  emit('width', v);
+watch(open, v => localStorage.setItem(OPEN_KEY, v ? 'yes' : 'no'));
+
+/* TOO NARROW TO HOLD IT AND A USABLE EXERCISE AT THE SAME TIME.
+ *
+ * The room is a fixed 336px column and the sidebar is another 272, so on a laptop the
+ * exercise was left with less than its own minimum and simply overflowed its column - the
+ * editor's text ran under the panel, which reads as the panel being half-transparent rather
+ * than as the layout having run out of room.
+ *
+ * IT DOES NOT TOUCH THE REMEMBERED ANSWER. `open` is a decision somebody took and the window
+ * being small is not a change of mind; widening it again puts the panel back without
+ * anybody asking. Same reason the sidebar's pin survives a peek.
+ *
+ * AND THE BUTTON STILL WORKS - it floats over the exercise instead of squeezing it, which is
+ * exactly what the sidebar does when it is unpinned. A control that collapses on a small
+ * screen and then refuses to open is a control that looks broken.
+ *
+ * 1200px is 272 + 336 for the two columns plus ~590 for the exercise, which is where the
+ * brief's own 320px floor and an editor worth typing in stop fitting side by side. */
+const NARROW = '(max-width: 1200px)';
+const narrow = ref(false);
+const onNarrow = e => { narrow.value = e.matches; };
+let mq = null;
+
+/** Open AND there is room for it. The column follows this; the panel's own state does not. */
+const roomy = computed(() => open.value && !narrow.value);
+/** Open where there is no room for it: over the exercise rather than beside it. */
+const floating = computed(() => open.value && narrow.value);
+watch(roomy, v => emit('width', v));
+
+onMounted(() => {
+  mq = window.matchMedia(NARROW);
+  narrow.value = mq.matches;
+  mq.addEventListener('change', onNarrow);
+  emit('width', roomy.value);
 });
-onMounted(() => emit('width', open.value));
+onUnmounted(() => mq?.removeEventListener('change', onNarrow));
 
 /* Something asked for the chat. The panel opens ITSELF rather than being opened, because it
  * owns this preference and writes it to localStorage - a second writer would disagree with
@@ -167,9 +199,16 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
 <template>
   <!-- Collapsed, the rail still says how many are here: a control that only says
        "participants" makes you open it to find out whether anything has changed. -->
-  <aside v-if="!open" class="roomrail">
-    <button class="railbtn" type="button" :title="`Participants — ${hereCount} here`"
-            @click="open = true">
+  <!-- The rail is rendered whenever the panel is not taking a column - including while it
+       floats, because the column it would otherwise occupy is 44px of gutter and the rail is
+       what fills it. -->
+  <aside v-if="!roomy" class="roomrail">
+    <!-- A TOGGLE, not an open. The rail is on screen in two states now - collapsed, and
+         collapsed with the panel floating over the exercise beside it - and a button that
+         only ever opens is one that does nothing at all in the second. -->
+    <button class="railbtn" type="button"
+            :title="floating ? 'Hide the participants' : `Participants — ${hereCount} here`"
+            @click="open = !open">
       <Icon name="people" :size="16" />
       <span class="badge">{{ hereCount }}</span>
     </button>
@@ -185,7 +224,7 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
     </button>
   </aside>
 
-  <aside v-else class="roompanel" :class="{ split: !chat.popped }">
+  <aside v-if="roomy || floating" class="roompanel" :class="{ split: !chat.popped, floating }">
     <header>
       <Icon name="people" :size="15" />
       <h4>{{ grading ? 'This exercise' : 'Participants' }}</h4>
@@ -262,6 +301,18 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
    the same gesture on opposite edges of the screen, and two spellings of it would read as
    two different kinds of thing. */
 .roomrail, .roompanel { border-right: 0; }
+/* OVER THE EXERCISE, NOT BESIDE IT, when there is no room to be beside it. Out of the grid
+   entirely, so the shell keeps the 44px rail it would have had and nothing reflows under the
+   pointer when this appears.
+
+   OPAQUE, and stated rather than inherited: this is the one place in the app where a panel
+   is drawn over a working editor, and a background that came out even slightly translucent
+   would put the student's code behind their classmates' names. The shadow is what says it is
+   floating; the background is what makes it readable. */
+.roompanel.floating { position: absolute; top: 0; bottom: 0; right: 0; width: 336px;
+                      max-width: calc(100vw - 44px); z-index: 40;
+                      background: var(--ice-bg-soft);
+                      box-shadow: -12px 0 32px var(--ice-scrim); }
 .roomrail { background: var(--ice-bg-soft); border-left: 1px solid var(--ice-border);
             display: flex; flex-direction: column; align-items: center; padding: 16px 0; }
 .railbtn { position: relative; width: 30px; height: 30px; display: grid; place-items: center;
