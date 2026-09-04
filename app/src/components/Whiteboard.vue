@@ -19,7 +19,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { createDrauu } from 'drauu';
 import Icon from './Icon.vue';
-import { board, STAGE, current, turnTo, addPage, commitStroke, commitPage } from '../board.js';
+import { board, STAGE, current, turnTo, addPage, commitStroke, commitPage, freshBoard }
+  from '../board.js';
 import { clean } from '../svgclean.js';
 
 const emit = defineEmits(['close', 'save', 'open']);
@@ -161,6 +162,13 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
       <div class="wbgroup">
         <!-- Carrying on from something already kept. Beside undo and clear because it is the
              third thing that replaces what is on the board rather than adding to it. -->
+        <!-- THE WAY OUT OF A RESUMED BOARD. Opening the whiteboard carries on from whatever
+             this class already has for the topic, which is what a board in a room does; this
+             is how you say you meant a blank one. It drops the identity as well as the
+             pages, so what is drawn next is filed as its own document. -->
+        <button v-if="board.id || board.pages.some(p => p)" class="wbbtn" type="button"
+                title="Start a new board" aria-label="Start a new board"
+                @click="freshBoard"><Icon name="plus" :size="15" /></button>
         <button class="wbbtn" type="button" title="Carry on from a kept board"
                 aria-label="Carry on from a kept board"
                 @click="emit('open')"><Icon name="attach" :size="15" /></button>

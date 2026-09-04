@@ -477,7 +477,7 @@ export class IcecoreStack extends Stack {
     });
     api.addRoutes({
       path: '/api/boards',
-      methods: [HttpMethod.GET, HttpMethod.POST],
+      methods: [HttpMethod.GET, HttpMethod.POST, HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('BoardsIntegration', boards),
     });
     // The admin group check happens inside the function - a JWT authorizer can't see groups.

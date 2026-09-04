@@ -234,6 +234,9 @@ const NAME_KEY = 'ice-preview-name';
 const AVATAR_KEY = 'ice-preview-avatar';
 const PREVIEW_NAME = () => sessionStorage.getItem(NAME_KEY) || 'Ada Lovelace';
 
+/* Boards deleted in this tab. See the DELETE branch below. */
+const binned = new Set();
+
 export async function previewApi(path, { method = 'GET', body } = {}) {
   const [route, query] = path.split('?');
   const q = new URLSearchParams(query || '');
@@ -690,6 +693,14 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
    * The pages are in BOARD UNITS, like the room script's strokes, which is the whole point of
    * the fixed stage: they render here exactly as they would have in the room.
    */
+  /* DELETING ONE. Remembered for the life of the tab rather than answered `ok` and forgotten:
+   * a delete that the list goes on showing the moment it is reopened is a stand-in that
+   * teaches the opposite of what the feature does. */
+  if (route === 'boards' && method === 'DELETE') {
+    binned.add(q.get('board'));
+    return { ok: true, pages: 1 };
+  }
+
   if (route === 'boards' && method === 'GET') {
     const ink = 'fill="none" stroke="#1f2328" stroke-width="6" stroke-linecap="round"';
     const KEPT = [
@@ -722,7 +733,7 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     return {
       boards: KEPT
         .map(({ nth, ...b }) => ({ ...b, topic: topics[nth] }))
-        .filter(b => b.topic),
+        .filter(b => b.topic && !binned.has(b.board)),
     };
   }
 

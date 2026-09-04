@@ -1125,10 +1125,15 @@ async function endLiveHere() {
   goAdmin('cohorts');
 }
 
-/* THE BOARD, from this screen's side, and it is one line because it is one gesture: a send.
- * The overlay opens when the flag comes back off the session row, never off the click -
- * `sync`'s rule, and the reason `board.on` is read rather than set here. */
-const setBoard = on => startBoard(on);
+/* THE BOARD, from this screen's side. The overlay opens when the flag comes back off the
+ * session row, never off the click - `sync`'s rule, and the reason `board.on` is read rather
+ * than set here.
+ *
+ * THE TOPIC RIDES WITH IT so that opening the whiteboard carries on from whatever this class
+ * already has for the topic being taught, which is what a board in a room does. Resolved here
+ * because this is the screen that knows where the lesson is; board.js acts on it once the
+ * flag has come back. */
+const setBoard = on => startBoard(on, on ? { topic: currentTopic.value?.topic } : null);
 
 /* KEEPING THE BOARD. The dialog asks for a title and says where it lands; this hands over
  * the two facts the educator's screen knows and the Lambda cannot - which course is open and
@@ -1427,7 +1432,7 @@ watch(currentId, id => {
     <BoardOpen v-if="opening" :course="course?.id" :cohort-title="delivery.title"
                :unsaved="boardUnsaved" @pick="reopenBoard" @close="opening = false" />
     <BoardViewer v-if="viewingBoard" :entry="viewingBoard" @close="viewingBoard = null" />
-    <BoardSave v-if="keeping" :pages="board.pages.length"
+    <BoardSave v-if="keeping" :pages="board.pages.length" :board-title="board.title"
                :topic-title="currentTopic?.label" :topic="currentTopic?.topic"
                :cohort-title="delivery.title" :busy="keepBusy" :error="keepError"
                @save="keepBoardHere" @close="keeping = false" />

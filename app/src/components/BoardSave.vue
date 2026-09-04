@@ -22,6 +22,8 @@ const props = defineProps({
   topic: String,
   /** Who gets it. */
   cohortTitle: String,
+  /** The title it already has, when this board was carried on from a kept one. */
+  boardTitle: String,
   /** Set while the write is in flight, and the message if it came back refused. */
   busy: Boolean,
   error: String,
@@ -34,7 +36,9 @@ const field = ref(null);
  * would type. Selected rather than merely present, so the first keystroke replaces it -
  * a prefilled field you have to clear is slower than an empty one. */
 onMounted(() => {
-  title.value = props.topicTitle || 'Whiteboard';
+  /* The board's own title wins over the topic's. Carrying on from "The one Ryan asked about"
+   * and pressing Keep must not quietly rename it to the topic label. */
+  title.value = props.boardTitle || props.topicTitle || 'Whiteboard';
   field.value?.select?.();
 });
 

@@ -3,7 +3,8 @@
  *   GET  /api/boards?course=<id>                       -> { boards: [...] }   no pages
  *   GET  /api/boards?course=<id>&cohort=<id>           -> ...one named class's, for its educator
  *   GET  /api/boards?cohort=&topic=&board=             -> { board, pages: [svg] }
- *   POST /api/boards   { cohort, course, topic, title, pages: [svg], board? }  -> { board }
+ *   POST   /api/boards   { cohort, course, topic, title, pages: [svg], board? } -> { board }
+ *   DELETE /api/boards?cohort=&topic=&board=           -> { ok: true }
  *
  * THE LISTING IS ONE CALL PER COURSE, NOT PER TOPIC. A paperclip has to be drawable on every
  * row of a course, and asking on each navigation would be a round trip a student pays for by
@@ -50,14 +51,21 @@
  * off the live session row - the same gate the socket applies to the board itself. A tutor
  * may run a lesson; it does not follow that they may write into this class's history.
  *
+ * DELETING IS GATED EXACTLY LIKE SAVING, and deliberately NOT like reading. `mayRead` lets a
+ * member in, because a board is theirs to look at; deleting it is not, and a student removing
+ * their class's lesson would be the same gesture as tidying up their own notes. Whoever may
+ * write may delete, and nobody else - which today means the person standing in front of the
+ * class.
+ *
  * NOT FILTERED HERE, deliberately. svgclean.js is a DOM filter and the boundary it guards is
  * `innerHTML`, which is in a browser; a copy of it in Node would be a second definition of a
  * closed vocabulary, drifting from the one that matters. What this does instead is BOUND the
  * bytes, which is the part a row cares about.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, PutCommand }
-  from '@aws-sdk/lib-dynamodb';
+import {
+  DynamoDBDocumentClient, GetCommand, QueryCommand, BatchWriteCommand, PutCommand, DeleteCommand,
+} from '@aws-sdk/lib-dynamodb';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE;
@@ -231,6 +239,32 @@ async function one(cohort, topic, board, sub) {
   });
 }
 
+/* GONE MEANS GONE. There is no archive flag here and no soft delete: a board is one class's
+ * record of one lesson, and an educator removing a false start wants it removed. The header
+ * goes LAST, mirroring the save - so a delete that dies half way leaves rows nothing can
+ * reach rather than a board that opens onto missing pages. */
+async function remove(cohort, topic, board, sub) {
+  if (!COHORT.test(cohort) || !TOPIC.test(topic) || !BOARD.test(board)) {
+    return json(400, { error: 'which board' });
+  }
+  if (!await delivering(cohort, sub)) {
+    return json(409, { error: 'you are not delivering to that class' });
+  }
+  const was = await ddb.send(new GetCommand({
+    TableName: TABLE, Key: headerKey(cohort, topic, board), ProjectionExpression: 'pages',
+  }));
+  if (!was.Item) return json(404, { error: 'no such board' });
+
+  const count = Number(was.Item.pages) || 0;
+  await write(Array.from({ length: count }, (_, n) => ({
+    DeleteRequest: { Key: pageKey(cohort, topic, board, n) },
+  })));
+  await ddb.send(new DeleteCommand({
+    TableName: TABLE, Key: headerKey(cohort, topic, board),
+  }));
+  return json(200, { ok: true, pages: count });
+}
+
 async function save(event, sub, name) {
   let body;
   try { body = JSON.parse(event.body || '{}'); }
@@ -298,6 +332,10 @@ export async function handler(event) {
 
   const method = event.requestContext?.http?.method;
   if (method === 'POST') return save(event, sub, claims.name);
+  if (method === 'DELETE') {
+    const q = event.queryStringParameters || {};
+    return remove(String(q.cohort || ''), String(q.topic || ''), String(q.board || ''), sub);
+  }
   if (method === 'GET') {
     const q = event.queryStringParameters || {};
     /* Told apart by which parameters are present rather than by a mode flag, the way the

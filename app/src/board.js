@@ -74,6 +74,10 @@ export const board = reactive({
    * leaving the class two of them - the second half of a board being a document rather than
    * a snapshot. Reset by starting a new board, which is a different document. */
   id: null,
+  /* The kept board's title, when this one came from a kept board. Re-keeping prefills with
+   * it rather than with the topic label - otherwise carrying on from "The one Ryan asked
+   * about" and pressing Keep quietly renames it to "1.1.2 - 2D NumPy Arrays". */
+  title: '',
   /* The last page that could not be sent, so the surface can say so. Cleared by anything
    * that makes it untrue - a new page, a fresh board, an undo that brings it back under. */
   full: false,
@@ -99,9 +103,25 @@ function applyBoarding(on, page = 0) {
   while (board.pages.length <= board.page) board.pages.push('');
   board.full = false;
   board.id = null;
+  board.title = '';
   board.rev += 1;
   board.mine = !!delivery.mine;
   board.on = true;
+  /* AND THEN CARRY ON FROM THIS TOPIC'S BOARD, if the class has one. Asked for by whoever
+   * pressed the button and acted on HERE rather than there, because a resume has to happen
+   * after the flag has come back and been applied - `applyBoarding` resets the pages, so a
+   * resume racing it would be wiped by the thing that opened the board. */
+  const resume = board.mine ? wanted : null;
+  /* Cleared whatever happens. It is one board's intention and a second `boarding` - a
+   * reconnection, somebody else's lesson - must not act on it again. */
+  wanted = null;
+  if (!resume) return;
+  const at = boardsAt(resume.topic);
+  /* The latest, because the server returns a topic's boards oldest first and the one you want
+   * to carry on from is the one you were last drawing on. A failure leaves the blank board
+   * that is already up, which is the right thing to be left with. */
+  const last = at[at.length - 1];
+  if (last) reopen(last).catch(() => {});
 }
 
 /** A page in full: a turn, an undo, a clear, or what a joiner walked in on. */
@@ -163,8 +183,20 @@ watch(() => delivery.cohort, () => {
    a page, which are the educator's own DOM and are already on their screen - see the Lambda,
    which deliberately does not echo those two back. */
 
-/** Put a board up, or take it away. */
-export function startBoard(on = true) {
+/* What the next `boarding` should resume, or null. Held here rather than passed through the
+ * message: it is this browser's intention, not a fact about the room - a student receiving
+ * the same `boarding` must resume nothing. */
+let wanted = null;
+
+/**
+ * Put a board up, or take it away.
+ *
+ * `resume` names the topic being taught. Given one, the board comes up carrying whatever this
+ * class already has for that topic - which is what an educator expects of a board in a room,
+ * and what stops "open, draw, keep" twice on one topic filing two documents.
+ */
+export function startBoard(on = true, resume = null) {
+  wanted = on ? resume : null;
   if (send('board', { on: !!on })) return true;
   /* No socket in preview, so `--as admin` would have a button that does nothing - and a
    * control that silently refuses is worse than one that is not there. The echo is the same
@@ -352,6 +384,7 @@ export function openSaved({ cohort, topic, board }) {
  */
 export async function reopen(entry) {
   const answer = await openSaved(entry);
+  board.title = entry.title || '';
   const pages = (answer?.pages || []).map(p => String(p ?? ''));
   board.pages = pages.length ? pages : [''];
   board.page = 0;
@@ -360,6 +393,35 @@ export async function reopen(entry) {
   board.rev += 1;
   send('page', { page: 0, svg: current() });
   return answer;
+}
+
+/**
+ * A BLANK BOARD, ON PURPOSE. The way out of a resumed one.
+ *
+ * It drops the identity as well as the pages: what is drawn next is a new document, and Keep
+ * files it rather than overwriting the board that happened to be open a moment ago. Without
+ * that, "start again" and "throw away what the class already has" would be the same gesture.
+ */
+export function freshBoard() {
+  board.pages = [''];
+  board.page = 0;
+  board.id = null;
+  board.title = '';
+  board.full = false;
+  board.rev += 1;
+  send('page', { page: 0, svg: '' });
+}
+
+/** Remove a kept board. Gated on delivering, server-side - see infra/lambda/boards. */
+export async function dropBoard(entry) {
+  const q = new URLSearchParams({
+    cohort: entry.cohort, topic: entry.topic, board: entry.board,
+  });
+  await api(`boards?${q}`, { method: 'DELETE' });
+  /* If the board on screen was that one, it no longer has an identity - the next Keep files a
+   * new document rather than trying to update a row that is gone. */
+  if (board.id === entry.board) { board.id = null; board.title = ''; }
+  await loadSaved(saved.course);
 }
 
 /**

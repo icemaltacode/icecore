@@ -13,7 +13,7 @@
  */
 import { ref, computed, onMounted } from 'vue';
 import Icon from './Icon.vue';
-import { keptForRoom } from '../board.js';
+import { keptForRoom, dropBoard } from '../board.js';
 
 const props = defineProps({
   /** The open course, which is the scope of the list. */
@@ -40,6 +40,25 @@ onMounted(async () => {
     loading.value = false;
   }
 });
+
+/* WHICH ROW IS ASKING TO BE DELETED, by id, or ''. Inline rather than a second dialog: this
+ * one is already a list of things to choose between, and a modal over a modal to remove one
+ * of them is a stack nobody can read. Same shape CohortList uses for the same reason. */
+const confirming = ref('');
+const removing = ref('');
+
+async function remove(b) {
+  removing.value = b.board;
+  try {
+    await dropBoard(b);
+    boards.value = boards.value.filter(x => x.board !== b.board);
+    confirming.value = '';
+  } catch (e) {
+    error.value = e.message;
+  } finally {
+    removing.value = '';
+  }
+}
 
 const when = at => {
   const d = new Date(at || '');
@@ -69,14 +88,34 @@ const empty = computed(() => !loading.value && !error.value && !boards.value.len
 
       <ul v-else class="list">
         <li v-for="b in boards" :key="b.board">
-          <button type="button" @click="emit('pick', b)">
-            <Icon name="attach" :size="14" />
-            <span class="what">
-              <strong>{{ b.title }}</strong>
-              <em>{{ b.topic }} · {{ b.pages }} page{{ b.pages === 1 ? '' : 's' }}<template
-                v-if="when(b.at)"> · {{ when(b.at) }}</template></em>
-            </span>
-          </button>
+          <template v-if="confirming === b.board">
+            <!-- Said in full. Nothing about a board is recoverable and nothing else in the
+                 product keeps a copy of it, so this is not a tidy-up, it is the only copy. -->
+            <p class="warn">
+              Delete <strong>{{ b.title }}</strong>? Its {{ b.pages }}
+              page{{ b.pages === 1 ? '' : 's' }} go for good, and your class loses it from
+              {{ b.topic }}.
+            </p>
+            <div class="rowacts">
+              <button class="btn danger" type="button" :disabled="removing === b.board"
+                      @click="remove(b)">{{ removing === b.board ? 'Deleting…' : 'Delete' }}</button>
+              <button class="link" type="button" @click="confirming = ''">Cancel</button>
+            </div>
+          </template>
+          <div v-else class="row">
+            <button class="pick" type="button" @click="emit('pick', b)">
+              <Icon name="attach" :size="14" />
+              <span class="what">
+                <strong>{{ b.title }}</strong>
+                <em>{{ b.topic }} · {{ b.pages }} page{{ b.pages === 1 ? '' : 's' }}<template
+                  v-if="when(b.at)"> · {{ when(b.at) }}</template></em>
+              </span>
+            </button>
+            <button class="drop" type="button" :title="`Delete ${b.title}`"
+                    :aria-label="`Delete ${b.title}`" @click="confirming = b.board">
+              <Icon name="close" :size="14" />
+            </button>
+          </div>
         </li>
       </ul>
 
@@ -102,10 +141,19 @@ h3 { margin: 0 0 14px; font-size: 17px; }
         border: 1px solid var(--ice-bad-line); border-radius: 8px; }
 
 .list { margin: 0; padding: 0; list-style: none; }
-.list button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px;
-               text-align: left; border: 0; border-radius: 8px; background: none;
-               color: var(--ice-fg); cursor: pointer; font: inherit; }
-.list button:hover { background: var(--ice-bg-soft); }
+.row { display: flex; align-items: center; }
+.list .pick { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0;
+              padding: 9px 10px; text-align: left; border: 0; border-radius: 8px;
+              background: none; color: var(--ice-fg); cursor: pointer; font: inherit; }
+.list .pick:hover { background: var(--ice-bg-soft); }
+/* Muted until the row is hovered or it has focus: a delete beside every entry, at full
+   contrast, reads as the thing the list is for. */
+.list .drop { flex: none; display: grid; place-items: center; width: 26px; height: 26px;
+              padding: 0; border: 0; border-radius: 6px; background: none;
+              color: var(--ice-fg-muted); opacity: 0; cursor: pointer; }
+.row:hover .drop, .drop:focus-visible { opacity: 1; }
+.list .drop:hover { color: var(--ice-bad); background: var(--ice-bad-fill); }
+.rowacts { display: flex; align-items: center; gap: 8px; padding: 0 10px 8px; }
 .list .what { display: block; min-width: 0; }
 .list strong { display: block; font-size: 13.5px; font-weight: 600; }
 .list em { display: block; font-size: 11.5px; font-style: normal; color: var(--ice-fg-muted); }
