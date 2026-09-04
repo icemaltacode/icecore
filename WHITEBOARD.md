@@ -313,6 +313,19 @@ these are the educator's.
   directions, and an educator who has ended a session must stop being offered that class's
   boards.
 
+- **`by` is a DynamoDB reserved word.** `ProjectionExpression: 'by'` on the live session row —
+  in `mayRead`, the function both of the above lean on — is not a wrong answer, it is a
+  `ValidationException`. So every read that reached it returned 500: a student opening a saved
+  board, and an educator's entire listing, which `loadSaved` swallows and which therefore
+  looked exactly like there being nothing there. One cause, three symptoms, none of them
+  resembling each other.
+
+  It reached production because **nothing in this repo calls an HTTP Lambda at all.**
+  `test/live.mjs` opens a real socket and covers the channel; the six request/response
+  functions have no equivalent. `test/setup-checks.mjs` now refuses a reserved word in a
+  projection, which closes the part of that gap that fits on a page — and is the third thing
+  in that file written because it shipped.
+
 The shape of the miss is worth keeping. Both halves were *designed* — the cohort scoping is
 the rule this feature exists to hold, and the once-per-course fetch is what keeps a paperclip
 off the navigation path. What was never asked is what the two of them do to the one person who

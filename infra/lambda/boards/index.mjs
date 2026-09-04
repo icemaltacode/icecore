@@ -160,7 +160,13 @@ async function mayRead(cohort, sub) {
     })),
     ddb.send(new GetCommand({
       TableName: TABLE, Key: { pk: 'COHORTS', sk: `LIVE#${cohort}` },
-      ProjectionExpression: 'by',
+      /* `by` IS A DYNAMODB RESERVED WORD and has to be aliased. Unaliased it is not a wrong
+       * answer, it is a ValidationException - so this threw 500 on every read that reached
+       * it, which was a student opening a board and an educator's whole listing. Caught by
+       * nothing until it ran: see the projection check in test/setup-checks.mjs, which exists
+       * because of this line. */
+      ProjectionExpression: '#by',
+      ExpressionAttributeNames: { '#by': 'by' },
     })),
   ]);
   return !!mine.Item || live.Item?.by === sub;

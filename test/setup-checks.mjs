@@ -44,6 +44,15 @@ function vues(dir) {
   });
 }
 
+/** Every .mjs under a directory, at any depth. The Lambdas, for the projection check below. */
+function mjs(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return mjs(full);
+    return e.isFile() && e.name.endsWith('.mjs') ? [full] : [];
+  });
+}
+
 /* Comments and string bodies, blanked to spaces - length preserved, so every line number
  * still lands where it did.
  *
@@ -185,6 +194,75 @@ for (const file of vues(ROOT)) {
   }
 }
 
+/* THREE: a DynamoDB reserved word in a ProjectionExpression.
+ *
+ * WRITTEN BECAUSE THIS SHIPPED, like the two above. `ProjectionExpression: 'by'` on the live
+ * session row is not a wrong answer, it is a ValidationException - so the boards function
+ * returned 500 on every read that reached it: a student opening a saved board, and an
+ * educator's entire listing, which was swallowed and looked like there being nothing there.
+ * It reached production because nothing in this repo calls an HTTP Lambda at all. `test/live.mjs`
+ * opens a real socket and covers the channel; the six request/response functions have no
+ * equivalent, and that gap is wider than this check - which is a reason to know about it
+ * rather than a reason not to close the part that fits on a page.
+ *
+ * The list is AWS's published one, abridged: only names a row in THIS table could plausibly
+ * be given. A word missing from it is a catch missed, never a wrong failure, so erring short
+ * is the safe direction - and `ExpressionAttributeNames` is always available for anything it
+ * does not know about.
+ */
+const RESERVED = new Set(`
+absolute action add all alter and any as asc at attribute authorization avg
+before begin between bit blob boolean both by
+call cascade case cast char character check class close collate column comment commit
+connect connection constraint continue convert copy count create current cursor
+data database date day dec decimal declare default delete depth desc describe
+distinct do domain double drop dump duration
+each element else end equal escape exception exec execute exists exit explain
+false fetch field file filter first float for foreign format free from full function
+get global go goto grant group
+handler has hash having hour
+identified if ignore immediate in include index initial inner input insert integer
+intersect interval into is isolation
+join key keys kill language large last leading left length level like limit list load
+local location long loop lower
+map match max member merge method min minute mode modify module month
+name names national natural new next no none not null number numeric
+object of off offset old on only open operator option or order out outer output over owner
+package pad parameter partial partition password path percent period position precision
+primary prior privileges procedure public
+query quit quorum
+raise range raw read reads real record recursive reference references regexp region
+rename repeat replace reset resource restore restrict result return returns revoke right
+role rollback row rows
+sample scan schema scope search second section select separate sequence session set sets
+show signal similar size smallint snapshot some source space sql start state static status
+storage store stored subset substring sum system
+table tables tablesample temp temporary terminated text than then time timestamp timezone
+to top trailing transaction trigger trim true truncate ttl type
+under union unique unknown unlogged until update upper usage use user users using
+value values varchar variable view views virtual void
+when whenever where while window with within work write
+year zone
+`.trim().split(/\s+/));
+
+for (const file of mjs(path.join(import.meta.dirname, '..', 'infra', 'lambda'))) {
+  const src = readFileSync(file, 'utf8');
+  for (const m of src.matchAll(/ProjectionExpression:\s*'([^']*)'/g)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    for (const raw of m[1].split(',')) {
+      const name = raw.trim();
+      // Aliased names are exactly the thing this is asking for, and dotted paths are not names.
+      if (!name || name.startsWith('#') || name.includes('.') || name.includes('[')) continue;
+      if (!RESERVED.has(name.toLowerCase())) continue;
+      console.log(`FAIL  ${path.relative(path.join(ROOT, '..', '..'), file)}:${line}`);
+      console.log(`      \`${name}\` is a DynamoDB reserved word - alias it as \`#${name}\``);
+      console.log(`      ProjectionExpression: '${m[1]}'`);
+      bad++;
+    }
+  }
+}
+
 console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'}`
-                : 'every setup block imports what it uses, and declares before it reads');
+                : 'every setup block imports what it uses and declares before it reads,'
+                  + ' and no projection names a reserved word');
 process.exit(bad ? 1 : 0);
