@@ -81,6 +81,25 @@ export const driven = reactive({ position: null, code: null, cursor: null, at: n
 export const borrowed = reactive({ at: null, code: null, when: null });
 
 /**
+ * THE BUTTON THE EDUCATOR PRESSED, on the screen they pressed it for.
+ *
+ * Control could move a driven screen and write into its editor, and then Run and Check did
+ * nothing there - they ran in the educator's own tab, against the educator's own database,
+ * and the student watched their query being typed for them and then watched nothing happen.
+ *
+ * THE GESTURE ARRIVES, NOT THE RESULT. This browser has this student's database and writes
+ * this student's progress rows, so it is their own run that has to appear on their screen.
+ * A result copied across would be somebody else's answer wearing their name and would record
+ * nothing for them - the same reason a shared screen reports its own position rather than
+ * the drive that caused it.
+ *
+ * `at` NAMES THE EXERCISE, and `when` changes on every press so a watcher fires on the
+ * MESSAGE rather than the verb: pressing Run twice is two presses, and watching `do` alone
+ * would see the second as nothing having changed.
+ */
+export const pressed = reactive({ do: null, at: null, when: null });
+
+/**
  * THE EDUCATOR'S EDITOR, ON THE WHOLE CLASS'S SCREENS.
  *
  * Remote control's other half: that one is a claim on one browser, addressed to one person,
@@ -172,6 +191,7 @@ export function forget() {
   setControl(null);
   driven.position = null; driven.code = null; driven.cursor = null; driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
+  pressed.do = null; pressed.at = null; pressed.when = null;
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.when = null;
   stopPreviewRoom();
   stopReporting();
@@ -347,6 +367,14 @@ const HANDLERS = {
     if (m.cursor !== undefined) driven.cursor = m.cursor;
     driven.at = m.at || new Date().toISOString();
   },
+  /* Run or Check, from whoever is driving this screen. The Lambda addresses it to the
+   * controlled student alone and refuses it from anybody who is not currently driving them,
+   * so there is nothing to check here beyond what arrived. */
+  acting(m) {
+    pressed.do = m.do || null;
+    pressed.at = m.at ?? null;
+    pressed.when = m.when || new Date().toISOString();
+  },
   /* What the student had written when we took over. Only a controller ever receives one. */
   buffer(m) { borrowed.at = m.at; borrowed.code = m.code; borrowed.when = new Date().toISOString(); },
   /* A refusal is addressed to this client alone and always names a reason, because the two
@@ -478,6 +506,16 @@ export const drive = where => send('drive', {
   code: typeof where?.code === 'string' ? where.code : undefined,
   cursor: where?.cursor ?? undefined,
 });
+
+/**
+ * Press Run or Check on the screen being driven.
+ *
+ * Separate from `drive` rather than a field on it, because they are different kinds of fact
+ * and arrive at different rates: a drive is where the screen IS and travels with every
+ * keystroke, and this is a thing that happened once. Folded together, every keystroke would
+ * carry a stale verb that the other side would have to know to ignore.
+ */
+export const press = (what, at) => send('act', { do: what, at: at ?? null });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>

@@ -33,6 +33,11 @@ const props = defineProps({
    * holds the code that solved one. It is the half of control that actually helps. */
   frozen: Boolean,
   drivenCode: String,
+  /* THE EDUCATOR'S BUTTON, when this screen is the one being driven - `{ do, at, when }`
+   * off the channel. Watched rather than called, because a component cannot be reached from
+   * a socket handler and should not be: what arrives is a fact, and what to do about it is
+   * this file's business, the same way `drivenCode` is. */
+  pressed: Object,
   /* Where the other person's caret is, and whose it is. Passed straight through - this
    * component has no more business knowing about remote control than it does about the
    * channel, and the editor is the only thing that can draw one. */
@@ -42,7 +47,7 @@ const props = defineProps({
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
 });
-const emit = defineEmits(['solved', 'checked', 'editor']);   // see McqExercise
+const emit = defineEmits(['solved', 'checked', 'editor', 'act']);   // see McqExercise
 
 const mdx = text => md(text, {
   base: imageBase(props.courseId, props.exercise.topicId),
@@ -148,6 +153,35 @@ watch(() => [props.exercise.id, stepIndex.value], () => {
 
 watch(() => props.exercise.id, () => { stepIndex.value = 0; passed.value = {}; });
 
+/* RUN AND CHECK, PRESSED FROM SOMEWHERE ELSE.
+ *
+ * Remote control could move this screen and write into its editor, and then the two gestures
+ * that make an editor an editor happened only in the educator's tab. The student watched
+ * their query being typed for them and then watched nothing happen to it.
+ *
+ * IT RUNS HERE, against this browser's database, and records against this student's rows -
+ * which is the whole reason the gesture travels rather than the result. What the educator
+ * sees is their own copy; what the student sees is theirs. They can differ, and where they
+ * do it is because the two databases differ, which is a real fact about the lesson rather
+ * than a fault to paper over.
+ *
+ * ON `when`, NOT ON THE VERB. Pressing Run twice is two presses; a watcher on `do` alone
+ * would see the second as nothing having changed.
+ *
+ * IT NAMES THE EXERCISE IT WAS PRESSED FOR and is dropped anywhere else, for the reason a
+ * pushed buffer is: a drive and a press can cross, and running an instruction against the
+ * exercise that happens to be on screen now is the difference between a demonstration and
+ * vandalism.
+ */
+watch(() => props.pressed?.when, () => {
+  const p = props.pressed;
+  if (!p?.when || !p.do || busy.value) return;
+  if (p.at != null && progressId(p.at) !== progressId(props.exercise.id)) return;
+  if (p.do === 'run') doRun();
+  else if (p.do === 'check') doCheck();
+});
+
+
 /* The first Python exercise of a session pays for the interpreter - Pyodide, then pandas
  * and whatever else the unit wants, then the grader's own wheels. Seconds, once. Said out
  * loud rather than left as a frozen button, because a student who has just pressed Run has
@@ -161,6 +195,9 @@ const wrap = async fn => {
 };
 
 async function doRun() {
+  /* Said out loud on every press. Only a CONTROL TAB relays it - see App.vue - so a
+   * press that arrived from one does not bounce back to where it came from. */
+  emit('act', 'run');
   verdict.value = null; error.value = ''; figures.value = []; files.value = [];
   const r = await wrap(() => runPython(props.courseId, props.exercise, step.value, code.value));
   if (!r) return;
@@ -172,6 +209,9 @@ async function doRun() {
 }
 
 async function doCheck() {
+  /* Said out loud on every press. Only a CONTROL TAB relays it - see App.vue - so a
+   * press that arrived from one does not bounce back to where it came from. */
+  emit('act', 'check');
   error.value = ''; figures.value = []; files.value = [];
   const r = await wrap(() => gradePython(props.courseId, props.exercise, step.value, code.value));
   if (!r) return;

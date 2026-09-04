@@ -632,6 +632,27 @@ try {
       skip('and reaches nobody else', 'one account was used for both sockets');
     }
 
+    /* THE BUTTON, ADDRESSED EXACTLY AS THE DRIVE IS. What travels is the GESTURE and not
+     * the result: the student's browser holds the student's database and writes the
+     * student's rows, so theirs is the run that has to happen. Control could move a screen
+     * and type into it long before Run and Check went anywhere at all. */
+    A.ws.send(JSON.stringify({ type: 'act', do: 'run', at: '202' }));
+    const acted = await heardB.next('acting');
+    check('pressing Run reaches the screen being driven',
+          acted?.do === 'run' && acted?.at === '202', JSON.stringify(acted));
+    /* A moment, so the other side can watch the MESSAGE rather than the verb - two presses
+     * of Run are two presses, and a watcher on `do` alone would see the second as nothing
+     * having changed. */
+    check('and carries a moment, so a second press is a second press', !!acted?.when,
+          JSON.stringify(acted));
+
+    /* MATCHED AGAINST A LIST, NOT PASSED THROUGH. It is a string from a client that arrives
+     * at the other end as an instruction to execute something, and the set of things a
+     * driver may press is closed and short. */
+    A.ws.send(JSON.stringify({ type: 'act', do: 'anything-else', at: '202' }));
+    check('and an act nobody defined is not relayed',
+          (await heardB.next('acting', 1500)) === null, 'an unknown act reached the screen');
+
     A.ws.send(JSON.stringify({ type: 'sharing', on: true }));
     const shared = await heardB.next('controlling');
     await alsoA();

@@ -30,7 +30,10 @@ const COURSE = {
     { topic: '1.1.1', title: 'Topic One',
       slides: 'slides/c1/1.1/index.html', slide: 3, end: 9, slideCount: 31,
       exercises: [
-        { id: 101, title: 'First', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 1' }] },
+        /* A dataset on the first one only, so that a run reaching for the database reaches
+         * PGlite - which is stubbed, and says so. See the Run relay at the end of this file. */
+        { id: 101, title: 'First', type: 'coding', xp: 20, prompt: 'p', dataset: 'shop',
+          steps: [{ sample: 'SELECT 1' }] },
         { id: 102, title: 'Second', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 2' }] },
       ] },
     { topic: '1.1.2', title: 'Topic Two', exercises: [
@@ -41,6 +44,7 @@ const COURSE = {
 const dom = installDom({ hash: '#/', search: '?course=c1' });
 dom.serve('/content/courses.json', [{ id: 'c1', title: 'Course One', exercises: 3, xp: 60 }]);
 dom.serve('/content/c1/index.json', COURSE);
+dom.serve('/content/c1/data/shop.sql', 'CREATE TABLE shop (id int);');
 
 const { createApp } = await import('vue');
 const { buildPlayer } = await import('./harness.mjs');
@@ -164,6 +168,39 @@ moved('102', 'Second');
 await settle();
 check('and after it they follow again', at() === '3 / 4', at());
 check('and the band says so once more', /Following .* live/.test(text()), text().slice(0, 200));
+
+// ------------------------------------- the educator presses Run on their behalf
+/* CONTROL COULD MOVE THIS SCREEN AND TYPE INTO IT, and then Run and Check happened only in
+ * the educator's own tab: the student watched their query being written for them and then
+ * watched nothing happen to it. The gesture travels now, and it runs HERE - against this
+ * browser's database, recording against this student's rows.
+ *
+ * WHAT IS ASSERTED IS THAT THE RUN WAS ATTEMPTED ON THIS SIDE, and the instrument is the
+ * stub. The wasm runtimes are aliased away in a test process and name themselves when
+ * called, so the database reporting itself absent is proof that this browser reached for it.
+ * Nothing about a query RESULT is observable from here and nothing should be - asserting on
+ * rows would be asserting on PGlite. See test/stubs/absent.js.
+ */
+player.emitLocal({
+  type: 'controlling',
+  control: {
+    sub: player.session.sub, name: 'Ada Lovelace',
+    by: tutor.sub, byName: tutor.name, sharing: false, at: new Date().toISOString(),
+  },
+});
+player.emitLocal({
+  type: 'driven',
+  position: { exercise: '101', title: 'First', slide: null },
+  code: 'SELECT 1', at: new Date().toISOString(),
+});
+await settle();
+check('being driven carries the student to the exercise', at() === '2 / 4', at());
+
+const reached = () => /not available in a test process/.test(text());
+check('and nothing has run there yet', !reached(), text().slice(-200));
+player.emitLocal({ type: 'acting', do: 'run', at: '101', when: new Date().toISOString() });
+await settle(300);
+check("the educator pressing Run runs it on the STUDENT's screen", reached(), text().slice(-240));
 
 await player.dispose();
 dom.restore();

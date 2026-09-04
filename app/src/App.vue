@@ -15,6 +15,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          reportActivity, reportPosition, reportMark, followedPosition, followedName,
          catchUp, wandered, marksAt, previewRows,
          control, driven, drive, takeControl, setSharing, releaseControl,
+         pressed, press,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
          sync, setSync, pushEditor,
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
@@ -844,6 +845,27 @@ function editorChanged({ code, cursor }) {
   }
 }
 
+/**
+ * RUN AND CHECK, ON THE SCREEN BEING DRIVEN.
+ *
+ * FROM A CONTROL TAB AND NOWHERE ELSE, which is `editorChanged`'s gate and for the same
+ * reason. `drivingSomebody()` is true in the educator's ORDINARY live tab as well while
+ * their other tab holds control - so gated on that alone, an educator pressing Run in front
+ * of the class would fire it into one student's browser.
+ *
+ * The press travels, the result does not: the student's browser has the student's database
+ * and writes the student's progress rows, so their run is the one that has to appear on
+ * their screen. What the educator sees is their own copy of the same gesture, which they
+ * already had - it is the only half that was ever working.
+ *
+ * NOT A LOOP. A relayed press runs `doRun`/`doCheck` on the student's side, which announces
+ * itself here exactly as a local one does, and is dropped because a student's tab is not a
+ * control tab.
+ */
+const relayAct = what => {
+  if (controlSub.value && drivingSomebody()) press(what, current.value?.id ?? null);
+};
+
 /* Being driven: send what we have, ONCE, the moment control begins. This is the half that
  * actually helps - a progress row only ever holds the code that SOLVED an exercise, so a
  * student in the middle of getting one wrong has nothing recorded anywhere for an educator
@@ -1340,11 +1362,13 @@ watch(currentId, id => {
           :class-answers="classAnswers"
           :frozen="beingDriven() || synced"
           :driven-code="shownCode"
+          :pressed="beingDriven() ? pressed : null"
           @solved="markSolved"
           :peer-at="beingDriven() ? driven.cursor : (syncedHere ? sync.cursor : null)"
           :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
-          @editor="editorChanged" />
+          @editor="editorChanged"
+          @act="relayAct" />
 
         <footer v-if="total">
           <button class="btn ghost" :disabled="index <= 0" @click="go(-1)">Previous</button>

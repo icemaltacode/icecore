@@ -1109,6 +1109,45 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
+    /* THE EDUCATOR'S BUTTON, ON THE SCREEN THEY ARE DRIVING.
+     *
+     * Control could move a student's screen and write into their editor, and then the two
+     * gestures that make an editor an editor did nothing: Run and Check ran in the
+     * educator's own tab and nowhere else. The student watched their query being typed for
+     * them and then watched nothing happen to it.
+     *
+     * THE GESTURE TRAVELS, NOT THE RESULT. The student's browser holds the student's
+     * database and writes the student's progress rows, so it is their run that has to
+     * appear on their screen - a result copied across would be the educator's answer
+     * wearing the student's name, computed against a different database, and would record
+     * nothing for them. One hop longer and the only version that cannot drift, which is
+     * `followedPosition`'s rule in a second place.
+     *
+     * IT NAMES THE EXERCISE IT BELONGS TO, for `push`'s reason: an instruction that arrives
+     * after a drive has moved the screen on must not run against whatever is there now.
+     *
+     * The verb is matched against a list rather than passed through. It is a string from a
+     * client that arrives as an instruction to execute something, and the set of things a
+     * driver may press is closed and short.
+     */
+    case 'act': {
+      const held = await sessionFor(row.cohort);
+      const c = held?.control;
+      if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
+      const what = ['run', 'check'].includes(msg.do) ? msg.do : null;
+      if (!what) return { statusCode: 200, body: 'no such act' };
+      await emit(event, row.cohort, {
+        type: 'acting',
+        do: what,
+        at: msg.at == null ? null : String(msg.at).slice(0, 200),
+        /* Changes on every press, so the other side watches the MESSAGE rather than the
+         * instruction - pressing Run twice is two presses, and a watcher on the verb alone
+         * would see the second as nothing having changed. Same reason `driven.at` exists. */
+        when: now,
+      }, { sub: c.sub });
+      return { statusCode: 200, body: 'ok' };
+    }
+
     /* THE OTHER DIRECTION, and it is the half that makes control useful. An educator taking
      * over someone who is stuck needs to see WHAT THEY WROTE - the progress rows hold only
      * the code that solved an exercise, so a student in the middle of getting it wrong has
