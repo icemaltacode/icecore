@@ -54,8 +54,43 @@ const base = computed(() => (/^https?:\/\//.test(props.deck || '')
  * must 404 rather than come back as the app's own index page - and this is where the site
  * itself cannot enforce it, so the component has to. Fail in the direction that shows.
  */
+/* WHERE THIS FRAME BOOTS, decided ONCE and never again.
+ *
+ * A DECK MUST NOT BE NAVIGATED WHILE ITS OWN ROUTER IS STILL COMING UP, and that is the whole
+ * of a bug that survived four attempts to fix it somewhere else.
+ *
+ * The frame used to boot at the topic's first slide always, and anything that wanted a
+ * different one - an educator taking control of a student nine slides in - was applied
+ * afterwards by driving the hash. The iframe's `load` fires long before Slidev has mounted,
+ * so that navigation landed in the middle of the deck's boot: measured in Chromium, the frame
+ * went to `#/16`, and 3ms later the deck's own vue-router called `router.replace` and put it
+ * back to `#/13` - its notion of the route it had started on. `router.replace` goes through
+ * `history.replaceState`, which fires no event, so nothing here saw it happen. The educator
+ * sat at the top of a topic the class was nine slides into, and every annotation they drew
+ * went to a slide nobody was looking at.
+ *
+ * So the landing slide goes in the URL the deck is GIVEN. There is no navigation to lose a
+ * race with, because there is no navigation.
+ *
+ * Read once, deliberately, and NOT a computed: `goto` changes on every drive for the rest of
+ * the session, and a src that followed it would rebuild the iframe - and reload the deck -
+ * on every slide the educator turns. Later drives are the watcher's job, by which time the
+ * deck is up and the race does not exist. Clamped to the topic, because everything else here
+ * is. */
+const landing = (() => {
+  const { slide: lo, end: hi } = props.row;
+  const n = Number(props.goto);
+  return n >= lo && n <= hi ? n : lo;
+})();
 const src = computed(() =>
-  (props.deck ? `${base.value}#/${props.row.slide}` : null));
+  (props.deck ? `${base.value}#/${landing}` : null));
+/* THE FRAME'S IDENTITY IS ITS DECK AND ITS TOPIC, not the slide it happens to open on.
+ *
+ * Keyed on `src` this would be right by accident and wrong the moment `landing` differs from
+ * the row's first slide: two students taken over on different slides of one topic would be
+ * the same component with different keys. What has to rebuild the frame is moving to another
+ * topic - a different row - and that is exactly what this says. */
+const frameKey = computed(() => `${props.deck}#${props.row.slide}`);
 const count = computed(() => (props.row.end - props.row.slide) + 1);
 /* Numbered the way the deck's own paginator numbers it, because both are on screen at
  * once. The frame shows 13/31 - the COMPOSED deck, module frame and unit title included -
@@ -94,7 +129,7 @@ watch(side, v => localStorage.setItem(NOTES_SIDE, v));
 
 const notes = ref(null);          // slide number -> markdown
 const notesError = ref('');
-const current = ref(props.row.slide);
+const current = ref(landing);
 
 const cache = new Map();
 /* `1.1.3` -> `1.1`. The deck, and so the notes file, belongs to the topic's unit. */
@@ -293,15 +328,47 @@ const onLoad = () => {
   /* Driven from outside. `replace` rather than assigning the hash, so following a tutor
    * through nine slides does not put nine entries in the student's history and make Back
    * a slow walk backwards through the lesson. */
+  /* AND NOT UNTIL THE DECK IS UP.
+   *
+   * `load` on the iframe means the document arrived, not that Slidev has mounted - the app is
+   * a module graph and several dynamic imports behind it. A hash written into that gap is
+   * taken back by the deck's own vue-router the moment it boots, silently. Booting the frame
+   * at the right slide removes that race for the landing (see `landing` above); this covers
+   * the other way in, a drive that arrives while the deck is still starting - a roster that
+   * lands late, or an educator paging the instant they take over.
+   *
+   * The mounted slide is the readiness test because it is the thing that has to exist for a
+   * navigation to mean anything. Only the LATEST destination is kept: a burst of drives during
+   * boot is one place to end up, not four to visit. It gives up after three seconds and goes
+   * anyway - a deck that has not mounted by then is not going to, and leaving the class on the
+   * wrong slide for ever is worse than one navigation that does nothing. */
+  const mounted = () => !!doc.querySelector('.slidev-slide-content');
+  let waitingFor = null;
+  let waiter = null;
+  const goWhenReady = n => {
+    waitingFor = n;
+    if (mounted()) { waitingFor = null; waiter && win.clearInterval(waiter); waiter = null; return goTo(n); }
+    if (waiter) return;
+    let ticks = 0;
+    waiter = win.setInterval(() => {
+      if (!mounted() && ++ticks < 60) return;
+      win.clearInterval(waiter);
+      waiter = null;
+      const m = waitingFor;
+      waitingFor = null;
+      if (m && m !== at()) goTo(m);
+    }, 50);
+  };
+
   stopDriving?.();
   stopDriving = watch(() => props.goto, n => {
     if (!n || n === at()) return;
-    /* AGAINST THIS FRAME'S WINDOW AND NO OTHER. The iframe is keyed on `src`, so a new one is
-     * built whenever the deck or the topic changes - and this watcher is not torn down until
+    /* AGAINST THIS FRAME'S WINDOW AND NO OTHER. The iframe is keyed on its deck and topic, so
+     * a new one is built whenever either changes - and this watcher is not torn down until
      * the replacement has finished loading. A drive arriving in that gap would be written
      * into a window the browser has already discarded. */
     if (frame.value?.contentWindow !== win) return;
-    goTo(n);
+    goWhenReady(n);
   }, { immediate: true });
 };
 
@@ -351,7 +418,7 @@ const onLoad = () => {
                and the router has already consumed the hash it booted with. -->
           <p v-if="!src" class="nodeck">These slides could not be found. The topic is here and
             its exercises still work — it is the deck itself that is missing.</p>
-          <iframe v-else ref="frame" data-deck :key="src" :src="src"
+          <iframe v-else ref="frame" data-deck :key="frameKey" :src="src"
                   :title="`Slides: ${row.title}`"
                   @load="onLoad"></iframe>
           </div>
