@@ -16,6 +16,7 @@ import SplitPane from './SplitPane.vue';
 import Icon from './Icon.vue';
 import { loadNotes } from '../content.js';
 import { md } from '../md.js';
+import { watchFrame } from '../pointer.js';
 
 const emit = defineEmits(['slide']);
 const props = defineProps({
@@ -195,6 +196,11 @@ const onLoad = () => {
   style.textContent = REVEAL;
   doc.head.appendChild(style);
 
+  /* The deck reports its own pointer moves - see SlidesPanel for why it has to. On the same
+   * `load` as everything else injected here, because it is the same fact: this frame's
+   * document now exists and is ours. */
+  watchFrame(win, doc);
+
   const { slide: lo, end: hi } = props.row;
   const at = () => Number(/^#\/(\d+)/.exec(win.location.hash || '')?.[1]) || 0;
   /**
@@ -326,7 +332,8 @@ const onLoad = () => {
                and the router has already consumed the hash it booted with. -->
           <p v-if="!src" class="nodeck">These slides could not be found. The topic is here and
             its exercises still work — it is the deck itself that is missing.</p>
-          <iframe v-else ref="frame" :key="src" :src="src" :title="`Slides: ${row.title}`"
+          <iframe v-else ref="frame" data-point-frame :key="src" :src="src"
+                  :title="`Slides: ${row.title}`"
                   @load="onLoad"></iframe>
           </div>
         </div>

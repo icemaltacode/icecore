@@ -14,6 +14,7 @@
  */
 import DeckActions from './DeckActions.vue';
 import Icon from './Icon.vue';
+import { watchFrame } from '../pointer.js';
 
 const props = defineProps({
   src: String,
@@ -22,6 +23,15 @@ const props = defineProps({
   side: { type: String, default: 'right' },
 });
 const emit = defineEmits(['close', 'flip']);
+
+/* THE DECK REPORTS ITS OWN POINTER. It is a separate document, so no listener on the page
+ * around it ever sees a pointer move over a slide - and a slide is the one surface where the
+ * position is exact rather than approximate, because it is a fixed 16:9 stage. Installed
+ * unconditionally and free when nobody is driving: see `watchFrame`. */
+const onLoad = e => {
+  const doc = e.target.contentDocument;
+  if (doc) watchFrame(e.target.contentWindow, doc);
+};
 </script>
 
 <template>
@@ -38,7 +48,7 @@ const emit = defineEmits(['close', 'flip']);
       <DeckActions :deck="props.src" :name="props.label" />
       <button class="link" @click="emit('close')">Close</button>
     </div>
-    <iframe :src="src" :title="`Slides for ${label}`"></iframe>
+    <iframe data-point-frame :src="src" :title="`Slides for ${label}`" @load="onLoad"></iframe>
   </aside>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onUnmounted } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session, api } from './auth.js';
 import { progressId } from './progress.js';
@@ -15,7 +15,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          reportActivity, reportPosition, reportMark, followedPosition, followedName,
          catchUp, wandered, marksAt, previewRows,
          control, driven, drive, takeControl, setSharing, releaseControl,
-         pressed, press,
+         pressed, press, point,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
          sync, setSync, pushEditor,
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
@@ -30,6 +30,8 @@ import SessionSummary from './components/SessionSummary.vue';
 import LiveLeave from './components/LiveLeave.vue';
 import ChatToast from './components/ChatToast.vue';
 import { chat, revealChat, hideToast } from './chat.js';
+import { watchPointer } from './pointer.js';
+import PeerPointer from './components/PeerPointer.vue';
 import { live as channel } from './live.js';
 import CourseGrid from './components/CourseGrid.vue';
 import ContentsModal from './components/ContentsModal.vue';
@@ -920,6 +922,24 @@ const relayAct = what => {
   if (controlSub.value && drivingSomebody()) press(what, current.value?.id ?? null);
 };
 
+/* THE POINTER, WATCHED ONLY WHILE THIS TAB IS DRIVING SOMEBODY.
+ *
+ * The gate is the whole economy of the feature. A pointer is fifteen messages a second and
+ * everything else on this channel is discrete - so it is affordable exactly because it runs
+ * for the minutes an educator spends helping one person, and not for the length of a lesson.
+ * It is also the only time there is a single addressee, which is why it costs one delivery
+ * rather than a fan-out to the room.
+ *
+ * Torn down when control ends, and `watchPointer` sends a last "gone" on its way out so the
+ * student is not left with a dot pointing at whatever the final frame happened to catch. */
+let stopPointing = null;
+watch(() => controlSub.value && drivingSomebody(), on => {
+  stopPointing?.();
+  stopPointing = null;
+  if (on) stopPointing = watchPointer(point);
+}, { immediate: true });
+onUnmounted(() => stopPointing?.());
+
 /* Being driven: send what we have, ONCE, the moment control begins. This is the half that
  * actually helps - a progress row only ever holds the code that SOLVED an exercise, so a
  * student in the middle of getting one wrong has nothing recorded anywhere for an educator
@@ -1397,7 +1417,11 @@ watch(currentId, id => {
            column rules stopped existing.
 
            `single` folds it away without unmounting anything - see SplitPane. -->
-      <SplitPane class="stage" :direction="slidesSide === 'bottom' ? 'column' : 'row'"
+      <!-- A REGION IS A NAMED SURFACE BOTH SCREENS HAVE, and nothing more - see pointer.js.
+           `stage` wraps the lot so a pointer between two panes still maps to roughly the
+           right place rather than vanishing; the panes inside it are what make it exact. -->
+      <SplitPane data-point="stage"
+                 class="stage" :direction="slidesSide === 'bottom' ? 'column' : 'row'"
                  :single="!deckBeside" :storage-key="`slides-${slidesSide}`"
                  :initial="slidesSide === 'bottom' ? 58 : 62" :min="25" :max="85" :min-px="220">
       <template #a>
@@ -1474,6 +1498,10 @@ watch(currentId, id => {
 
       <!-- Last in the row, so the deck and the exercise keep the middle. It is the room
            rather than the lesson: a tutor glances at it, and a student mostly does not. -->
+      <!-- Over everything, drawn only where a region it names is actually on screen. It is
+           IN ADDITION to the student's own cursor and never touches it. -->
+      <PeerPointer v-if="beingDriven()" :name="control.byName" />
+
       <LivePanel v-if="delivery.cohort && !controlSub" :leader-at="leaderAt" :can-control="delivery.mine"
                  :here-at="currentId"
                  :marks="marksHere" :grading="delivery.mine && gradableHere"

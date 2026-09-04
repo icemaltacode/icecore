@@ -164,6 +164,31 @@ const connectionsIn = async cohort => {
   return r.Items || [];
 };
 
+/* THE CONNECTION LIST, HELD FOR A MOMENT - and only the pointer uses it.
+ *
+ * `emit` queries the roster index on EVERY message, which is right for everything that has
+ * ever travelled here: a drive, a verdict, a message in the chat are all discrete, seconds
+ * apart, and a stale list would send somebody's screen somewhere after they had gone.
+ *
+ * A pointer is not that. It is fifteen messages a second for as long as a hand is on a mouse,
+ * and re-reading a list that changes twice an hour is the one part of this that would
+ * actually cost something. It is also the message that can most afford to be wrong: a
+ * pointer is a moment, a dropped frame is invisible, and a frame sent to a connection that
+ * has just closed is a `GoneException` that `emit` already treats as routine.
+ *
+ * Two seconds, in the warm container. Long enough to cover a burst of movement, short enough
+ * that somebody joining mid-gesture waits less than a sentence for the dot to reach them.
+ */
+const CONNS_TTL = 2000;
+const connCache = new Map();
+async function connectionsCached(cohort) {
+  const hit = connCache.get(cohort);
+  if (hit && Date.now() - hit.at < CONNS_TTL) return hit.rows;
+  const rows = await connectionsIn(cohort);
+  connCache.set(cohort, { at: Date.now(), rows });
+  return rows;
+}
+
 /**
  * Send one payload to every connection in a cohort's session.
  *
@@ -172,7 +197,10 @@ const connectionsIn = async cohort => {
  * Every other failure is logged and swallowed - one unreachable client must not stop the
  * other eleven hearing what was said.
  */
-async function emit(event, cohort, payload, { except, only, sub } = {}) {
+/* `from` is a connection list somebody has already resolved - see `connectionsCached`. Only
+ * the pointer passes one; everything else reads the roster fresh, which is the right
+ * default for a message that must not be delivered to a stale idea of the room. */
+async function emit(event, cohort, payload, { except, only, sub, from } = {}) {
   const api = managementFor(event);
   const body = Buffer.from(JSON.stringify(payload));
   /* `only` is a ROLE and `sub` is a PERSON, and both exist because two of the messages here
@@ -183,7 +211,7 @@ async function emit(event, cohort, payload, { except, only, sub } = {}) {
    * Filtered on this side rather than trusting a client to ignore what it was sent - a
    * student with the developer tools open is still a student who can read the whole room's
    * answers, and in a classroom that is not a small thing. */
-  const rows = (await connectionsIn(cohort))
+  const rows = (from || await connectionsIn(cohort))
     .filter(c => c.pk !== `CONN#${except}`)
     .filter(c => !only || c.role === only)
     .filter(c => !sub || c.sub === sub);
@@ -1155,6 +1183,43 @@ async function tallied(cohort, mark, seeded = false) {
          * would see the second as nothing having changed. Same reason `driven.at` exists. */
         when: now,
       }, { sub: c.sub });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* WHERE THE EDUCATOR IS POINTING, on the screen they are driving.
+     *
+     * A CARET IS AN OFFSET INTO A DOCUMENT AND A POINTER IS A PIXEL ON A SCREEN, and there
+     * is no screen both people have: the shell's columns are FIXED pixels either side of a
+     * fluid middle - 272 and 336 - so the sidebar is a fifth of a laptop's width and a tenth
+     * of a large monitor's. Scaled viewport to viewport, a pointer in the educator's editor
+     * lands in the student's sidebar, and wrongly by less the further right it goes: an error
+     * that looks plausible everywhere and is correct nowhere.
+     *
+     * SO IT IS RELATIVE TO A NAMED REGION, never to the viewport. `region` says which surface
+     * it is over and `x`/`y` are fractions of THAT box, so the two screens need only agree
+     * that a thing called the result grid exists - not on where it is, how big it is, or what
+     * shape. Which is also why a student with a panel closed is not a problem to solve: the
+     * region is simply not there, and the other side declines to draw rather than guessing.
+     *
+     * Nothing is validated but the shape. The fractions are clamped on arrival by the client
+     * that draws them, which is the only side that knows what it is drawing into.
+     */
+    case 'point': {
+      const held = await sessionFor(row.cohort);
+      const c = held?.control;
+      if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
+      await emit(event, row.cohort, {
+        type: 'pointing',
+        /* `off` is the pointer LEAVING - the hand left the mouse, or the window. Sent as a
+         * message rather than inferred from silence, because silence is also what a dropped
+         * frame looks like and a dot that lingers wherever the last packet landed is worse
+         * than no dot. */
+        off: !!msg.off,
+        region: msg.off ? null : String(msg.region || '').slice(0, 40),
+        x: offset(msg.x) ?? null,
+        y: offset(msg.y) ?? null,
+        at: now,
+      }, { sub: c.sub, from: await connectionsCached(row.cohort) });
       return { statusCode: 200, body: 'ok' };
     }
 

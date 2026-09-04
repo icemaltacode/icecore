@@ -323,7 +323,7 @@ const ranQuietly = computed(() =>
 
 <template>
   <div class="pyex">
-    <section class="brief">
+    <section class="brief" data-point="prompt">
       <header>
         <h2>{{ exercise.title }}</h2>
         <!-- Only where there is an amount. An exercise with no `xp:` in its frontmatter
@@ -377,7 +377,7 @@ const ranQuietly = computed(() =>
     </section>
 
     <section class="work">
-      <div class="editor-pane">
+      <div class="editor-pane" data-point="editor">
         <div class="tabbar"><span class="tab active">script.py</span></div>
         <CodeEditor v-model="code" language="python" :readonly="frozen"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
@@ -391,7 +391,7 @@ const ranQuietly = computed(() =>
           <button class="btn primary" @click="doCheck" :disabled="busy">Check answer</button>
         </div>
       </div>
-      <div class="result-pane">
+      <div class="result-pane" data-point="result">
         <div class="tabbar"><span class="tab active">output</span></div>
         <div class="console">
           <p v-if="error" class="err">{{ error }}</p>

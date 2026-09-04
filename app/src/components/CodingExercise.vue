@@ -309,7 +309,7 @@ async function doReset() {
 
 <template>
   <div class="coding">
-    <section class="brief">
+    <section class="brief" data-point="prompt">
       <header>
         <h2>{{ exercise.title }}</h2>
         <!-- Only where there is an amount. An exercise with no `xp:` in its frontmatter
@@ -380,7 +380,7 @@ async function doReset() {
     </section>
 
     <section class="work">
-      <div class="editor-pane">
+      <div class="editor-pane" data-point="editor">
         <div class="tabbar">
           <span class="tab active">query.sql</span>
           <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
@@ -396,7 +396,7 @@ async function doReset() {
                   :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
         </div>
       </div>
-      <div class="result-pane">
+      <div class="result-pane" data-point="result">
         <div class="tabbar"><span class="tab active">query result</span></div>
         <ResultGrid :result="result" :error="error" />
       </div>

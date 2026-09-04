@@ -102,6 +102,17 @@ export const borrowed = reactive({ at: null, code: null, when: null });
 export const pressed = reactive({ do: null, at: null, when: null });
 
 /**
+ * WHERE THE PERSON DRIVING THIS SCREEN IS POINTING - `{ region, x, y }` against a named
+ * region, never against a viewport. See pointer.js for why that distinction is the whole
+ * design rather than a detail of it.
+ *
+ * Null when the pointer has gone, which is SENT rather than inferred from silence: silence
+ * is also what a dropped frame looks like, and a dot left wherever the last packet landed
+ * points at something nobody is pointing at.
+ */
+export const pointer = reactive({ region: null, x: 0, y: 0 });
+
+/**
  * THE EDUCATOR'S EDITOR, ON THE WHOLE CLASS'S SCREENS.
  *
  * Remote control's other half: that one is a claim on one browser, addressed to one person,
@@ -195,6 +206,7 @@ export function forget() {
   driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
   pressed.do = null; pressed.at = null; pressed.when = null;
+  pointer.region = null;
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
   sync.when = null;
   stopPreviewRoom();
@@ -379,6 +391,14 @@ const HANDLERS = {
   /* Run or Check, from whoever is driving this screen. The Lambda addresses it to the
    * controlled student alone and refuses it from anybody who is not currently driving them,
    * so there is nothing to check here beyond what arrived. */
+  /* Fifteen a second while a hand is moving, and the first thing on this channel that is
+   * continuous rather than discrete. Assigned rather than replaced so a component watching
+   * it re-renders without a new object every frame. */
+  pointing(m) {
+    pointer.region = m.off ? null : (m.region || null);
+    pointer.x = Number(m.x) || 0;
+    pointer.y = Number(m.y) || 0;
+  },
   acting(m) {
     pressed.do = m.do || null;
     pressed.at = m.at ?? null;
@@ -529,6 +549,16 @@ export const drive = where => send('drive', {
  * carry a stale verb that the other side would have to know to ignore.
  */
 export const press = (what, at) => send('act', { do: what, at: at ?? null });
+
+/**
+ * Say where the pointer is, or that it has gone.
+ *
+ * ONLY WHILE DRIVING, and the Lambda enforces that rather than trusting this - but the
+ * saving is here: a pointer is fifteen messages a second, and the whole reason it is
+ * affordable is that it runs for the minutes an educator spends helping one person rather
+ * than for the length of a lesson.
+ */
+export const point = p => send('point', p ? { ...p } : { off: true });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>
