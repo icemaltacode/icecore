@@ -146,13 +146,16 @@ h3 { margin: 0 0 14px; font-size: 17px; }
               padding: 9px 10px; text-align: left; border: 0; border-radius: 8px;
               background: none; color: var(--ice-fg); cursor: pointer; font: inherit; }
 .list .pick:hover { background: var(--ice-bg-soft); }
-/* Muted until the row is hovered or it has focus: a delete beside every entry, at full
-   contrast, reads as the thing the list is for. */
+/* ALWAYS VISIBLE. This was drawn at `opacity: 0` until the row was hovered, on the reasoning
+   that a delete beside every entry at full contrast reads as the thing the list is for - which
+   is true of the CONTRAST and not of the existence. Hidden, it was simply not found, and on a
+   touchscreen there is no hover to find it with. Muted colour does the job the hiding was
+   meant to do. */
 .list .drop { flex: none; display: grid; place-items: center; width: 26px; height: 26px;
               padding: 0; border: 0; border-radius: 6px; background: none;
-              color: var(--ice-fg-muted); opacity: 0; cursor: pointer; }
-.row:hover .drop, .drop:focus-visible { opacity: 1; }
+              color: var(--ice-fg-muted); cursor: pointer; }
 .list .drop:hover { color: var(--ice-bad); background: var(--ice-bad-fill); }
+.list .drop:focus-visible { outline: 2px solid var(--ice-primary); outline-offset: -2px; }
 .rowacts { display: flex; align-items: center; gap: 8px; padding: 0 10px 8px; }
 .list .what { display: block; min-width: 0; }
 .list strong { display: block; font-size: 13.5px; font-weight: 600; }
