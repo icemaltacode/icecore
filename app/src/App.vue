@@ -749,7 +749,16 @@ watch(() => driven.at, () => {
  * quietly becoming a second live tab - see `controlEnded`. */
 watch(() => control.sub, (now_, was) => {
   if (!controlSub.value) return;
-  if (was && !now_) controlEnded.value = 'Control has ended.';
+  if (was && !now_) { controlEnded.value = 'Control has ended.'; return; }
+  /* AND IT IS NOT A LATCH. Control can go and come back without anybody deciding anything -
+   * a student's socket blinks, the server releases what looks like an orphaned claim, and the
+   * next roster restores it. Left set, the notice outlived the thing it described: the band
+   * above said "you are controlling X" while the line under it said control had ended, which
+   * is the screen contradicting itself and only one half of it being true.
+   *
+   * Cleared only when control is BACK IN THIS PAIR'S HANDS - not merely back. Somebody else
+   * taking over the same student is exactly when this tab should still be told it is done. */
+  if (now_ && now_ === controlSub.value && control.by === session.sub) controlEnded.value = '';
 });
 
 /* The prompt's answer, held until the new tab has actually taken control - `sharing` is a
@@ -933,15 +942,22 @@ const relayAct = what => {
  *
  * Torn down when control ends, and `watchPointer` sends a last "gone" on its way out so the
  * student is not left with a dot pointing at whatever the final frame happened to catch. */
-/* AND THE DECK, whose annotations and click steps travel the other way round: the pointer is
- * for the one screen being driven, and what is drawn on a slide is for the room. So this is
- * gated on delivering the lesson rather than on driving somebody - the same authority the
- * class already follows for position, so it cannot end up following one screen's slide and
- * another's annotations. Installed for the life of the component: the leader test is asked
- * per message, and a listener that came and went would miss the deck that mounted in between.
- * See decksync.js. */
-const stopDecks = watchDecks(
-  () => !!delivery.cohort && delivery.mine && !controlSub.value, sendDeck);
+/* AND THE DECK - annotations and click steps. Two tabs may send them and they mean different
+ * things: the tab delivering the lesson draws for the ROOM, and a control tab draws for the
+ * ONE STUDENT whose screen it is holding. The second is the case that matters most and was
+ * missing at first, which made drawing on a slide to explain it to the person you are helping
+ * do nothing at all.
+ *
+ * A control tab is checked FIRST, because it also belongs to the person delivering the lesson
+ * and would otherwise answer 'room' and broadcast one student's screen to the class.
+ *
+ * Installed for the life of the component: the question is asked per message, and a listener
+ * that came and went would miss the deck that mounted in between. See decksync.js. */
+const stopDecks = watchDecks(() => {
+  if (!delivery.cohort) return null;
+  if (controlSub.value) return drivingSomebody() ? 'driven' : null;
+  return delivery.mine ? 'room' : null;
+}, sendDeck);
 onUnmounted(() => stopDecks());
 
 let stopPointing = null;

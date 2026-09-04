@@ -65,10 +65,12 @@ const GROUP = 'admins';
  * number, which is the whole of what "an offset" means on this side. */
 const offset = v => (Number.isFinite(Number(v)) && v != null ? Number(v) : undefined);
 
-/* One slide's annotation is a few kilobytes of SVG and a deck's worth is the whole
- * channel, so this is generous - and it is a size rather than a count because the thing
- * being guarded is a DynamoDB-free broadcast, not a row. */
-const DECK_LIMIT = 96 * 1024;
+/* A backstop, not the mechanism. The client sends only the slides that CHANGED and caps each
+ * of them well below this - see decksync.js - because Slidev hands over the whole channel on
+ * every stroke and a lesson's worth of annotations is not small. What this guards is the
+ * frame: past API Gateway's limit a message is not rejected in any way a person could see,
+ * the connection is closed, which reads as the room going quiet. */
+const DECK_LIMIT = 32 * 1024;
 
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -1339,10 +1341,25 @@ async function tallied(cohort, mark, seeded = false) {
      * error blamed on the wrong thing. */
     case 'deck': {
       const held = await sessionFor(row.cohort);
-      if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not delivering' };
       const channel = String(msg.channel || '').slice(0, 40);
       const body = JSON.stringify(msg.data ?? null);
       if (!channel || body.length > DECK_LIMIT) return { statusCode: 200, body: 'not carried' };
+      /* WHO IT IS FOR, ASKED FOR BY THE SENDER AND CHECKED HERE.
+       *
+       * An educator has two tabs open and they are the same PERSON, so `by` cannot tell them
+       * apart - a sub is all this side has. The tab says which of the two it is and this
+       * checks it is entitled to say so: the room needs the session, one student needs the
+       * control over that student. Getting it wrong in the trusting direction would put one
+       * student's screen in front of the whole class. */
+      if (msg.to === 'driven') {
+        const c = held?.control;
+        if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
+        await emit(event, row.cohort, {
+          type: 'decked', channel, data: msg.data, at: now,
+        }, { sub: c.sub });
+        return { statusCode: 200, body: 'ok' };
+      }
+      if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not delivering' };
       await emit(event, row.cohort, {
         type: 'decked', channel, data: msg.data, at: now,
       }, { except: id });

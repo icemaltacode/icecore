@@ -576,8 +576,12 @@ export const point = p => send('point', p ? { ...p } : { off: true });
  * Opaque here and opaque on the other side. What it carries is Slidev's, this file's job is
  * that it arrives, and decksync.js is the only place that has an opinion about which parts of
  * it are wanted.
+ *
+ * `to` is 'room' or 'driven'. The two tabs an educator has open are one PERSON, so the server
+ * cannot tell which of them sent this - it can only check that whoever did is entitled to the
+ * audience they asked for.
  */
-export const sendDeck = (channel, data) => send('deck', { channel, data });
+export const sendDeck = (channel, data, to) => send('deck', { channel, data, to });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>

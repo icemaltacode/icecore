@@ -26,16 +26,32 @@
  *
  * The timer and snapshots are dropped for a duller reason: nothing shows them.
  *
- * ONE LEADER, AND IT IS THE TAB DELIVERING THE LESSON. Same authority as the position, so a
- * class cannot be following one screen's slide and another screen's annotations. A control
- * tab is explicitly not it - it holds one student's screen, and its drawings belong to that
- * student rather than to the room.
+ * WHO A PATCH IS FOR IS THE TAB'S OWN QUESTION, and there are two answers.
+ *
+ * The tab delivering the lesson draws for the ROOM - same authority as the position, so a
+ * class cannot follow one screen's slide and another screen's annotations. A control tab
+ * draws for the ONE STUDENT whose screen it holds, which is the whole point of annotating
+ * while you help somebody. This started as leader-only and that was wrong in the most
+ * obvious case: drawing on a slide to explain it to the person you are helping.
+ *
+ * The two tabs are the same PERSON, so the server cannot tell them apart - `by` is a sub and
+ * both connections carry it. The tab says which it is and the Lambda checks it is entitled to
+ * say so: `room` needs the session, `driven` needs the control.
  */
 const MESSAGE = 'ice:deck-sync';
-/* A drawing is an SVG per slide and arrives as a whole channel. Dropped rather than
- * truncated past the cap, because half an SVG is not a smaller drawing - it is a parse
- * error, and one that would be blamed on the annotation feature rather than on a limit. */
-const CAP = 96 * 1024;
+/* WELL UNDER A WEBSOCKET FRAME, per message.
+ *
+ * Slidev hands over the WHOLE channel every time any part of it changes, so a `drawings`
+ * patch is every annotated slide in the deck - and each of those is an SVG path with a point
+ * per pixel of the stroke. A lesson's worth is not a few kilobytes. API Gateway's frame
+ * limit is far below what that reaches, and a frame over it is not truncated or rejected in
+ * a way anybody could see: the connection is closed. Which reads as the room going quiet
+ * rather than as a message being too big.
+ *
+ * So this is a ceiling per SLIDE, and only what has actually changed is sent - see `changed`.
+ * A slide whose drawing is somehow bigger than this is dropped and said so out loud, because
+ * half an SVG is not a smaller drawing, it is a parse error blamed on the wrong thing. */
+const CAP = 24 * 1024;
 /* Coalesced. Slidev watches its state deeply, so a stroke is many changes; ten a second is
  * far more than an annotation needs and is a tenth of what the pointer already costs. */
 const EVERY = 100;
@@ -73,8 +89,42 @@ function intoDecks(channel, data) {
 
 let pending = null;      // channel -> the latest state seen
 let timer = null;
-let leading = () => false;
+let audience = () => null;   // 'room' | 'driven' | null when this tab relays nothing
 let out = () => {};
+/* What the room has already been told, per channel, so that only differences travel.
+ *
+ * THIS IS NOT AN OPTIMISATION. Slidev replaces the whole channel on every change, so
+ * without it every stroke re-sends every annotated slide in the deck - a message that grows
+ * for the length of a lesson and takes the socket with it when it passes the frame limit.
+ * Diffing keeps a message the size of the stroke somebody just drew.
+ *
+ * Partial patches are what the other side wants anyway: Slidev's own `onUpdate` assigns the
+ * keys it is given and leaves the rest alone, so a patch of one slide is applied as one
+ * slide rather than as a deck with one slide in it. */
+let sent = {};
+
+/** The keys of `data` that differ from what has already gone out on this channel. */
+function changed(channel, data) {
+  const was = sent[channel] || {};
+  const now = {};
+  let any = false;
+  for (const [k, v] of Object.entries(data)) {
+    const body = JSON.stringify(v);
+    if (was[k] === body) continue;
+    if (body.length > CAP) {
+      console.warn('decksync: dropping', channel, k, `- ${body.length} bytes is over the cap`);
+      continue;
+    }
+    now[k] = body;
+    any = true;
+  }
+  /* A key that has GONE - an annotation cleared off a slide - is a change too, and the
+   * undoing of one is exactly as worth sending as the drawing of it. */
+  for (const k of Object.keys(was)) {
+    if (!(k in data)) { now[k] = undefined; any = true; }
+  }
+  return any ? now : null;
+}
 
 function flush() {
   timer = null;
@@ -82,9 +132,16 @@ function flush() {
   const batch = pending;
   pending = null;
   for (const [channel, data] of Object.entries(batch)) {
-    const body = JSON.stringify(data);
-    if (body.length > CAP) continue;
-    out(channel, data);
+    const diff = changed(channel, data);
+    if (!diff) continue;
+    const patch = {};
+    const next = { ...(sent[channel] || {}) };
+    for (const [k, body] of Object.entries(diff)) {
+      if (body === undefined) { patch[k] = null; delete next[k]; }
+      else { patch[k] = JSON.parse(body); next[k] = body; }
+    }
+    sent[channel] = next;
+    out(channel, patch, audience());
   }
 }
 
@@ -96,7 +153,8 @@ function fromDeck(e) {
    * to pass on. Nothing has to be done with it - the reply is whatever arrives next from the
    * room - but it must not be relayed as though it were a patch. */
   if (!m.data) return;
-  if (!leading()) return;
+  const to = audience();
+  if (!to) return;
   const keep = carried(m.channel, m.data);
   if (!keep) return;
   pending = { ...(pending || {}), [m.channel]: keep };
@@ -104,16 +162,16 @@ function fromDeck(e) {
 }
 
 /**
- * Start relaying, given a way to ask whether this tab is the one leading.
+ * Start relaying, given a way to ask who this tab's patches are for.
  *
  * A callback rather than a value for `reportActivity`'s reason: this module has no business
- * watching the session's state, and the caller already knows. `send` arrives the same way and
+ * watching the session's state, and the caller already knows which kind of tab it is. `send` arrives the same way and
  * for a second reason: importing it would pull in `delivery.js`, and with it `auth.js` and an
  * `import.meta.env` Node cannot evaluate - which would put the policy above out of reach of
  * any test that did not build the whole player. This file imports NOTHING.
  */
-export function watchDecks(amLeading, send) {
-  leading = amLeading;
+export function watchDecks(whoFor, send) {
+  audience = whoFor;
   out = send;
   addEventListener('message', fromDeck);
   return () => {
@@ -121,7 +179,8 @@ export function watchDecks(amLeading, send) {
     clearTimeout(timer);
     timer = null;
     pending = null;
-    leading = () => false;
+    sent = {};
+    audience = () => null;
     out = () => {};
   };
 }
