@@ -78,7 +78,7 @@ export function pointFrom(x, y, doc = document) {
  */
 const SLIDE = '.slidev-slide-content';
 export function slideBox(doc = document) {
-  const frame = doc.querySelector('iframe[data-point-frame]');
+  const frame = doc.querySelector('iframe[data-deck]');
   if (!frame) return null;
   let inner = null;
   try { inner = frame.contentDocument?.querySelector(SLIDE); } catch { return null; }

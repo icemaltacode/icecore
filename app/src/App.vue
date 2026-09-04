@@ -15,7 +15,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          reportActivity, reportPosition, reportMark, followedPosition, followedName,
          catchUp, wandered, marksAt, previewRows,
          control, driven, drive, takeControl, setSharing, releaseControl,
-         pressed, press, point,
+         pressed, press, point, sendDeck,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
          sync, setSync, pushEditor,
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
@@ -31,6 +31,7 @@ import LiveLeave from './components/LiveLeave.vue';
 import ChatToast from './components/ChatToast.vue';
 import { chat, revealChat, hideToast } from './chat.js';
 import { watchPointer } from './pointer.js';
+import { watchDecks } from './decksync.js';
 import PeerPointer from './components/PeerPointer.vue';
 import { live as channel } from './live.js';
 import CourseGrid from './components/CourseGrid.vue';
@@ -932,6 +933,17 @@ const relayAct = what => {
  *
  * Torn down when control ends, and `watchPointer` sends a last "gone" on its way out so the
  * student is not left with a dot pointing at whatever the final frame happened to catch. */
+/* AND THE DECK, whose annotations and click steps travel the other way round: the pointer is
+ * for the one screen being driven, and what is drawn on a slide is for the room. So this is
+ * gated on delivering the lesson rather than on driving somebody - the same authority the
+ * class already follows for position, so it cannot end up following one screen's slide and
+ * another's annotations. Installed for the life of the component: the leader test is asked
+ * per message, and a listener that came and went would miss the deck that mounted in between.
+ * See decksync.js. */
+const stopDecks = watchDecks(
+  () => !!delivery.cohort && delivery.mine && !controlSub.value, sendDeck);
+onUnmounted(() => stopDecks());
+
 let stopPointing = null;
 watch(() => controlSub.value && drivingSomebody(), on => {
   stopPointing?.();

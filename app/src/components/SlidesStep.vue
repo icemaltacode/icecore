@@ -332,7 +332,7 @@ const onLoad = () => {
                and the router has already consumed the hash it booted with. -->
           <p v-if="!src" class="nodeck">These slides could not be found. The topic is here and
             its exercises still work — it is the deck itself that is missing.</p>
-          <iframe v-else ref="frame" data-point-frame :key="src" :src="src"
+          <iframe v-else ref="frame" data-deck :key="src" :src="src"
                   :title="`Slides: ${row.title}`"
                   @load="onLoad"></iframe>
           </div>

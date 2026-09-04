@@ -48,7 +48,7 @@ const onLoad = e => {
       <DeckActions :deck="props.src" :name="props.label" />
       <button class="link" @click="emit('close')">Close</button>
     </div>
-    <iframe data-point-frame :src="src" :title="`Slides for ${label}`" @load="onLoad"></iframe>
+    <iframe data-deck :src="src" :title="`Slides for ${label}`" @load="onLoad"></iframe>
   </aside>
 </template>
 

@@ -21,6 +21,7 @@ import { reactive } from 'vue';
 import { api, session } from './auth.js';
 import { previewRole, previewRoom, stopPreviewRoom, previewSummaryRows } from './preview.js';
 import { open as openChannel, close as closeChannel, on, send, emitLocal } from './live.js';
+import { applyDeck } from './decksync.js';
 
 /**
  * The session this tab is in, if any. `mine` is whether we are the one delivering: an admin
@@ -399,6 +400,15 @@ const HANDLERS = {
     pointer.x = Number(m.x) || 0;
     pointer.y = Number(m.y) || 0;
   },
+  /* The educator's deck: what they drew on the slide, and which click step they are on.
+   * Handed straight to decksync.js, which owns everything about what it means. */
+  decked(m) {
+    /* Never back at the tab that sent it: the leader's own deck is the source, and applying
+     * its own patch is how a room ends up in a loop. The Lambda already excludes the sender;
+     * this is the same rule stated where the roles are actually known. */
+    if (delivery.mine) return;
+    applyDeck(m.channel, m.data);
+  },
   acting(m) {
     pressed.do = m.do || null;
     pressed.at = m.at ?? null;
@@ -559,6 +569,15 @@ export const press = (what, at) => send('act', { do: what, at: at ?? null });
  * than for the length of a lesson.
  */
 export const point = p => send('point', p ? { ...p } : { off: true });
+
+/**
+ * A patch of the deck's own shared state, on its way to the room - see decksync.js.
+ *
+ * Opaque here and opaque on the other side. What it carries is Slidev's, this file's job is
+ * that it arrives, and decksync.js is the only place that has an opinion about which parts of
+ * it are wanted.
+ */
+export const sendDeck = (channel, data) => send('deck', { channel, data });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>

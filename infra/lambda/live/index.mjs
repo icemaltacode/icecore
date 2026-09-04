@@ -65,6 +65,11 @@ const GROUP = 'admins';
  * number, which is the whole of what "an offset" means on this side. */
 const offset = v => (Number.isFinite(Number(v)) && v != null ? Number(v) : undefined);
 
+/* One slide's annotation is a few kilobytes of SVG and a deck's worth is the whole
+ * channel, so this is generous - and it is a size rather than a count because the thing
+ * being guarded is a DynamoDB-free broadcast, not a row. */
+const DECK_LIMIT = 96 * 1024;
+
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
@@ -1311,6 +1316,35 @@ async function tallied(cohort, mark, seeded = false) {
          * text - retyping a character back to what it was is still somebody typing, and a
          * watcher on the code alone would not see it. */
         when: now,
+      }, { except: id });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* THE EDUCATOR'S DECK, ON THE CLASS'S SCREENS - what they drew on a slide, and which
+     * step of a build they are on.
+     *
+     * Slidev syncs this between a presenter and its viewers already, and its transport
+     * cannot leave the browser: `__SLIDEV_HAS_SERVER__` is false in a build, so it falls
+     * back to a BroadcastChannel. Every deck we publish is a build. This is the same state
+     * on a channel that can reach a room.
+     *
+     * OPAQUE ON PURPOSE. What travels is Slidev's, unread and uninterpreted, which is what
+     * keeps this from being a commitment to their internal shape across upgrades - the
+     * client decides which parts of a channel it wants, and this decides only who may say
+     * so. The `by` check is `push`'s: `tutor` says somebody may run a lesson, not that they
+     * are running THIS one.
+     *
+     * A drawing is an SVG per slide, so it is capped by SIZE rather than trusted, and
+     * dropped rather than truncated: half an SVG is not a smaller drawing, it is a parse
+     * error blamed on the wrong thing. */
+    case 'deck': {
+      const held = await sessionFor(row.cohort);
+      if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not delivering' };
+      const channel = String(msg.channel || '').slice(0, 40);
+      const body = JSON.stringify(msg.data ?? null);
+      if (!channel || body.length > DECK_LIMIT) return { statusCode: 200, body: 'not carried' };
+      await emit(event, row.cohort, {
+        type: 'decked', channel, data: msg.data, at: now,
       }, { except: id });
       return { statusCode: 200, body: 'ok' };
     }
