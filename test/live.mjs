@@ -658,6 +658,16 @@ try {
     check('and an act nobody defined is not relayed',
           (await heardB.next('acting', 1500)) === null, 'an unknown act reached the screen');
 
+    /* A STALE RELEASE MUST NOT CANCEL A LIVE CLAIM. `by` and `sub` are identical for the
+     * same educator taking over the same student twice, so a release sent by a control tab
+     * that has just closed used to match the claim a NEW tab had only just made - and the
+     * tab that had just taken control was told control had ended. Only `at` tells two claims
+     * apart, so a release naming a different one is refused. */
+    A.ws.send(JSON.stringify({ type: 'release', at: '1999-01-01T00:00:00.000Z' }));
+    check('a release naming another claim does not end this one',
+          (await heardB.next('controlling', 1500)) === null,
+          'a stale release cancelled a live control');
+
     A.ws.send(JSON.stringify({ type: 'sharing', on: true }));
     const shared = await heardB.next('controlling');
     await alsoA();

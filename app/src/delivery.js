@@ -512,7 +512,10 @@ export function setSharing(on) {
   if (control.sub) echo({ ...asPlain(), sharing: !!on });
 }
 export function releaseControl() {
-  if (!send('release')) echo(null);
+  /* WHICH CLAIM IS BEING LET GO, so a release that arrives late cannot cancel a live one.
+   * `by` and `sub` are the same for the same educator returning to the same student, and
+   * `at` is the only thing that tells two claims apart - see the Lambda's `release`. */
+  if (!send('release', { at: control.at })) echo(null);
 }
 
 /**

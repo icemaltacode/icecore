@@ -218,6 +218,18 @@ const takingOver = ref(null);
  * browser would then be reporting the educator's position from two places at once, and the
  * class would follow whichever tab moved last. So it says so and stops. */
 const controlEnded = ref('');
+/* NEVER BESIDE THE BAND THAT CONTRADICTS IT.
+ *
+ * The band says "you are controlling X" and renders only while control is genuinely held;
+ * this line says control has ended. Both on screen at once is not a rare state to tidy up
+ * afterwards, it is a screen making two claims of which one must be false - and a reader has
+ * no way to tell which. So the notice is DERIVED from whether control is held rather than
+ * kept in step with it: no ordering, no clearing, no race can put the two together.
+ *
+ * The flag underneath still means what it meant - it is what stops the tab silently taking
+ * control again - and this is only about what is said out loud. */
+const endedNotice = computed(() => (controlEnded.value && !drivingSomebody()
+  ? controlEnded.value : ''));
 
 /* WHAT THIS CLIENT IS BEING INVITED TO. Null while there is nothing, and null while we are
  * already in one - that is where they are, not somewhere to be asked to go.
@@ -1342,9 +1354,9 @@ watch(currentId, id => {
          reason, because both of them - somebody else already has them, they are not
          connected - are things an educator can act on and neither is guessable from a button
          that appeared to do nothing. -->
-    <p v-if="liveError || controlEnded || control.refused" class="livegone" role="status">
-      {{ liveError || controlEnded || control.refused }}<template
-        v-if="controlEnded && !liveError"> You can close this tab.</template>
+    <p v-if="liveError || endedNotice || control.refused" class="livegone" role="status">
+      {{ liveError || endedNotice || control.refused }}<template
+        v-if="endedNotice && !liveError"> You can close this tab.</template>
     </p>
 
     <!-- BEFORE THE ADMIN PANEL AND BEFORE THE GRID, because it is a mode: the lesson is over

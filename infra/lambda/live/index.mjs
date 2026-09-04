@@ -805,9 +805,13 @@ async function orphaned(event, row) {
     await ddb.send(new UpdateCommand({
       TableName: TABLE, Key: sessionKey(row.cohort),
       UpdateExpression: 'REMOVE #c',
-      ConditionExpression: '#c.#by = :by AND #c.#sub = :sub',
-      ExpressionAttributeNames: { '#c': 'control', '#by': 'by', '#sub': 'sub' },
-      ExpressionAttributeValues: { ':by': c.by, ':sub': c.sub },
+      /* The claim THIS read saw, and no other - see `release`. A control taken between the
+       * read above and this write carries the same `by` and `sub` when it is the same
+       * educator returning to the same student, and would otherwise be removed by a
+       * disconnect that had nothing to do with it. */
+      ConditionExpression: '#c.#by = :by AND #c.#sub = :sub AND #c.#at = :at',
+      ExpressionAttributeNames: { '#c': 'control', '#by': 'by', '#sub': 'sub', '#at': 'at' },
+      ExpressionAttributeValues: { ':by': c.by, ':sub': c.sub, ':at': c.at },
     }));
   } catch (e) {
     if (e.name !== 'ConditionalCheckFailedException') throw e;
@@ -1095,13 +1099,28 @@ async function tallied(cohort, mark, seeded = false) {
      * to ship - so this is not an admin-only route with a courtesy button on the student's
      * band, it is a route the student is entitled to and the condition says so. */
     case 'release': {
+      /* THE CLAIM IT MEANT, NOT WHATEVER CLAIM IS THERE.
+       *
+       * `by` and `sub` cannot tell two successive claims apart: the same educator taking over
+       * the same student twice writes the same pair both times. So a `release` that arrives
+       * late - a control tab closed a moment before a new one was opened - matched the NEW
+       * claim and removed it, and the tab that had just taken control was told control had
+       * ended. The two claims differ only in when they were made, so that is what is checked.
+       *
+       * Optional, because a client that has not caught up sends no `at` and must still be
+       * able to let go of somebody's screen - the failure to guard against is a stale release
+       * cancelling a live claim, not an unversioned one. */
+      const claimed = typeof msg.at === 'string' ? msg.at.slice(0, 40) : null;
       try {
         await ddb.send(new UpdateCommand({
           TableName: TABLE, Key: sessionKey(row.cohort),
           UpdateExpression: 'REMOVE #c',
-          ConditionExpression: '#c.#by = :me OR #c.#sub = :me',
-          ExpressionAttributeNames: { '#c': 'control', '#by': 'by', '#sub': 'sub' },
-          ExpressionAttributeValues: { ':me': row.sub },
+          ConditionExpression: '(#c.#by = :me OR #c.#sub = :me)'
+            + (claimed ? ' AND #c.#at = :at' : ''),
+          ExpressionAttributeNames: {
+            '#c': 'control', '#by': 'by', '#sub': 'sub', ...(claimed ? { '#at': 'at' } : {}),
+          },
+          ExpressionAttributeValues: { ':me': row.sub, ...(claimed ? { ':at': claimed } : {}) },
         }));
       } catch (e) {
         if (e.name !== 'ConditionalCheckFailedException') throw e;
