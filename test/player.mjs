@@ -258,6 +258,38 @@ await settle(300);
 check('a drive that moves them to another exercise carries its code with it',
       at() === '4 / 4' && /driven_across_a_move/.test(editorText()), `${at()} ${editorText()}`);
 
+// ------------------------------------- the educator's annotations, arriving
+/* THE PLAYER'S OWN WIRING, which is the half a browser harness cannot reach: `decked` off
+ * the channel -> delivery.js -> decksync.js -> a postMessage into whatever deck is on screen.
+ * The deck itself is proven elsewhere; what is proven here is that the player finds it.
+ *
+ * The channel name is the one Slidev actually uses - the deck's title with ` - drawings` on
+ * the end - because matching the bare word is precisely the bug this covers. */
+player.emitLocal({ type: 'controlling', control: null });
+await settle(150);
+{
+  // Back onto the slides row, which is the only row with a deck in it.
+  const contents = [...document.querySelectorAll('footer button')].find(b => /Previous/.test(b.textContent));
+  for (let i = 0; i < 4 && at() !== '1 / 4'; i++) { contents.click(); await settle(120); }
+  check('the student is on the slides step', at() === '1 / 4', at());
+
+  const frame = document.querySelector('iframe[data-deck]');
+  check('and the deck frame is marked for the relay to find', !!frame,
+        document.querySelector('iframe')?.outerHTML?.slice(0, 120) || 'no iframe');
+
+  const got = [];
+  frame?.contentWindow?.addEventListener('message', e => got.push(e.data));
+  player.emitLocal({
+    type: 'decked',
+    channel: 'Course One \u2014 1.1 Topic One - Slidev - drawings',
+    data: { 3: '<path d="M10 10 L90 90"/>' },
+  });
+  await settle(200);
+  check("an educator's annotation reaches the deck on screen",
+        got.some(m => m?.kind === 'ice:deck-sync' && m.data?.['3']),
+        JSON.stringify(got).slice(0, 200));
+}
+
 await player.dispose();
 dom.restore();
 console.log(failures ? `\n${failures} failing` : '\nall green');

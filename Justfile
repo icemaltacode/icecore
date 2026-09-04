@@ -210,8 +210,27 @@ deploy: bundle _auth-json
     # new APP file here means it does not deploy, which is visible immediately; forgetting to
     # exclude someone else's prefix means it is deleted, which is not. Fail in the direction
     # that shows.
+    # TWO PASSES, BECAUSE THE TWO KINDS OF FILE WANT OPPOSITE CACHING - and the absence of
+    # it has already cost an afternoon of "I deployed and I see zero difference".
+    #
+    # `assets/*` are CONTENT-HASHED by Vite: index-Oo8rvb_J.js never changes meaning, so it
+    # can be cached for a year and a new build is simply a new name. `index.html` is the
+    # opposite - one unchanging URL whose whole job is to name the current bundle. Uploaded
+    # with no Cache-Control at all it inherits the distribution's default TTL and the
+    # BROWSER's heuristic, so a deploy invalidates CloudFront and the person testing it goes
+    # on loading yesterday's bundle from their own disk. An invalidation cannot reach that.
+    #
+    # `--delete` respects these filters, so each pass only ever removes files of its own kind
+    # and the allowlist below is still the whole of what the app owns.
     aws s3 sync dist/ "s3://$bucket/" --delete \
-      --exclude '*' --include 'index.html' --include 'auth.json' --include 'assets/*'
+      --exclude '*' --include 'assets/*' \
+      --cache-control 'public,max-age=31536000,immutable'
+    # `no-cache` is REVALIDATE, not "never store": the browser keeps it and asks whether it
+    # is still current, which is one conditional request and usually a 304. `no-store` would
+    # be a full download of the shell on every navigation for no benefit.
+    aws s3 sync dist/ "s3://$bucket/" --delete \
+      --exclude '*' --include 'index.html' --include 'auth.json' \
+      --cache-control 'no-cache'
     aws cloudfront create-invalidation --distribution-id "$dist" --paths '/*' >/dev/null
     domain=$(aws cloudfront get-distribution --id "$dist" \
       --query 'Distribution.DistributionConfig.Aliases.Items[0]' --output text 2>/dev/null)
