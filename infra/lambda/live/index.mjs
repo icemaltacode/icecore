@@ -60,6 +60,11 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE;
 const GROUP = 'admins';
 
+/* An offset into the buffer that travelled with it, or undefined. Bounds are the client's
+ * business - it maps both ends through its own document - so this only insists on it being a
+ * number, which is the whole of what "an offset" means on this side. */
+const offset = v => (Number.isFinite(Number(v)) && v != null ? Number(v) : undefined);
+
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
@@ -1102,8 +1107,13 @@ async function tallied(cohort, mark, seeded = false) {
          * than text changing by itself. Travels with the buffer because it describes a
          * position IN that buffer - sent separately, a caret would arrive against text that
          * had not changed yet and point at the wrong character. */
-        cursor: Number.isFinite(Number(msg.cursor)) && msg.cursor != null
-          ? Number(msg.cursor) : undefined,
+        cursor: offset(msg.cursor),
+        /* THE FAR END OF THE SELECTION, so a class sees what the educator has highlighted
+         * and not only where their caret is. Travels with the caret and the buffer for the
+         * reason the caret travels with the buffer: a range is two offsets into ONE
+         * document, and either one arriving against a different version of the text points
+         * at words nobody chose. Undefined is "not sent"; null is a bare caret. */
+        anchor: msg.anchor === null ? null : offset(msg.anchor),
         at: now,
       }, { sub: c.sub });
       return { statusCode: 200, body: 'ok' };
@@ -1229,8 +1239,9 @@ async function tallied(cohort, mark, seeded = false) {
         /* Where the educator's caret is, so what a class watches is somebody typing rather
          * than text appearing. Travels with the buffer for `drive`'s reason: a caret is an
          * offset INTO a document, and sent apart from it points at the wrong character. */
-        cursor: Number.isFinite(Number(msg.cursor)) && msg.cursor != null
-          ? Number(msg.cursor) : null,
+        cursor: offset(msg.cursor) ?? null,
+        // See `drive`: one range, two offsets, one message.
+        anchor: offset(msg.anchor) ?? null,
         /* Changes on every push, so the other side can watch the MESSAGE rather than the
          * text - retyping a character back to what it was is still somebody typing, and a
          * watcher on the code alone would not see it. */

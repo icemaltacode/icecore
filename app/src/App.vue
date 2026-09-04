@@ -782,6 +782,10 @@ function startControl(sharing) {
 const myCode = ref('');
 /** And where its caret is, so the other end can see somebody in the room. */
 const myCursor = ref(null);
+/* And the far end of the selection, when there is one. Null is a bare caret and is the
+ * ordinary case; a range is what an educator makes when they are pointing at something
+ * rather than typing, which is most of what showing it is for. */
+const myAnchor = ref(null);
 /* WHICH EXERCISE `myCode` BELONGS TO, and it is load-bearing rather than bookkeeping. The
  * emit that fills it is debounced, and an exercise whose starter code is empty never emits
  * at all - so on a fresh row this ref still holds the PREVIOUS one's text for a moment or
@@ -849,9 +853,10 @@ watch(currentId, () => { beforeSync.value = null; });
  * caret change sent whatever text the debounce had last settled on - up to 300ms stale - and
  * a text change sent a caret from before it. A caret is an offset into a buffer; the two
  * cannot be allowed to arrive describing different documents. */
-function editorChanged({ code, cursor, step }) {
+function editorChanged({ code, cursor, anchor, step }) {
   myCode.value = code;
   myCursor.value = cursor ?? null;
+  myAnchor.value = anchor ?? null;
   myAt.value = current.value?.id ?? null;
   /* KEEP IT, so that leaving the exercise and coming back does not throw it away. The
    * exercise component is keyed by row, so a remount reloads its starter - which is every
@@ -881,7 +886,8 @@ function editorChanged({ code, cursor, step }) {
   if (controlSub.value) {
     if (drivingSomebody()) {
       drive({ at: current.value?.id ?? null, title: current.value?.title,
-              slide: mySlide.value, code, cursor: myCursor.value });
+              slide: mySlide.value, code,
+              cursor: myCursor.value, anchor: myAnchor.value });
     }
     return;
   }
@@ -889,7 +895,7 @@ function editorChanged({ code, cursor, step }) {
    * component - the same beat the drive above travels on, because it is the same thing being
    * watched from further away. */
   if (delivery.mine && sync.on) {
-    pushEditor(current.value?.id ?? null, code, myCursor.value);
+    pushEditor(current.value?.id ?? null, code, myCursor.value, myAnchor.value);
   }
 }
 
@@ -1434,6 +1440,7 @@ watch(currentId, id => {
           :pressed="beingDriven() ? pressed : null"
           @solved="markSolved"
           :peer-at="beingDriven() ? driven.cursor : (syncedHere ? sync.cursor : null)"
+          :peer-anchor="beingDriven() ? driven.anchor : (syncedHere ? sync.anchor : null)"
           :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
           @editor="editorChanged"

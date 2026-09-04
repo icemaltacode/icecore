@@ -65,7 +65,9 @@ export const control = reactive({
  * on screen, and the alternative - watching the position - silently drops the second of two
  * drives to the same row, which is exactly what paging back and forth in a deck looks like.
  */
-export const driven = reactive({ position: null, code: null, cursor: null, at: null });
+export const driven = reactive({
+  position: null, code: null, cursor: null, anchor: null, at: null,
+});
 
 /**
  * WHAT THE STUDENT HAD WRITTEN when control began, as they sent it.
@@ -118,7 +120,7 @@ export const pressed = reactive({ do: null, at: null, when: null });
  * `when` changes on every push so a watcher fires on the MESSAGE rather than the text, for
  * `driven.at`'s reason: typing a character back to what it was is still somebody typing.
  */
-export const sync = reactive({ on: false, at: null, code: null, cursor: null, when: null });
+export const sync = reactive({ on: false, at: null, code: null, cursor: null, anchor: null, when: null });
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
 export const live = reactive({ running: {}, loading: false });
@@ -189,10 +191,12 @@ export function forget() {
   room.members = []; room.here = {};
   for (const k of Object.keys(marks)) delete marks[k];
   setControl(null);
-  driven.position = null; driven.code = null; driven.cursor = null; driven.at = null;
+  driven.position = null; driven.code = null; driven.cursor = null; driven.anchor = null;
+  driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
   pressed.do = null; pressed.at = null; pressed.when = null;
-  sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.when = null;
+  sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
+  sync.when = null;
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -352,12 +356,13 @@ const HANDLERS = {
    * momentarily show the last thing the educator wrote half an hour ago. */
   syncing(m) {
     sync.on = !!m.on;
-    if (!m.on) { sync.at = null; sync.code = null; sync.cursor = null; }
+    if (!m.on) { sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null; }
   },
   synced(m) {
     sync.at = m.at ?? null;
     sync.code = typeof m.code === 'string' ? m.code : null;
     sync.cursor = m.cursor ?? null;
+    sync.anchor = m.anchor ?? null;
     sync.when = m.when || new Date().toISOString();
   },
   driven(m) {
@@ -365,6 +370,10 @@ const HANDLERS = {
     /* Undefined means "not sent", which is not the same as an empty editor - see `drive`. */
     if (m.code !== undefined) driven.code = m.code;
     if (m.cursor !== undefined) driven.cursor = m.cursor;
+    /* `undefined` means the sender said nothing about it; `null` means a bare caret. The
+     * two are different and the distinction is the same one `code` makes: a drive that is
+     * only a navigation must not blank a selection somebody is looking at. */
+    if (m.anchor !== undefined) driven.anchor = m.anchor;
     driven.at = m.at || new Date().toISOString();
   },
   /* Run or Check, from whoever is driving this screen. The Lambda addresses it to the
@@ -490,10 +499,11 @@ export function setSync(on) {
 }
 
 /** What the educator has in their editor, on its way to everybody following. */
-export const pushEditor = (at, code, cursor) => send('push', {
+export const pushEditor = (at, code, cursor, anchor) => send('push', {
   at: at ?? null,
   code: String(code ?? ''),
   cursor: cursor ?? null,
+  anchor: anchor ?? null,
 });
 
 /** Send the controlled screen somewhere, and what to put in its editor. */
@@ -505,6 +515,9 @@ export const drive = where => send('drive', {
    * navigation must not blank an editor the student is looking at. */
   code: typeof where?.code === 'string' ? where.code : undefined,
   cursor: where?.cursor ?? undefined,
+  /* The far end of the selection, travelling with the caret it belongs to. `undefined` for a
+   * drive that is only a navigation, for `code`'s reason - see above. */
+  anchor: where?.anchor ?? undefined,
 });
 
 /**

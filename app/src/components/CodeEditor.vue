@@ -60,21 +60,42 @@ class Caret extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+/* A SELECTION IS A CARET WITH AN ANCHOR, and both ends map through document changes for the
+ * same reason the caret alone did: the driver's keystroke and the range it left behind arrive
+ * as two facts, and an unmapped anchor lags a character behind every letter typed - which on
+ * a highlight is not a lagging caret but a highlight that covers the wrong words.
+ *
+ * `anchor` is null for a plain caret, which is the ordinary case and the only one that
+ * existed before. Where an educator has selected nothing there is nothing to shade. */
 const setPeer = StateEffect.define();
 const peer = StateField.define({
-  create: () => ({ pos: null, name: '' }),
+  create: () => ({ pos: null, anchor: null, name: '' }),
   update(value, tr) {
     for (const e of tr.effects) if (e.is(setPeer)) return e.value;
-    if (value.pos == null || !tr.docChanged) return value;
-    return { ...value, pos: tr.changes.mapPos(value.pos, 1) };
+    if (!tr.docChanged || (value.pos == null && value.anchor == null)) return value;
+    return {
+      ...value,
+      pos: value.pos == null ? null : tr.changes.mapPos(value.pos, 1),
+      /* Mapped with the opposite bias to the head. An insertion AT the boundary of a
+       * selection belongs outside it, not inside: the anchor holds its ground and the head
+       * moves on, which is what the driver's own editor does. */
+      anchor: value.anchor == null ? null : tr.changes.mapPos(value.anchor, -1),
+    };
   },
   provide: f => EditorView.decorations.compute([f], state => {
-    const { pos, name } = state.field(f);
+    const { pos, name, anchor } = state.field(f);
+    const len = state.doc.length;
     // A stale position past the end of a shorter document draws nothing rather than throwing.
-    if (pos == null || pos > state.doc.length) return Decoration.none;
-    return Decoration.set([
-      Decoration.widget({ widget: new Caret(name || 'Educator'), side: 1 }).range(pos),
-    ]);
+    if (pos == null || pos > len) return Decoration.none;
+    const marks = [];
+    /* THE SHADE FIRST. Decoration.set wants its ranges in document order, and a mark that
+     * starts where the widget sits would otherwise be sorted after it and throw. */
+    if (anchor != null && anchor <= len && anchor !== pos) {
+      marks.push(Decoration.mark({ class: 'cm-peer-range' })
+        .range(Math.min(anchor, pos), Math.max(anchor, pos)));
+    }
+    marks.push(Decoration.widget({ widget: new Caret(name || 'Educator'), side: 1 }).range(pos));
+    return Decoration.set(marks, true);
   }),
 });
 
@@ -87,6 +108,8 @@ const props = defineProps({
   readonly: Boolean,
   /** Where somebody else's caret is, and whose. Null draws nothing. */
   peerAt: { type: Number, default: null },
+  /** The other end of their selection, when they have one. Null means a bare caret. */
+  peerAnchor: { type: Number, default: null },
   peerName: String,
 });
 const emit = defineEmits(['update:modelValue', 'run', 'cursor']);
@@ -115,7 +138,13 @@ onMounted(() => {
           if (u.docChanged) emit('update:modelValue', u.state.doc.toString());
           /* The caret travels separately from the text, and has to: a driver moving the
            * cursor without typing is still telling the other side where they are looking. */
-          if (u.selectionSet || u.docChanged) emit('cursor', u.state.selection.main.head);
+          /* BOTH ENDS, ALWAYS TOGETHER. They describe one range, and sent apart the far end
+           * would arrive against a head that had already moved - a highlight covering words
+           * nobody selected. `anchor` equal to `head` is a plain caret and says so. */
+          if (u.selectionSet || u.docChanged) {
+            const r = u.state.selection.main;
+            emit('cursor', { head: r.head, anchor: r.anchor });
+          }
         }),
         // Chrome, gutters and selection are the editor's own furniture and CodeMirror
         // gives them light defaults; drive them from the tokens too.
@@ -155,6 +184,18 @@ onMounted(() => {
              a read-only editor reads as a decoration rather than as somebody typing - the
              whole point of it. CodeMirror's own 1.06s, so the two never look like different
              kinds of thing. */
+          /* THE SAME ORANGE THE CARET IS, at fill strength - `--ice-drive-fill` was already
+             defined beside `--ice-drive-line` for exactly this and had no reader. One colour
+             says "somebody else is driving this editor", and a highlight in a second hue
+             would read as a second thing happening.
+
+             Translucent rather than solid so the syntax colours under it survive: a
+             selection that repainted the code would hide the thing being pointed at. */
+          '.cm-peer-range': {
+            background: 'var(--ice-drive-fill)',
+            borderRadius: '2px',
+            boxShadow: '0 0 0 1px var(--ice-drive-fill)',
+          },
           '.cm-peer-bar': {
             position: 'absolute', left: '-1px', bottom: '-.28em', height: '1.3em',
             width: '2px', borderRadius: '1px',
@@ -198,10 +239,11 @@ onMounted(() => {
 const applyPeer = () => view?.dispatch({
   effects: setPeer.of({
     pos: props.peerAt == null ? null : Number(props.peerAt),
+    anchor: props.peerAnchor == null ? null : Number(props.peerAnchor),
     name: props.peerName,
   }),
 });
-watch(() => [props.peerAt, props.peerName], applyPeer);
+watch(() => [props.peerAt, props.peerAnchor, props.peerName], applyPeer);
 
 watch(() => props.readonly, ro => {
   view?.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!ro)) });

@@ -42,6 +42,8 @@ const props = defineProps({
    * component has no more business knowing about remote control than it does about the
    * channel, and the editor is the only thing that can draw one. */
   peerAt: { type: Number, default: null },
+  /** The far end of their selection, when they have one. Travels with the caret - see below. */
+  peerAnchor: { type: Number, default: null },
   peerName: String,
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
@@ -77,6 +79,10 @@ watch(() => props.drivenCode, v => {
  * of keystrokes is one message rather than thirty. */
 const BEAT = 160;
 let cursorAt = null;
+/* The far end of the selection, kept beside the caret and sent on the same beat. A range is
+ * two offsets into ONE buffer; sending either without the other is sending a number with no
+ * units, which is the argument the caret already made against a message of its own. */
+let anchorAt = null;
 let beat;
 const sendSoon = () => {
   clearTimeout(beat);
@@ -84,9 +90,17 @@ const sendSoon = () => {
     /* The STEP travels with the text, for the caret's reason one line up: a buffer
      * belongs to a step of an exercise, and the one writer that keeps drafts outside this
      * component has no other way to know which. */
-    () => emit('editor', { code: code.value, cursor: cursorAt, step: stepIndex.value }), BEAT);
+    () => emit('editor', { code: code.value, cursor: cursorAt, anchor: anchorAt,
+                           step: stepIndex.value }), BEAT);
 };
-const onCursor = n => { cursorAt = n; sendSoon(); };
+/* `{ head, anchor }` from the editor. An anchor equal to the head is a bare caret, and is
+ * sent as null rather than as a zero-width range - the other side would draw a highlight
+ * over no characters, which is a decoration that exists and cannot be seen. */
+const onCursor = ({ head, anchor }) => {
+  cursorAt = head;
+  anchorAt = anchor === head ? null : anchor;
+  sendSoon();
+};
 watch(code, sendSoon);
 onBeforeUnmount(() => clearTimeout(beat));
 
@@ -366,7 +380,7 @@ const ranQuietly = computed(() =>
       <div class="editor-pane">
         <div class="tabbar"><span class="tab active">script.py</span></div>
         <CodeEditor v-model="code" language="python" :readonly="frozen"
-                    :peer-at="peerAt" :peer-name="peerName"
+                    :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="onCursor" @run="doRun" />
         <div class="actions">
           <span v-if="booting" class="muted kbd">Starting Python…</span>

@@ -617,10 +617,15 @@ try {
     /* ADDRESSED TO ONE BROWSER. A drive is not a broadcast: the class follows what the
      * controlled screen then REPORTS, so a drive reaching everybody would put the room on a
      * position nobody had confirmed they were at. */
-    A.ws.send(JSON.stringify({ type: 'drive', at: '202', title: 'Driven there' }));
+    A.ws.send(JSON.stringify({ type: 'drive', at: '202', title: 'Driven there',
+                               code: 'SELECT 1', cursor: 8, anchor: 0 }));
     const drivenTo = await heardB.next('driven');
     check('a drive reaches the screen being driven', drivenTo?.position?.exercise === '202',
           JSON.stringify(drivenTo));
+    /* ONE RANGE, TWO OFFSETS, ONE MESSAGE. Both ends index the same buffer, so either
+     * arriving without the other points at words nobody selected. */
+    check('and carries both ends of the selection with the buffer',
+          drivenTo?.cursor === 8 && drivenTo?.anchor === 0, JSON.stringify(drivenTo));
     if (distinct) {
       check('and reaches nobody else', (await heardA.next('driven', 1500)) === null,
             'the driver was sent their own instruction back');
