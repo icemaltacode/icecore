@@ -91,6 +91,10 @@ const PATHS = {
   // an arrow curving back on itself, which is undo everywhere. The head is on the left so
   // it reads as going back at a glance rather than being read as a refresh.
   undo: 'M4 9h11a5 5 0 0 1 0 10h-6M4 9l4-4M4 9l4 4',
+  // a bin with its lid and two staves. Distinct from `close` on purpose: an x that both
+  // clears a page and deletes one is a control whose meaning depends on where it sits.
+  trash: 'M4 7h16M10 7V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2M6 7l1 12a1 1 0 0 0 1 1h8a1 1 0 0 0'
+       + ' 1-1l1-12M10 11v6M14 11v6',
   // a paperclip. The inner return at the bottom is what makes it a clip instead of a hook.
   attach: 'M20 11.5l-8.4 8.4a5 5 0 0 1-7-7l8.8-8.8a3.3 3.3 0 0 1 4.7 4.7l-8.7 8.7a1.7 1.7'
         + ' 0 0 1-2.3-2.3l8-8',

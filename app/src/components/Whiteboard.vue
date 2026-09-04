@@ -19,7 +19,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { createDrauu } from 'drauu';
 import Icon from './Icon.vue';
-import { board, STAGE, current, turnTo, addPage, commitStroke, commitPage, freshBoard }
+import { board, STAGE, current, turnTo, addPage, dropPage, commitStroke, commitPage, freshBoard }
   from '../board.js';
 import { clean } from '../svgclean.js';
 
@@ -115,6 +115,24 @@ watch([() => board.page, () => board.rev], apply);
 const undo = () => drauu?.undo();
 const clearPage = () => drauu?.clear();
 
+/* DELETING A PAGE ASKS TWICE, AND ONLY WHEN THERE IS SOMETHING TO LOSE.
+ *
+ * Clearing is undoable and deleting is not - the page and everything on it simply go, in the
+ * middle of a lesson, from a control one across from the one that clears. An empty page is a
+ * no-op dressed as a destructive act, so that one goes on the first press; a page with ink on
+ * it gets a second. Reset by moving, because a warning left armed on a page you have walked
+ * away from would fire on the next one. */
+const confirmDrop = ref(false);
+const canDrop = computed(() => board.pages.length > 1);
+
+function removePage() {
+  if (!canDrop.value) return;
+  if (current() && !confirmDrop.value) { confirmDrop.value = true; return; }
+  confirmDrop.value = false;
+  dropPage();
+}
+watch(() => board.page, () => { confirmDrop.value = false; });
+
 /* Escape closes, and only for the person who can. For everybody else the board is the lesson
  * and there is nothing to escape from - a student who dismissed it would simply be missing
  * what was being taught, with no way back to it. */
@@ -174,8 +192,19 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
                 @click="emit('open')"><Icon name="attach" :size="15" /></button>
         <button class="wbbtn" type="button" :disabled="!canUndo" title="Undo" aria-label="Undo"
                 @click="undo"><Icon name="undo" :size="15" /></button>
-        <button class="wbbtn" type="button" title="Clear this page" aria-label="Clear this page"
-                @click="clearPage"><Icon name="close" :size="15" /></button>
+        <button class="wbbtn" type="button" title="Clear this page — the page stays"
+                aria-label="Clear this page" @click="clearPage">
+          <Icon name="close" :size="15" />
+        </button>
+        <!-- Distinct from clearing, and said so in both titles: one wipes the page, the other
+             removes it. Not offered at all on a board of one page - a board always has a page,
+             and "delete the only one" is what the button beside it already does. -->
+        <button v-if="canDrop" class="wbbtn" type="button" :class="{ arm: confirmDrop }"
+                :title="confirmDrop
+                  ? 'Press again to delete this page and everything on it'
+                  : `Delete page ${board.page + 1}`"
+                :aria-label="confirmDrop ? 'Press again to delete this page' : 'Delete this page'"
+                @click="removePage"><Icon name="trash" :size="15" /></button>
       </div>
 
       <!-- The pages, as themselves. A thumbnail of an SVG is the same SVG in a smaller box,
@@ -236,6 +265,9 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
 .wbbtn:hover:not(:disabled) { color: var(--ice-fg); background: var(--ice-bg-soft); }
 .wbbtn:disabled { opacity: 0.4; cursor: default; }
 .wbbtn.on { color: var(--ice-primary); background: var(--ice-primary-soft); }
+/* Armed, waiting for the second press. The danger colour rather than a word, because there is
+   no room for a word here and the title carries the sentence. */
+.wbbtn.arm { color: var(--ice-on-primary); background: var(--ice-bad); }
 .wbbtn:focus-visible, .wbink:focus-visible, .wbsize:focus-visible, .wbpage:focus-visible {
   outline: 2px solid var(--ice-primary); outline-offset: 1px; }
 

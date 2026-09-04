@@ -11,10 +11,22 @@
  *
  * IT DRAWS NOTHING WHEN THERE IS NOTHING, which is the ordinary case. A disabled paperclip on
  * every topic would be a promise the course does not keep.
+ *
+ * AND IT DELETES, FOR WHOEVER IS DELIVERING. That was only in the board's own picker at first,
+ * and the two lists are all but identical to look at - title, pages, who drew it - so the one
+ * without the delete is where somebody goes looking for it. The gate is the same one the
+ * Lambda applies, and it costs nothing here: an educator's paperclip list only exists WHILE
+ * they are delivering, because that is the only time the listing names their room. A student
+ * sees the same menu and must never get this.
+ *
+ * The confirm is written twice, here and in BoardOpen.vue, and that is worth knowing rather
+ * than hiding: the two lists have different shapes and a shared row component would be a
+ * third thing to keep in step with both. If a third list ever appears, extract it then.
  */
 import { ref, computed, onBeforeUnmount } from 'vue';
 import Icon from './Icon.vue';
-import { boardsAt } from '../board.js';
+import { boardsAt, dropBoard } from '../board.js';
+import { delivery } from '../delivery.js';
 
 const props = defineProps({
   /** The topic these belong to, e.g. `1.1.3`. */
@@ -26,6 +38,28 @@ const emit = defineEmits(['open']);
 
 const list = computed(() => boardsAt(props.topic));
 const open = ref(false);
+/** Which row is asking to be deleted, by id, or ''. Same shape BoardOpen and CohortList use. */
+const confirming = ref('');
+const removing = ref('');
+const mayDrop = computed(() => !!delivery.mine);
+
+async function remove(b) {
+  removing.value = b.board;
+  try {
+    await dropBoard(b);
+    confirming.value = '';
+    /* `boardsAt` is derived from the store, which `dropBoard` has just re-read, so the row
+     * goes on its own. Closing the menu when it was the last one keeps this from sitting open
+     * and empty over the topic. */
+    if (!list.value.length) { open.value = false; watchAway(false); }
+  } catch {
+    /* The listing is re-read either way, so a failure shows as the row still being there.
+     * There is nowhere in a dropdown to put a sentence that somebody would read. */
+    confirming.value = '';
+  } finally {
+    removing.value = '';
+  }
+}
 
 /* One is pressed, several are chosen from. A menu that opens to a single item is a second
  * click for nothing. */
@@ -68,11 +102,29 @@ onBeforeUnmount(() => watchAway(false));
          variant; a control that could be anywhere would have to measure. -->
     <ul v-if="open" class="clipmenu" :class="{ down: bare }">
       <li v-for="b in list" :key="b.board">
-        <button type="button" @click="open = false; watchAway(false); emit('open', b)">
-          <strong>{{ b.title }}</strong>
-          <span>{{ b.pages }} page{{ b.pages === 1 ? '' : 's' }}<template
-            v-if="b.byName"> · {{ b.byName }}</template></span>
-        </button>
+        <template v-if="confirming === b.board">
+          <p class="clipwarn">
+            Delete <strong>{{ b.title }}</strong>? Its {{ b.pages }}
+            page{{ b.pages === 1 ? '' : 's' }} go for good.
+          </p>
+          <div class="clipacts">
+            <button class="btn danger" type="button" :disabled="removing === b.board"
+                    @click="remove(b)">{{ removing === b.board ? 'Deleting…' : 'Delete' }}</button>
+            <button class="link" type="button" @click="confirming = ''">Cancel</button>
+          </div>
+        </template>
+        <div v-else class="cliprow">
+          <button class="clippick" type="button"
+                  @click="open = false; watchAway(false); emit('open', b)">
+            <strong>{{ b.title }}</strong>
+            <span>{{ b.pages }} page{{ b.pages === 1 ? '' : 's' }}<template
+              v-if="b.byName"> · {{ b.byName }}</template></span>
+          </button>
+          <button v-if="mayDrop" class="clipdrop" type="button" :title="`Delete ${b.title}`"
+                  :aria-label="`Delete ${b.title}`" @click="confirming = b.board">
+            <Icon name="trash" :size="14" />
+          </button>
+        </div>
       </li>
     </ul>
   </span>
@@ -96,10 +148,20 @@ onBeforeUnmount(() => watchAway(false));
   border-radius: 10px; box-shadow: 0 12px 30px rgb(0 0 0 / .2); }
 /* Downward, for the clip that lives in a header. See the template. */
 .clipmenu.down { bottom: auto; top: calc(100% + 6px); }
-.clipmenu button { display: block; width: 100%; padding: 7px 9px; text-align: left;
-  border: 0; border-radius: 6px; background: none; color: var(--ice-fg); cursor: pointer;
-  font: inherit; }
-.clipmenu button:hover { background: var(--ice-bg-soft); }
+.cliprow { display: flex; align-items: center; }
+.clipmenu .clippick { display: block; flex: 1 1 auto; min-width: 0; padding: 7px 9px;
+  text-align: left; border: 0; border-radius: 6px; background: none; color: var(--ice-fg);
+  cursor: pointer; font: inherit; }
+.clipmenu .clippick:hover { background: var(--ice-bg-soft); }
+/* Always drawn, never revealed on hover: the same control was hidden that way in BoardOpen
+   and simply was not found - and on a touchscreen there is no hover to find it with. */
+.clipmenu .clipdrop { flex: none; display: grid; place-items: center; width: 26px;
+  height: 26px; padding: 0; border: 0; border-radius: 6px; background: none;
+  color: var(--ice-fg-muted); cursor: pointer; }
+.clipmenu .clipdrop:hover { color: var(--ice-bad); background: var(--ice-bad-fill); }
+.clipwarn { margin: 0; padding: 7px 9px 4px; font-size: 12px; line-height: 1.5;
+  color: var(--ice-fg); }
+.clipacts { display: flex; align-items: center; gap: 8px; padding: 0 9px 7px; }
 .clipmenu strong { display: block; font-size: 13px; font-weight: 600; }
 .clipmenu span { display: block; font-size: 11.5px; color: var(--ice-fg-muted); }
 </style>

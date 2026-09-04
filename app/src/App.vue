@@ -1430,7 +1430,8 @@ watch(currentId, id => {
     <Whiteboard v-if="board.on" @close="setBoard(false)" @save="saveBoard"
                 @open="opening = true" />
     <BoardOpen v-if="opening" :course="course?.id" :cohort-title="delivery.title"
-               :unsaved="boardUnsaved" @pick="reopenBoard" @close="opening = false" />
+               :unsaved="boardUnsaved" :current-id="board.id"
+               @pick="reopenBoard" @close="opening = false" />
     <BoardViewer v-if="viewingBoard" :entry="viewingBoard" @close="viewingBoard = null" />
     <BoardSave v-if="keeping" :pages="board.pages.length" :board-title="board.title"
                :topic-title="currentTopic?.label" :topic="currentTopic?.topic"

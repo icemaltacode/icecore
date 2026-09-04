@@ -256,6 +256,22 @@ may delete, which today means the person standing in front of the class. Gone me
 there is no archive flag and no soft delete, so the confirmation says the pages go for good and
 that the class loses it from that topic. The header row goes last, mirroring the save.
 
+**A page can be removed, and it is not the same button as clearing one.** Clearing wipes the
+drawing and keeps the page; deleting takes the page and everything on it. Deleting asks twice
+when the page has ink on it and once when it does not — a no-op dressed as a destructive act is
+how a confirmation becomes something people click through — and it is not offered at all on a
+board of one page, because a board always has a page and "delete the only one" is what clearing
+already does.
+
+**There are two lists of boards, and both delete.** The paperclip's menu opens one to look at;
+the board's own picker opens one to carry on from. They are all but identical to look at —
+title, pages, who drew it — so a delete in only one of them is a delete nobody finds, which is
+exactly what happened. Both are gated the same way the Lambda is, and in the paperclip's case
+that costs nothing: an educator's list only exists *while they are delivering*, because that is
+the only time the listing names their room. The confirm is therefore written twice, which is
+worth knowing rather than hiding; a shared row component would be a third thing to keep in step
+with two different layouts. If a third list appears, extract it then.
+
 **One row per page, not one per board.** A DynamoDB item is capped at 400KB and a ten-page
 board at the transport ceiling is most of that. Pages are already the unit everything else
 here works in.

@@ -21,6 +21,8 @@ const props = defineProps({
   cohortTitle: String,
   /** True when the board on screen has pages on it and has never been kept. */
   unsaved: Boolean,
+  /** The kept board currently being carried on from, if any. Marked rather than hidden. */
+  currentId: String,
 });
 const emit = defineEmits(['pick', 'close']);
 
@@ -94,7 +96,8 @@ const empty = computed(() => !loading.value && !error.value && !boards.value.len
             <p class="warn">
               Delete <strong>{{ b.title }}</strong>? Its {{ b.pages }}
               page{{ b.pages === 1 ? '' : 's' }} go for good, and your class loses it from
-              {{ b.topic }}.
+              {{ b.topic }}.<template v-if="b.board === currentId"> What is on screen stays,
+              and Keep would file it as a new board.</template>
             </p>
             <div class="rowacts">
               <button class="btn danger" type="button" :disabled="removing === b.board"
@@ -106,14 +109,17 @@ const empty = computed(() => !loading.value && !error.value && !boards.value.len
             <button class="pick" type="button" @click="emit('pick', b)">
               <Icon name="attach" :size="14" />
               <span class="what">
-                <strong>{{ b.title }}</strong>
+                <strong>{{ b.title }}<!-- MARKED, NOT HIDDEN. This is also the only place the
+                  board on screen can be deleted, so removing it from the list would mean the
+                  one board somebody is looking at is the one they cannot get rid of.
+                  --><em v-if="b.board === currentId" class="now">open now</em></strong>
                 <em>{{ b.topic }} · {{ b.pages }} page{{ b.pages === 1 ? '' : 's' }}<template
                   v-if="when(b.at)"> · {{ when(b.at) }}</template></em>
               </span>
             </button>
             <button class="drop" type="button" :title="`Delete ${b.title}`"
                     :aria-label="`Delete ${b.title}`" @click="confirming = b.board">
-              <Icon name="close" :size="14" />
+              <Icon name="trash" :size="14" />
             </button>
           </div>
         </li>
@@ -159,6 +165,9 @@ h3 { margin: 0 0 14px; font-size: 17px; }
 .rowacts { display: flex; align-items: center; gap: 8px; padding: 0 10px 8px; }
 .list .what { display: block; min-width: 0; }
 .list strong { display: block; font-size: 13.5px; font-weight: 600; }
+.list .now { margin-left: 6px; padding: 1px 6px; font-size: 10.5px; font-style: normal;
+             font-weight: 500; color: var(--ice-primary);
+             background: var(--ice-primary-soft); border-radius: 999px; }
 .list em { display: block; font-size: 11.5px; font-style: normal; color: var(--ice-fg-muted); }
 
 .acts { display: flex; justify-content: flex-end; margin-top: 18px; }

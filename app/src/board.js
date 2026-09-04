@@ -410,6 +410,30 @@ export async function reopen(entry) {
 }
 
 /**
+ * REMOVE A PAGE, and with it everything drawn on it.
+ *
+ * A BOARD ALWAYS HAS A PAGE, so the last one cannot go - a surface with no page to load is a
+ * blank that cannot be written on, and "delete the only page" means "clear it", which is a
+ * different button that already exists.
+ *
+ * THE ROOM NEEDS NOTHING BUT THE PAGE IT IS NOW ON. Every client only ever renders the current
+ * page, and a turn sends that page in full - so the stale entries a shift leaves behind at
+ * other indices are never drawn, and correcting them would be a message about something
+ * nobody is looking at.
+ */
+export function dropPage(i = board.page) {
+  const at = Math.trunc(Number(i));
+  if (board.pages.length < 2 || at < 0 || at >= board.pages.length) return false;
+  const pages = board.pages.filter((_, n) => n !== at);
+  board.pages = pages;
+  board.page = Math.min(board.page > at ? board.page - 1 : board.page, pages.length - 1);
+  board.full = false;
+  board.rev += 1;
+  send('page', { page: board.page, svg: current() });
+  return true;
+}
+
+/**
  * A BLANK BOARD, ON PURPOSE. The way out of a resumed one.
  *
  * It drops the identity as well as the pages: what is drawn next is a new document, and Keep
