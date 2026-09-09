@@ -101,39 +101,70 @@ const check = (label, ok, detail = '') => {
     origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: DRAWINGS, data },
   }));
 
-  post({ 3: '<svg>a</svg>' });
-  post({ 3: '<svg>a</svg>', 7: '<svg>b</svg>' });
+  const A = '<path d="M1,1"/>';
+  const B = '<path d="M2,2"/>';
+  const C = '<path d="M3,3"/>';
+
+  post({ 3: A });
+  post({ 3: A, 7: B });
   await new Promise(r => setTimeout(r, 160));
-  check('the first patch carries the slide that was drawn on',
-        seen.length === 1 && JSON.stringify(seen[0][1]) === JSON.stringify({ 3: '<svg>a</svg>', 7: '<svg>b</svg>' }),
-        JSON.stringify(seen));
+  check('the first patch carries the slides that were drawn on',
+        seen.length === 1
+          && JSON.stringify(seen[0][1]) === JSON.stringify({ 3: { keep: 0, add: [A] },
+                                                             7: { keep: 0, add: [B] } }),
+        JSON.stringify(seen[0]?.[1]));
 
   seen.length = 0;
-  post({ 3: '<svg>a</svg>', 7: '<svg>b2</svg>' });
+  post({ 3: A, 7: B + C });
   await new Promise(r => setTimeout(r, 160));
-  check('and the next carries ONLY what changed, not the whole deck',
-        seen.length === 1 && JSON.stringify(seen[0][1]) === JSON.stringify({ 7: '<svg>b2</svg>' }),
-        JSON.stringify(seen));
+  check('and the next carries ONLY the new stroke, not the slide it is on',
+        seen.length === 1
+          && JSON.stringify(seen[0][1]) === JSON.stringify({ 7: { keep: 1, add: [C] } }),
+        JSON.stringify(seen[0]?.[1]));
 
   seen.length = 0;
-  post({ 3: '<svg>a</svg>' });
+  post({ 3: A, 7: B });
   await new Promise(r => setTimeout(r, 160));
-  check('rubbing one out is a change too', 
-        seen.length === 1 && seen[0][1][7] === null, JSON.stringify(seen));
+  check('undoing one keeps what is left and adds nothing',
+        seen.length === 1
+          && JSON.stringify(seen[0][1]) === JSON.stringify({ 7: { keep: 1, add: [] } }),
+        JSON.stringify(seen[0]?.[1]));
 
   seen.length = 0;
-  post({ 3: '<svg>a</svg>' });
+  post({ 3: A });
+  await new Promise(r => setTimeout(r, 160));
+  check('a slide dropped from the channel is cleared rather than left standing',
+        seen.length === 1 && seen[0][1][7]?.full === true && !seen[0][1][7].add.length,
+        JSON.stringify(seen[0]?.[1]));
+
+  seen.length = 0;
+  post({ 3: A });
   await new Promise(r => setTimeout(r, 160));
   check('and saying the same thing twice sends nothing at all',
         seen.length === 0, JSON.stringify(seen));
 
-  /* Slide 3 is carried through unchanged, so the only NEW thing here is the oversized one -
-   * otherwise this would be watching slide 3 be removed and calling it a drop. */
+  /* THE BUG THIS FILE EXISTS FOR NOW. The cap used to be 24KB measured against the SLIDE, and
+   * a slide only grows - so one cursive word tipped it over and every later frame was skipped
+   * too, permanently. A delta is the size of the stroke, so the same drawing goes through. */
   seen.length = 0;
-  post({ 3: '<svg>a</svg>', 9: `<svg>${'x'.repeat(30000)}</svg>` });
+  const CURSIVE = `<path d="M1,1 ${'C 123.45,678.90 123.45,678.90 123.45,678.90 '.repeat(600)}"/>`;
+  check('one cursive word really is bigger than the old cap',
+        CURSIVE.length > 24 * 1024, `${CURSIVE.length} bytes`);
+  post({ 3: A + CURSIVE });
   await new Promise(r => setTimeout(r, 160));
-  check('a slide too big for a frame is dropped rather than sent',
-        seen.length === 0, JSON.stringify(seen).slice(0, 80));
+  check('a slide bigger than the old cap still travels',
+        seen.length === 1 && seen[0][1][3]?.add?.[0] === CURSIVE,
+        JSON.stringify(seen[0]?.[1]).slice(0, 90));
+
+  seen.length = 0;
+  post({ 3: A + CURSIVE + B });
+  await new Promise(r => setTimeout(r, 160));
+  check('AND SO DOES THE NEXT STROKE AFTER IT - the wedge is gone',
+        seen.length === 1
+          && JSON.stringify(seen[0][1]) === JSON.stringify({ 3: { keep: 2, add: [B] } }),
+        JSON.stringify(seen[0]?.[1]));
+  check('and it costs the stroke rather than the slide',
+        JSON.stringify(seen[0][1]).length < 100, JSON.stringify(seen[0][1]).length + ' bytes');
 
   /* ---- AND ONE MORE ONCE THE HAND STOPS ---------------------------------
    *
@@ -143,15 +174,18 @@ const check = (label, ok, detail = '') => {
    * leave the room one stroke short of what was drawn. The settle resend is what heals that,
    * and it is worth a test because nothing on screen would ever show it working. */
   seen.length = 0;
-  post({ 3: '<svg>a</svg>', 7: '<svg>c</svg>' });
+  post({ 3: A, 7: C });
   await new Promise(r => setTimeout(r, 160));
-  check('a change goes out as a diff', seen.length === 1 && seen[0][1][7] === '<svg>c</svg>',
-        JSON.stringify(seen));
+  check('a change goes out as a delta',
+        seen.length === 1 && seen[0][1][7]?.add?.[0] === C && !seen[0][1][7].full,
+        JSON.stringify(seen[0]?.[1]));
   await new Promise(r => setTimeout(r, 700));
-  check('and once drawing settles the whole state is said again, in full',
+  check('and once drawing settles the whole state is said again, as a snapshot',
         seen.length === 2
-          && JSON.stringify(seen[1][1]) === JSON.stringify({ 3: '<svg>a</svg>', 7: '<svg>c</svg>' }),
-        JSON.stringify(seen.map(x => x[1])));
+          && JSON.stringify(seen[1][1]) === JSON.stringify({
+               3: { keep: 0, add: [A], full: true },
+               7: { keep: 0, add: [C], full: true } }),
+        JSON.stringify(seen[1]?.[1]));
 
   /* IT IS STAMPED, and the stamp is the only thing that can order these: every frame is its
    * own concurrent Lambda invocation and API Gateway orders nothing between them. */
@@ -176,13 +210,15 @@ const check = (label, ok, detail = '') => {
     origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: DRAWINGS, data },
   }));
 
-  post({ 3: '<svg>a</svg>' });
+  const A2 = '<path d="M1,1"/>';
+  post({ 3: A2 });
   await new Promise(r => setTimeout(r, 160));
   delivered = true;
-  post({ 3: '<svg>a</svg>' });
+  post({ 3: A2 });
   await new Promise(r => setTimeout(r, 160));
   check('a patch the socket refused is offered again rather than recorded as sent',
-        seen.length === 2 && seen[1][1][3] === '<svg>a</svg>', JSON.stringify(seen.map(x => x[1])));
+        seen.length === 2 && seen[1][1][3]?.add?.[0] === A2,
+        JSON.stringify(seen.map(x => x[1])));
   stop();
 }
 
@@ -221,6 +257,55 @@ const check = (label, ok, detail = '') => {
    * than discarded. */
   applyDeck(DRAWINGS, { 3: ink(500) }, {});
   check('an unstamped patch is applied rather than refused', posted.length === 5);
+  deck = [];
+}
+
+// ------------------------------------------------- and a delta is reassembled
+/* The receiving half of the delta. What crosses into the deck has to be the WHOLE slide -
+ * Slidev hands it to drauu's `load()`, which replaces - so this client keeps the pieces and
+ * joins them. Content is not asserted here: `filtered` runs svgclean on the way out and this
+ * file stubs far short of the DOM that needs, so every value arrives empty whatever went in.
+ * What is asserted is the bookkeeping, which is where a delta can be wrong. */
+{
+  withDeck();
+  let n = 1;
+  const one = x => `<path d="M${x},1"/>`;
+  const send = (slide, d) => applyDeck(DRAWINGS, { [slide]: d }, { origin: 'tab-z', seq: n++ });
+  const pieces = () => posted[posted.length - 1]?.data;
+
+  send(3, { keep: 0, add: [one(1)] });
+  check('a snapshot with nothing held is applied', posted.length === 1);
+
+  send(3, { keep: 1, add: [one(2)] });
+  check('and a delta on top of it is applied', posted.length === 2);
+
+  /* THE CASE THAT MAKES DELTAS SAFE. Three pieces held against a delta that expects five
+   * means messages went missing - a reconnection, a patch that lost its race, a student who
+   * joined after the drawing was made. Splicing anyway would interleave one drawing into
+   * another and look like the educator had drawn something they did not. */
+  send(3, { keep: 5, add: [one(9)] });
+  check('a delta that does not fit what is held is DECLINED, not forced',
+        posted.length === 2, `${posted.length} posts`);
+
+  /* And the snapshot that follows every settled stroke is what closes the gap. */
+  send(3, { keep: 0, add: [one(1), one(2), one(3)], full: true });
+  check('and the snapshot after it puts them right', posted.length === 3);
+
+  send(3, { keep: 3, add: [one(4)] });
+  check('after which deltas fit again', posted.length === 4);
+
+  /* Clearing a slide is a snapshot of nothing, and it has to REACH the deck: Slidev loads an
+   * empty string and ignores a null, so this is what actually rubs a drawing out. */
+  send(3, { keep: 0, add: [], full: true });
+  check('clearing a slide reaches the deck as an empty slide',
+        posted.length === 5 && pieces()[3] === '', JSON.stringify(pieces()));
+
+  /* A whole slide as a plain string is an older sender - one deployment behind, in a tab
+   * nobody has reloaded. It has to keep working, and it has to reset the bookkeeping. */
+  send(7, one(1) + one(2));
+  check('a whole-slide string from an older sender is still applied', posted.length === 6);
+  send(7, { keep: 2, add: [one(3)] });
+  check('and a delta lands on top of what it left behind', posted.length === 7);
   deck = [];
 }
 

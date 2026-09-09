@@ -325,15 +325,37 @@ await settle(150);
 
   const got = [];
   frame?.contentWindow?.addEventListener('message', e => got.push(e.data));
-  player.emitLocal({
-    type: 'decked',
-    channel: 'Course One \u2014 1.1 Topic One - Slidev - drawings',
-    data: { 3: '<path d="M10 10 L90 90"/>' },
-  });
+  const CHANNEL = 'Course One \u2014 1.1 Topic One - Slidev - drawings';
+  const drawn = (data, seq) =>
+    player.emitLocal({ type: 'decked', channel: CHANNEL, data, origin: 'tab-e', seq });
+  const last = () => got.filter(m => m?.kind === 'ice:deck-sync').pop()?.data?.['3'];
+
+  drawn({ 3: '<path d="M10 10 L90 90"/>' });
   await settle(200);
   check("an educator's annotation reaches the deck on screen",
         got.some(m => m?.kind === 'ice:deck-sync' && m.data?.['3']),
         JSON.stringify(got).slice(0, 200));
+
+  /* AND IN THE SHAPE IT ACTUALLY TRAVELS IN. A patch is a delta now - `keep` pieces of what
+   * you hold, then these - because a whole slide on every frame is what grew past the cap
+   * and froze a lesson mid-word. This is the only place that path runs end to end: a real
+   * frame, real svgclean, and the reassembly in between. What crosses has to be the WHOLE
+   * slide, because Slidev hands it to drauu's `load()`, which replaces. */
+  got.length = 0;
+  drawn({ 3: { keep: 0, add: ['<path d="M1 1"/>'], full: true } }, 1);
+  await settle(120);
+  drawn({ 3: { keep: 1, add: ['<path d="M2 2"/>'] } }, 2);
+  await settle(200);
+  check('a delta arrives as the whole slide, not as the stroke it carried',
+        /M1 1/.test(last() || '') && /M2 2/.test(last() || ''), String(last()).slice(0, 160));
+
+  /* A delta that does not fit is declined rather than forced - and declining must leave what
+   * is on screen alone rather than blanking it. */
+  got.length = 0;
+  drawn({ 3: { keep: 9, add: ['<path d="M3 3"/>'] } }, 3);
+  await settle(200);
+  check('and one that does not fit what is held reaches the deck not at all',
+        !got.some(m => m?.kind === 'ice:deck-sync'), JSON.stringify(got).slice(0, 160));
 }
 
 // ------------------------------------------------------- the paperclip, afterwards

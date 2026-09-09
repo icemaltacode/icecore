@@ -59,33 +59,42 @@
 import { clean } from './svgclean.js';
 
 const MESSAGE = 'ice:deck-sync';
-/* WELL UNDER A WEBSOCKET FRAME, per message.
+/* A CEILING ON THE MESSAGE, and it is a backstop rather than a working limit.
  *
- * Slidev hands over the WHOLE channel every time any part of it changes, so a `drawings`
- * patch is every annotated slide in the deck - and each of those is an SVG path with a point
- * per pixel of the stroke. A lesson's worth is not a few kilobytes. API Gateway's frame
- * limit is far below what that reaches, and a frame over it is not truncated or rejected in
- * a way anybody could see: the connection is closed. Which reads as the room going quiet
- * rather than as a message being too big.
+ * This was 24KB applied to each SLIDE's whole drawing, and it wedged a lesson. Slidev hands
+ * over the entire channel on every change and drauu's dump of a slide is every stroke ever
+ * made on it, so the thing being measured only ever grew - and `changed` skipped an oversized
+ * key on every frame from then on, forever, because the next frame was bigger still. The room
+ * froze mid-word and no later stroke on that slide ever appeared again.
  *
- * So this is a ceiling per SLIDE, and only what has actually changed is sent - see `changed`.
- * A slide whose drawing is somehow bigger than this is dropped and said so out loud, because
- * half an SVG is not a smaller drawing, it is a parse error blamed on the wrong thing. */
-const CAP = 24 * 1024;
+ * Cursive is what found it, and the arithmetic says why: `toSvgData` emits a cubic per point,
+ * `C 123.45,678.90 123.45,678.90 123.45,678.90`, about 45 characters. A word written in one
+ * stroke is a couple of hundred points after simplification - ten kilobytes for "hello" -
+ * where a dozen short strokes are a few hundred bytes each. So short strokes worked and
+ * handwriting did not, which is not a size anybody would have guessed at.
+ *
+ * What actually fixed it is that a message is now a DELTA - see `chunked` - so what travels is
+ * the stroke being drawn rather than the history of the slide. This number is what is left
+ * over: a single stroke larger than it is a real limit rather than an accumulation, and API
+ * Gateway closes a connection carrying a frame over its own limit without saying so, which
+ * reads as the room going quiet rather than as a message being too big. */
+const CAP = 96 * 1024;
 /* Coalesced. Slidev watches its state deeply, so a stroke is many changes; ten a second is
  * far more than an annotation needs and is a tenth of what the pointer already costs. */
 const EVERY = 100;
-/* AND A LAST ONE ONCE THE HAND STOPS.
+/* AND A WHOLE ONE ONCE THE HAND STOPS.
  *
- * Everything above is a diff, so a frame that never arrives is not caught up by the next
- * one - the sender has already recorded that key as sent and will not offer it again until
- * it changes. Two things drop frames: a socket that is between connections (`send` returns
- * false and says nothing), and the ordering below, which discards a patch that lost its
- * race. Both leave the room holding a stroke that is one move short of what was drawn.
+ * A delta can only be applied by somebody holding what it was computed against, and three
+ * things leave a client without that: a socket between connections (`send` drops silently), a
+ * patch discarded as stale by the ordering below, and joining the room after the drawing was
+ * made. A student in any of those states declines the delta - it says `keep: 4` and they have
+ * two - and would otherwise stay a stroke short for the rest of the lesson.
  *
- * So after the drawing settles, whatever this tab currently believes the room has is sent
- * once more in full. It is the same bytes the room should already be holding, applied
- * last-write-wins over the top, and it costs one message per stroke rather than per frame.
+ * So once drawing settles, the whole state goes out as a snapshot: `full`, applicable by
+ * anybody whatever they are holding. That is what makes the delta safe rather than clever -
+ * every gap is closed within a breath of the hand stopping, and it costs one message per
+ * stroke rather than per frame.
+ *
  * Long enough not to fire mid-stroke; short enough that a missing tail is a blink. */
 const SETTLE = 600;
 
@@ -153,39 +162,96 @@ let timer = null;
 let settle = null;       // the trailing resend, armed on every flush
 let audience = () => null;   // 'room' | 'driven' | null when this tab relays nothing
 let out = () => {};
-/* What the room has already been told, per channel, so that only differences travel.
+/**
+ * One slide's drawing, split into the pieces a diff can be taken against.
  *
- * THIS IS NOT AN OPTIMISATION. Slidev replaces the whole channel on every change, so
- * without it every stroke re-sends every annotated slide in the deck - a message that grows
- * for the length of a lesson and takes the socket with it when it passes the frame limit.
- * Diffing keeps a message the size of the stroke somebody just drew.
+ * NOT A PARSE, and deliberately not: this splits before every opening tag and nothing else,
+ * so joining the pieces back reproduces the input byte for byte whatever the markup was. A
+ * closing tag begins `</`, which is not a letter, so it stays attached to the piece it closes
+ * and a `<g>` holding an arrowhead simply splits into more pieces than it has elements. That
+ * costs a slightly coarser diff and cannot be wrong, where a real parse would have to agree
+ * with drauu about nesting - and svgclean.js already exists because trusting markup from
+ * another browser is the thing not to do. Nothing here interprets it; it is cut and rejoined.
+ *
+ * drauu appends: a finished stroke never changes again, and the one being drawn is always
+ * last. So a common prefix is nearly always everything but the stroke in progress, which is
+ * exactly the message this file wants to send.
+ */
+const chunked = svg => (typeof svg === 'string' && svg ? svg.split(/(?=<[a-zA-Z])/) : []);
+
+/* What the room is holding, per channel and slide, as those pieces.
+ *
+ * THIS IS THE WHOLE OF WHY A LESSON'S ANNOTATION FITS. Slidev replaces the whole channel on
+ * every change and a slide's dump is every stroke ever made on it, so without this each frame
+ * carries the history again - a message that grows all lesson and, at ten frames a second,
+ * grew until it passed the cap and the slide stopped updating for good. Against this, a frame
+ * is the stroke somebody is drawing.
  *
  * Partial patches are what the other side wants anyway: Slidev's own `onUpdate` assigns the
- * keys it is given and leaves the rest alone, so a patch of one slide is applied as one
- * slide rather than as a deck with one slide in it. */
+ * keys it is given and leaves the rest alone, so a patch of one slide is applied as one slide
+ * rather than as a deck with one slide in it. */
 let sent = {};
 
-/** The keys of `data` that differ from what has already gone out on this channel. */
-function changed(channel, data) {
+/**
+ * What to send for each slide that has moved, against what the room is holding.
+ *
+ * `{ keep, add }` is "the first `keep` pieces you have are still right, then these" - a
+ * truncate and an append, which covers drawing (keep everything, add the new stroke), undo
+ * and erase (keep fewer, add what follows) and clearing (keep nothing). `full` marks a
+ * snapshot, which needs nothing to be already held and is how a gap is closed - see SETTLE.
+ *
+ * Returns the patch and the state it would leave, rather than committing to it: whether it
+ * actually goes is `send`'s answer, and recording it regardless is how a stroke drawn during
+ * a reconnection is lost for the rest of the lesson.
+ */
+function delta(channel, data) {
   const was = sent[channel] || {};
-  const now = {};
+  const patch = {};
+  const next = {};
   let any = false;
   for (const [k, v] of Object.entries(data)) {
-    const body = JSON.stringify(v);
-    if (was[k] === body) continue;
-    if (body.length > CAP) {
-      console.warn('decksync: dropping', channel, k, `- ${body.length} bytes is over the cap`);
-      continue;
-    }
-    now[k] = body;
+    const now = chunked(v);
+    next[k] = now;
+    const before = was[k] || [];
+    let i = 0;
+    while (i < before.length && i < now.length && before[i] === now[i]) i += 1;
+    if (i === before.length && i === now.length) continue;
+    patch[k] = { keep: i, add: now.slice(i) };
     any = true;
   }
   /* A key that has GONE - an annotation cleared off a slide - is a change too, and the
-   * undoing of one is exactly as worth sending as the drawing of it. */
+   * undoing of one is exactly as worth sending as the drawing of it.
+   *
+   * As an empty SNAPSHOT rather than a null. Slidev's `onPatchDrawingState` skips a value
+   * that is `null` and loads one that is `''`, so a null said "this slide is gone" to a
+   * receiver that then did nothing about it - the drawing stayed on screen until something
+   * else happened to change that slide. Clearing with the pen already goes through the
+   * ordinary path as `''`; this is the same thing said the same way. */
   for (const k of Object.keys(was)) {
-    if (!(k in data)) { now[k] = undefined; any = true; }
+    /* And it is NOT carried into `next`. Recording the cleared slide as an empty state left
+     * it in `was` on the following frame, still absent from `data`, so the clear was emitted
+     * again - and again, once per frame, for the rest of the lesson. Dropping the key is what
+     * makes the removal happen exactly once. */
+    if (!(k in data)) { patch[k] = { keep: 0, add: [], full: true }; any = true; }
   }
-  return any ? now : null;
+  return any ? { patch, next } : null;
+}
+
+/** Everything this tab believes the room holds, as one applicable-by-anybody snapshot. */
+function snapshot(channel) {
+  const patch = {};
+  for (const [k, pieces] of Object.entries(sent[channel] || {})) {
+    patch[k] = { keep: 0, add: pieces, full: true };
+  }
+  return Object.keys(patch).length ? patch : null;
+}
+
+/** Whether a patch is small enough to put on the wire at all. */
+function within(channel, patch) {
+  const size = JSON.stringify(patch).length;
+  if (size <= CAP) return true;
+  console.warn('decksync: dropping a patch for', channel, `- ${size} bytes is over the cap`);
+  return false;
 }
 
 /**
@@ -207,16 +273,10 @@ function flush() {
   const batch = pending;
   pending = null;
   for (const [channel, data] of Object.entries(batch)) {
-    const diff = changed(channel, data);
-    if (!diff) continue;
-    const patch = {};
-    const next = { ...(sent[channel] || {}) };
-    for (const [k, body] of Object.entries(diff)) {
-      if (body === undefined) { patch[k] = null; delete next[k]; }
-      else { patch[k] = JSON.parse(body); next[k] = body; }
-    }
+    const d = delta(channel, data);
+    if (!d || !within(channel, d.patch)) continue;
     // Only once it has actually gone - see `put`. Otherwise the next diff skips it forever.
-    if (put(channel, patch)) sent[channel] = next;
+    if (put(channel, d.patch)) sent[channel] = d.next;
   }
   clearTimeout(settle);
   settle = setTimeout(resend, SETTLE);
@@ -225,19 +285,21 @@ function flush() {
 /**
  * Once the hand stops: say again, in full, what the room should be holding.
  *
- * Not a diff and not conditional on anything having changed - the whole point is the case
- * where this tab believes a key arrived and it did not. The far side applies it
- * last-write-wins over identical bytes, so the ordinary outcome is that nothing happens.
+ * Not a diff and not conditional on anything having changed. It is what makes the deltas
+ * above safe: a client that missed one - a socket between connections, a patch discarded as
+ * stale, a student who joined after the drawing was made - is holding something a delta
+ * cannot be applied to, declines it, and would stay behind for the rest of the lesson. A
+ * snapshot needs nothing to be held already.
  *
- * Bounded by the number of ANNOTATED SLIDES in the deck rather than by the length of the
- * lesson, and only after drawing has settled, so it is one message per stroke.
+ * The far side applies it over identical pieces in the ordinary case, so nothing happens.
+ * Bounded by the annotated slides in the deck rather than by the length of the lesson, and
+ * only once drawing has settled, so it is one message per stroke rather than per frame.
  */
 function resend() {
   settle = null;
-  for (const [channel, keys] of Object.entries(sent)) {
-    const patch = {};
-    for (const [k, body] of Object.entries(keys)) patch[k] = JSON.parse(body);
-    if (Object.keys(patch).length) put(channel, patch);
+  for (const channel of Object.keys(sent)) {
+    const patch = snapshot(channel);
+    if (patch && within(channel, patch)) put(channel, patch);
   }
 }
 
@@ -282,6 +344,7 @@ export function watchDecks(whoFor, send) {
     pending = null;
     sent = {};
     seen = {};
+    held = {};
     audience = () => null;
     out = () => {};
   };
@@ -301,15 +364,12 @@ export function watchDecks(whoFor, send) {
  * The values are drauu dumps: `useDrawings.ts` stores `drauu.dump()` per slide number. A
  * value that will not filter arrives as an empty slide, which is the honest rendering of a
  * message we do not understand.
+ *
+ * It runs on the REASSEMBLED slide rather than on each delta, because a piece of a delta is a
+ * piece of a string and not markup - `chunked` cuts before opening tags without caring what
+ * closes where, so a lone fragment is not something a filter could have an opinion about.
  */
-function filtered(channel, data) {
-  if (kindOf(channel) !== 'drawings') return data;
-  const out = {};
-  for (const [slide, svg] of Object.entries(data)) {
-    out[slide] = typeof svg === 'string' ? clean(svg) : svg;
-  }
-  return out;
-}
+const filtered = svg => (typeof svg === 'string' && svg ? clean(svg) : '');
 
 /* The highest sequence heard from each sending tab, per channel.
  *
@@ -339,12 +399,25 @@ function fresh(channel, origin, n) {
   return true;
 }
 
+/* What this client believes each slide holds, in the same pieces the sender cut it into.
+ *
+ * The receiving half of `sent`, and it has to exist here rather than be read back out of the
+ * deck: Slidev owns that DOM, drauu rewrites it, and svgclean rebuilds every patch on the way
+ * in - so what is on screen is not the string a delta was computed against and could not be
+ * diffed against one. */
+let held = {};
+
 /**
  * A patch off the channel, on its way into the deck.
  *
  * WHO MAY BE SENT ONE IS THE CALLER'S QUESTION, not this file's - which is also what keeps
  * the two modules out of a cycle. delivery.js holds the session and knows whether this client
  * is the one leading; here there is only a deck and a patch.
+ *
+ * A DELTA THAT DOES NOT FIT WHAT WE HOLD IS DECLINED, not forced. `keep: 4` against two
+ * pieces means messages were missed, and splicing anyway would silently interleave one
+ * drawing into another - so it waits for the snapshot that follows every settled stroke.
+ * Being briefly a stroke behind is honest; being wrong about which strokes were made is not.
  *
  * Applied whether or not this client is following, deliberately: annotations are drawn ON a
  * slide and are part of it while they are there. A student who has wandered a page ahead and
@@ -354,5 +427,19 @@ function fresh(channel, origin, n) {
 export function applyDeck(channel, data, { origin, seq: n } = {}) {
   if (!fresh(channel, origin, n)) return;
   const keep = carried(channel, data);
-  if (keep) intoDecks(channel, filtered(channel, keep));
+  if (!keep) return;
+  const mine = held[channel] || (held[channel] = {});
+  const out = {};
+  for (const [slide, d] of Object.entries(keep)) {
+    if (d == null) { delete mine[slide]; out[slide] = null; continue; }
+    /* A whole slide as a string is an older sender - one deployment behind, in a tab nobody
+     * has reloaded. Taken at face value, because it is exactly what this used to send. */
+    if (typeof d === 'string') { mine[slide] = chunked(d); out[slide] = filtered(d); continue; }
+    if (!Array.isArray(d.add)) continue;
+    const have = mine[slide] || [];
+    if (!d.full && d.keep > have.length) continue;
+    mine[slide] = (d.full ? [] : have.slice(0, d.keep)).concat(d.add);
+    out[slide] = filtered(mine[slide].join(''));
+  }
+  if (Object.keys(out).length) intoDecks(channel, out);
 }
