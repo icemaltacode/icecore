@@ -67,17 +67,41 @@ const elapsed = computed(() => {
     : `${Math.floor(s / 60)}:${two(s % 60)}`;
 });
 
-/* A socket that is reconnecting is ORDINARY - a train, a lid, API Gateway's two-hour cap -
- * so it is reported as a quiet aside rather than as an error. A student shown something red
- * every time their connection blinks learns to ignore the band that matters. */
-const reconnecting = computed(() => channel.status === 'waiting' || channel.status === 'opening');
+/* THE BAND HAS TO TELL A DROPPED CONNECTION FROM A FINISHED LESSON, and until it did the two
+ * looked identical from where a student sits: the room went quiet, and the only way to find
+ * out which had happened was to reload the page. Ending a lesson takes this band away
+ * entirely; losing the socket turns it yellow and says so.
+ *
+ * `channel.lost` rather than the status alone, because a first connection and a reconnection
+ * are both 'opening' and only one of them is worth a colour - see live.js. Which also means
+ * this cannot fire on the way IN to a lesson, where a yellow band would be the first thing a
+ * student ever saw of the feature.
+ *
+ * It is still not an error, and the wording is the whole of that: nothing has gone wrong that
+ * the student did or can fix, nothing they have done is lost, and the thing is already being
+ * dealt with. Yellow says look; red would say act, and there is nothing to do. */
+const away = computed(() => channel.lost && channel.status !== 'open');
 </script>
 
 <template>
-  <div class="band" role="status">
+  <div class="band" :class="{ away }" role="status" aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
 
-    <span class="what">
+    <!-- IT REPLACES THE SENTENCE RATHER THAN APPENDING TO IT. This was an aside on the end of
+         the `.sub` line, which is grey, italic, and hidden outright under 720px - so on a
+         laptop it was a whisper and on anything smaller it was not there at all. What a
+         disconnected student needs is the first thing on the band, in the half of it that is
+         never hidden. Where they are is said underneath, because that is the fact the yellow
+         is otherwise ambiguous about: they have not been thrown out of the lesson. -->
+    <span v-if="away" class="what">
+      Connection lost — trying to reconnect…
+      <span class="sub" v-if="mine">The class stops moving with you until this comes back.
+        Nothing is lost.</span>
+      <span class="sub" v-else>You are still in {{ session?.name || 'your educator' }}’s
+        lesson. Nothing you have done is lost.</span>
+    </span>
+
+    <span v-else class="what">
       <template v-if="mine">
         Delivering live to <strong>{{ cohortTitle }}</strong><template v-if="courseTitle"> —
         {{ courseTitle }}</template>.
@@ -112,7 +136,6 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
         <span class="sub"><template v-if="leaderAt">They are on {{ leaderAt }}. </template>Your
           work here is kept either way.</span>
       </template>
-      <span v-if="reconnecting" class="sub away">Reconnecting…</span>
     </span>
 
     <span class="clock">{{ elapsed }}</span>
@@ -170,7 +193,13 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
 .what { flex: 1; min-width: 0; }
 .what strong { font-weight: 600; }
 .sub { color: var(--ice-fg-muted); }
-.sub.away { margin-left: 6px; font-style: italic; }
+/* The whole band, not a word in it: at a glance from the back of a room the colour is the
+   message and the sentence is the detail. The dot stops pulsing and holds - a pulse means
+   the room is live, and the point of this state is that it is not. */
+.band.away { background: var(--ice-warn-fill); border-bottom-color: var(--ice-warn-line);
+             color: var(--ice-warn); }
+.band.away .dot { background: var(--ice-warn-line); animation: none; }
+.band.away .sub { color: var(--ice-warn); opacity: .85; }
 /* On rather than pressed: it stays until it is switched back, so it wears the state
    colour rather than a click's. The caret's own colour, and deliberately - the accent moving
    in a student's editor and the switch that put it there are the same event seen from the two
@@ -180,5 +209,8 @@ const reconnecting = computed(() => channel.status === 'waiting' || channel.stat
            color: var(--ice-fg); }
 .clock { font-family: var(--ice-font-mono); font-variant-numeric: tabular-nums;
          font-size: 12px; color: var(--ice-fg-muted); }
-@media (max-width: 720px) { .sub { display: none; } }
+/* Except the one that says they are still in the lesson: that sentence is the difference
+   between "reconnecting" and "you have been thrown out", and it is worth a second line on a
+   small screen. */
+@media (max-width: 720px) { .sub { display: none; } .band.away .sub { display: block; } }
 </style>

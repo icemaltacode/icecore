@@ -23,9 +23,16 @@ globalThis.addEventListener = (t, fn) => { if (t === 'message') listeners.add(fn
 globalThis.removeEventListener = (t, fn) => { if (t === 'message') listeners.delete(fn); };
 globalThis.dispatchEvent = e => { for (const fn of listeners) fn(e); return true; };
 globalThis.Event = class { constructor(type) { this.type = type; } };
-// Nothing is on screen, so no deck is ever posted into. The relay is what is under test.
-globalThis.document = { querySelectorAll: () => [] };
-import { carried, watchDecks } from '../app/src/decksync.js';
+/* A deck on screen, or not, depending on what is under test. The relay half wants no frame;
+ * the receiving half needs one to post into, and what it posts is the assertion. */
+let posted = [];
+let deck = [];
+globalThis.document = { querySelectorAll: () => deck };
+const withDeck = () => {
+  posted = [];
+  deck = [{ contentWindow: { postMessage: m => posted.push(m) } }];
+};
+import { carried, watchDecks, applyDeck } from '../app/src/decksync.js';
 
 /* THE NAME SLIDEV ACTUALLY USES. `setup/root.ts` names each channel after the deck -
  * `${slidesTitle} - shared` and `${slidesTitle} - drawings` - so a relay keyed on the bare
@@ -89,7 +96,7 @@ const check = (label, ok, detail = '') => {
  * sends differences, and a difference includes an annotation being RUBBED OUT. */
 {
   const seen = [];
-  const stop = watchDecks(() => 'room', (channel, data) => seen.push([channel, data]));
+  const stop = watchDecks(() => 'room', (...args) => seen.push(args));
   const post = data => dispatchEvent(Object.assign(new Event('message'), {
     origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: DRAWINGS, data },
   }));
@@ -128,7 +135,93 @@ const check = (label, ok, detail = '') => {
   check('a slide too big for a frame is dropped rather than sent',
         seen.length === 0, JSON.stringify(seen).slice(0, 80));
 
+  /* ---- AND ONE MORE ONCE THE HAND STOPS ---------------------------------
+   *
+   * Everything above is a diff, so a frame that never arrives is never offered again: the
+   * sender has already recorded that key as sent. Two things drop frames - a socket between
+   * connections, and the ordering below discarding a patch that lost its race - and both
+   * leave the room one stroke short of what was drawn. The settle resend is what heals that,
+   * and it is worth a test because nothing on screen would ever show it working. */
+  seen.length = 0;
+  post({ 3: '<svg>a</svg>', 7: '<svg>c</svg>' });
+  await new Promise(r => setTimeout(r, 160));
+  check('a change goes out as a diff', seen.length === 1 && seen[0][1][7] === '<svg>c</svg>',
+        JSON.stringify(seen));
+  await new Promise(r => setTimeout(r, 700));
+  check('and once drawing settles the whole state is said again, in full',
+        seen.length === 2
+          && JSON.stringify(seen[1][1]) === JSON.stringify({ 3: '<svg>a</svg>', 7: '<svg>c</svg>' }),
+        JSON.stringify(seen.map(x => x[1])));
+
+  /* IT IS STAMPED, and the stamp is the only thing that can order these: every frame is its
+   * own concurrent Lambda invocation and API Gateway orders nothing between them. */
+  check('every patch carries the sending tab and a rising count',
+        seen.every(x => x[3]?.origin) && seen[1][3].seq > seen[0][3].seq,
+        JSON.stringify(seen.map(x => x[3])));
+  check('and one tab is one origin', seen[0][3].origin === seen[1][3].origin);
+
+  /* A SEND THAT DID NOT GO IS NOT A SEND. `send` in live.js drops silently when there is no
+   * socket, and believing it would mean the diff never offers that key again - a stroke
+   * drawn during a reconnection lost for the rest of the lesson rather than for a second. */
   stop();
+}
+{
+  const seen = [];
+  let delivered = false;
+  const stop = watchDecks(() => 'room', (channel, data, to, meta) => {
+    seen.push([channel, data, to, meta]);
+    return delivered;
+  });
+  const post = data => dispatchEvent(Object.assign(new Event('message'), {
+    origin: 'https://icecore.test', data: { kind: 'ice:deck-sync', channel: DRAWINGS, data },
+  }));
+
+  post({ 3: '<svg>a</svg>' });
+  await new Promise(r => setTimeout(r, 160));
+  delivered = true;
+  post({ 3: '<svg>a</svg>' });
+  await new Promise(r => setTimeout(r, 160));
+  check('a patch the socket refused is offered again rather than recorded as sent',
+        seen.length === 2 && seen[1][1][3] === '<svg>a</svg>', JSON.stringify(seen.map(x => x[1])));
+  stop();
+}
+
+// ------------------------------------------------- and what arrives out of order
+/* THE FOURTH SIDE OF THE SQUARE. A drawing patch is last-write-wins whole-slide SVG and the
+ * frames race each other, so a stroke's final frame landing before an earlier one leaves the
+ * older drawing on screen - which is what "I drew a square and only three sides appeared"
+ * was. Nothing on the wire can be ordered, so the sender counts and this drops what is
+ * behind. */
+{
+  withDeck();
+  /* WHETHER IT REACHES THE DECK AT ALL is the whole of this rule, so that is what is counted.
+   * What the deck is then handed is svgclean's business - filtered on the way in, covered by
+   * svgclean.mjs, and not reproducible here: this file stubs far short of a DOM and `clean`
+   * needs a real `DOMParser`, so every value arrives empty whatever went in. */
+  const ink = x => `<path d="M${x},180 L520,180" stroke="#1f2328" stroke-width="6"/>`;
+  const patch = (n, x) => applyDeck(DRAWINGS, { 3: ink(x) }, { origin: 'tab-a', seq: n });
+  patch(1, 100);
+  patch(2, 200);
+  check('a patch in order is applied',
+        posted.length === 2 && posted[1].channel === DRAWINGS,
+        JSON.stringify(posted.map(p => p.channel)));
+  patch(1, 100);
+  check('and one that lost its race is dropped rather than undoing the newer one',
+        posted.length === 2, String(posted.length));
+  patch(3, 300);
+  check('while the next one through still lands', posted.length === 3);
+
+  /* TWO TABS ARE TWO COUNTERS. An educator's room tab and their control tab know nothing of
+   * each other and a student being helped hears both; merged into one counter, whichever tab
+   * was behind would stop drawing entirely. */
+  applyDeck(DRAWINGS, { 3: ink(400) }, { origin: 'tab-b', seq: 1 });
+  check('a second tab counts on its own', posted.length === 4);
+
+  /* An older deployment stamps nothing, and an unordered patch is worth far more applied
+   * than discarded. */
+  applyDeck(DRAWINGS, { 3: ink(500) }, {});
+  check('an unstamped patch is applied rather than refused', posted.length === 5);
+  deck = [];
 }
 
 console.log(failures ? `\n${failures} failing` : '\nall green');

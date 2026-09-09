@@ -781,7 +781,7 @@ let roomTimers = [];
  * itself rather than being scheduled once. */
 let answering = null;
 
-export function previewRoom(session, emit, rows = () => [], whereAmI = () => null) {
+export function previewRoom(session, emit, rows = () => [], whereAmI = () => null, drop = () => {}) {
   stopPreviewRoom();
   const at = ms => new Date(Date.now() - ms).toISOString();
   /* ROWS ARE ASKED FOR WHEN THEY ARE USED, not now. Joining a session happens BEFORE its
@@ -869,6 +869,17 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
     // And it goes away, which must put every student back exactly where they were.
     play(24000, { type: 'boarding', on: false, page: 0 });
   }
+
+  /* AND THE CONNECTION GOES, AND COMES BACK. The yellow band is a screen with no other way
+   * in: there is no socket here, so nothing can drop one, and on the stack it only appears
+   * when something has already gone wrong. Played on the student's side because that is
+   * whose reassurance it carries - the educator's half is one line of the same component.
+   *
+   * Early, short, and timed to clear just before the scripted roster at ten seconds - which
+   * is what a real reconnection is followed by, and the reason the band goes away again. It
+   * finishes well before the board and the drive, both of which are also about what a
+   * student is being told is happening to their screen. */
+  if (!leading) roomTimers.push(setTimeout(() => drop(3800), 6000));
 
   play(2500, { type: 'joined', who: conn('preview-3', 'Katherine Johnson') });
   play(4500, { type: 'joined', who: conn('preview-6', 'Dorothy Vaughan') });

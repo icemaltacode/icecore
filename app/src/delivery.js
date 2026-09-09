@@ -20,7 +20,7 @@
 import { reactive } from 'vue';
 import { api, session } from './auth.js';
 import { previewRole, previewRoom, stopPreviewRoom, previewSummaryRows } from './preview.js';
-import { open as openChannel, close as closeChannel, on, send, emitLocal } from './live.js';
+import { open as openChannel, close as closeChannel, on, send, emitLocal, simulateLoss } from './live.js';
 import { applyDeck } from './decksync.js';
 
 /**
@@ -338,6 +338,15 @@ function setControl(c) {
 
 const HANDLERS = {
   roster(m) {
+    /* IT ENDED WHILE WE WERE AWAY. `ended` is a broadcast and a client that was between
+     * sockets when the educator pressed End never heard it - and a ticket is minted for
+     * anybody in the cohort whether or not a lesson is running, so it reconnects into an
+     * empty room and sits under a band that will never go. The roster is asked for on every
+     * open, which makes it the message that always reaches a client coming back from a gap.
+     *
+     * Explicitly false only: an older deployment omits the field, and not being told must
+     * not be read as being over. */
+    if (m.session === false) { emitLocal({ type: 'ended' }); return; }
     room.members = m.members || [];
     room.here = {};
     for (const c of m.here || []) { add(c); record(c.sub, c.mark); }
@@ -407,7 +416,7 @@ const HANDLERS = {
      * its own patch is how a room ends up in a loop. The Lambda already excludes the sender;
      * this is the same rule stated where the roles are actually known. */
     if (delivery.mine) return;
-    applyDeck(m.channel, m.data);
+    applyDeck(m.channel, m.data, { origin: m.origin, seq: m.seq });
   },
   acting(m) {
     pressed.do = m.do || null;
@@ -584,7 +593,11 @@ export const point = p => send('point', p ? { ...p } : { off: true });
  * cannot tell which of them sent this - it can only check that whoever did is entitled to the
  * audience they asked for.
  */
-export const sendDeck = (channel, data, to) => send('deck', { channel, data, to });
+/* `meta` is the sending tab and its counter - see decksync.js. Passed straight through and
+ * straight back out on the other side: the ordering is the relay's business and this file
+ * stays as opaque about it as it is about everything else on this channel. */
+export const sendDeck = (channel, data, to, meta = {}) =>
+  send('deck', { channel, data, to, origin: meta.origin, seq: meta.seq });
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>
@@ -702,7 +715,7 @@ export async function start(cohort, course) {
   remember(r.session, true);
   live.running[cohort] = r.session;
   openChannel(cohort);
-  if (previewRole()) previewRoom(r.session, emitLocal, rowsForPreview, () => here?.());
+  if (previewRole()) previewRoom(r.session, emitLocal, rowsForPreview, () => here?.(), simulateLoss);
   return r.session;
 }
 
@@ -716,7 +729,7 @@ export function join(s) {
    * which is live.js's own dispatcher - so a scripted room reaches every handler a real
    * socket would, chat's included, rather than a second list somebody has to remember to
    * add to. */
-  if (previewRole()) previewRoom(s, emitLocal, rowsForPreview, () => here?.());
+  if (previewRole()) previewRoom(s, emitLocal, rowsForPreview, () => here?.(), simulateLoss);
 }
 
 /* Preview needs somewhere for a scripted tutor to move TO, and only the player knows what

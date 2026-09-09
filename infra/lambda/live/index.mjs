@@ -190,7 +190,7 @@ const connectionsIn = async cohort => {
   return r.Items || [];
 };
 
-/* THE CONNECTION LIST, HELD FOR A MOMENT - and only the pointer uses it.
+/* THE CONNECTION LIST, HELD FOR A MOMENT - for the two CONTINUOUS messages.
  *
  * `emit` queries the roster index on EVERY message, which is right for everything that has
  * ever travelled here: a drive, a verdict, a message in the chat are all discrete, seconds
@@ -201,6 +201,13 @@ const connectionsIn = async cohort => {
  * actually cost something. It is also the message that can most afford to be wrong: a
  * pointer is a moment, a dropped frame is invisible, and a frame sent to a connection that
  * has just closed is a `GoneException` that `emit` already treats as routine.
+ *
+ * A DECK PATCH IS THE SAME KIND OF THING and was missing it. Slidev dumps the whole drawing
+ * state on every pointer MOVE - `useDrawings` hooks drauu's `changed`, which fires per move,
+ * not per stroke - so an educator annotating a slide sends ten frames a second, and each one
+ * was costing a `GetCommand` for the session plus a roster query before a byte reached the
+ * class. That latency IS the "annotations take a while to appear" report: the queries do not
+ * make a frame late on its own, they make every frame late while a hand is moving.
  *
  * Two seconds, in the warm container. Long enough to cover a burst of movement, short enough
  * that somebody joining mid-gesture waits less than a sentence for the dot to reach them.
@@ -314,6 +321,27 @@ const sessionFor = async cohort => {
   const r = await ddb.send(new GetCommand({ TableName: TABLE, Key: sessionKey(cohort) }));
   return r.Item || null;
 };
+
+/* THE SESSION ROW, HELD FOR A MOMENT - `connectionsCached`'s reason, for the same two
+ * messages and no others.
+ *
+ * A pointer and a deck patch both read this only to ask whether the sender is entitled to
+ * the audience they asked for, and that is a fact that changes twice in an hour. Everything
+ * else here reads it to DECIDE something - who holds control, whether a board is up - and
+ * those must not be answered out of a cache.
+ *
+ * The staleness this admits is bounded and benign: for up to two seconds after an educator
+ * releases control, a stroke they draw can still reach the student they were helping. The
+ * alternative is a DynamoDB round trip on every frame of every annotation.
+ */
+const sessCache = new Map();
+async function sessionCached(cohort) {
+  const hit = sessCache.get(cohort);
+  if (hit && Date.now() - hit.at < CONNS_TTL) return hit.row;
+  const row = await sessionFor(cohort);
+  sessCache.set(cohort, { at: Date.now(), row });
+  return row;
+}
 
 /** Every session running right now - one query, for the cohort screen's Live buttons. */
 async function running() {
@@ -1271,7 +1299,7 @@ async function tallied(cohort, mark, seeded = false) {
      * that draws them, which is the only side that knows what it is drawing into.
      */
     case 'point': {
-      const held = await sessionFor(row.cohort);
+      const held = await sessionCached(row.cohort);
       const c = held?.control;
       if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
       await emit(event, row.cohort, {
@@ -1535,7 +1563,30 @@ async function tallied(cohort, mark, seeded = false) {
      * dropped rather than truncated: half an SVG is not a smaller drawing, it is a parse
      * error blamed on the wrong thing. */
     case 'deck': {
-      const held = await sessionFor(row.cohort);
+      const held = await sessionCached(row.cohort);
+      /* WHICH TAB SENT IT AND HOW FAR ALONG IT IS, carried through untouched.
+       *
+       * Every frame is an API Gateway route invocation and those run CONCURRENTLY with no
+       * ordering between them, so ten frames a second arrive at a student in whatever order
+       * the fan-out happens to finish in. A drawing patch is last-write-wins whole-slide
+       * SVG, so a reordered pair leaves the OLDER one on screen - which is exactly the
+       * reported "I draw a square and only three sides appear, then the fourth turns up
+       * when I draw something else". The fourth side was sent; it lost a race.
+       *
+       * SAME PROBLEM `active` ALREADY HAS and a different answer, because the two messages
+       * end in different places. A position is a ROW, so it can be ordered by refusing an
+       * older write - `posAt` below. A drawing is not written down anywhere: it goes to a
+       * dozen browsers and ends there, so there is nothing to condition on and the ordering
+       * has to be carried and applied at the far end.
+       *
+       * Nothing here can impose an order - a Lambda cannot know what a sibling invocation
+       * is doing - so the sender stamps one and the receiver drops what is behind. `origin`
+       * is the sending TAB rather than the person: an educator's room tab and their control
+       * tab are one sub with two independent counters, and merged they would each look
+       * stale to the other. Opaque and random, minted per tab, so it says nothing about
+       * anybody. */
+      const origin = String(msg.origin || '').slice(0, 40);
+      const seq = Number.isFinite(Number(msg.seq)) ? Number(msg.seq) : null;
       /* SLIDEV NAMES A CHANNEL AFTER THE DECK - the whole slide title with ` - drawings` or
        * ` - shared` on the end - so 40 characters truncated every real one. The far side
        * compares the name it is given against its own and ignores a mismatch, which is what
@@ -1555,14 +1606,14 @@ async function tallied(cohort, mark, seeded = false) {
         const c = held?.control;
         if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
         await emit(event, row.cohort, {
-          type: 'decked', channel, data: msg.data, at: now,
-        }, { sub: c.sub });
+          type: 'decked', channel, data: msg.data, origin, seq, at: now,
+        }, { sub: c.sub, from: await connectionsCached(row.cohort) });
         return { statusCode: 200, body: 'ok' };
       }
       if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not delivering' };
       await emit(event, row.cohort, {
-        type: 'decked', channel, data: msg.data, at: now,
-      }, { except: id });
+        type: 'decked', channel, data: msg.data, origin, seq, at: now,
+      }, { except: id, from: await connectionsCached(row.cohort) });
       return { statusCode: 200, body: 'ok' };
     }
 
@@ -1573,6 +1624,19 @@ async function tallied(cohort, mark, seeded = false) {
       const held = await sessionFor(row.cohort);
       await to(event, id, {
         type: 'roster',
+        /* WHETHER THERE IS STILL A LESSON AT ALL, and it is the one field here that is not
+         * about the room.
+         *
+         * `ended` is a broadcast, so a client that was disconnected when the educator
+         * pressed End never hears it - and a ticket is minted for anybody in the cohort
+         * whether or not a session is running, so it reconnects perfectly happily into a
+         * room that is not there and sits under a band that will never go. The roster is
+         * asked for on every open, which makes it the one message that is always sent to a
+         * client that has just come back from a gap, so it is where the answer belongs.
+         *
+         * Explicitly false rather than absent: an older deployment omits it, and "I was not
+         * told" must not be read as "it is over". */
+        session: !!held,
         /* Control rides the roster for the same reason the rest of it does: a client that
          * has just connected, or just come back from a tunnel, would otherwise not know a
          * classmate's screen was being shown until the next time it changed. */

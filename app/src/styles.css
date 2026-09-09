@@ -55,6 +55,16 @@
   --ice-bad-line: #dc2626;
   --ice-bad-fill: rgba(220, 38, 38, .08);
 
+  /* SOMETHING IS WRONG AND IT IS NOT THEIR FAULT AND NOTHING IS LOST. The state between
+     `good` and `bad`, and the reason it is its own triple rather than a reuse of `drive`:
+     that orange means somebody is in your session, which is a fact about a PERSON, and a
+     connection dropping is a fact about the wires. In the same colour a student would learn
+     one meaning for two events. Yellow rather than orange for the same reason again - the
+     two have to be told apart at a glance across a room. */
+  --ice-warn: #92400e;
+  --ice-warn-line: #d97706;
+  --ice-warn-fill: rgba(217, 119, 6, .14);
+
   /* SOMEBODY ELSE IS IN YOUR SESSION. Deliberately outside the product's own palette and
      deliberately not `bad`: being helped is not a failure, and a red bar across somebody's
      editor reads as an alarm. Not `primary` either - that is the colour of every button on
@@ -101,6 +111,11 @@
   --ice-bad: #fca5a5;
   --ice-bad-line: #f87171;
   --ice-bad-fill: rgba(248, 113, 113, .08);
+
+  /* Lifted, like every other pair here. */
+  --ice-warn: #fcd34d;
+  --ice-warn-line: #f59e0b;
+  --ice-warn-fill: rgba(245, 158, 11, .16);
 
   /* Lifted, like every other pair here: #c2410c on a near-black editor is a bruise. */
   --ice-drive: #fdba74;

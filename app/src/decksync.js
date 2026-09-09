@@ -75,6 +75,28 @@ const CAP = 24 * 1024;
 /* Coalesced. Slidev watches its state deeply, so a stroke is many changes; ten a second is
  * far more than an annotation needs and is a tenth of what the pointer already costs. */
 const EVERY = 100;
+/* AND A LAST ONE ONCE THE HAND STOPS.
+ *
+ * Everything above is a diff, so a frame that never arrives is not caught up by the next
+ * one - the sender has already recorded that key as sent and will not offer it again until
+ * it changes. Two things drop frames: a socket that is between connections (`send` returns
+ * false and says nothing), and the ordering below, which discards a patch that lost its
+ * race. Both leave the room holding a stroke that is one move short of what was drawn.
+ *
+ * So after the drawing settles, whatever this tab currently believes the room has is sent
+ * once more in full. It is the same bytes the room should already be holding, applied
+ * last-write-wins over the top, and it costs one message per stroke rather than per frame.
+ * Long enough not to fire mid-stroke; short enough that a missing tail is a blink. */
+const SETTLE = 600;
+
+/* WHICH TAB, AND HOW FAR ALONG. See the `deck` case in the live Lambda: API Gateway runs
+ * every frame as its own concurrent invocation and imposes no order on them, so the wire
+ * cannot be trusted to deliver a stroke in the order it was drawn. The counter is per tab
+ * because an educator's room tab and their control tab are two senders that know nothing of
+ * each other, and `origin` is random rather than derived from the sub for the same reason -
+ * plus it then says nothing about anybody. */
+const ORIGIN = Math.random().toString(36).slice(2, 12);
+let seq = 0;
 
 /* KEYED BY WHAT A CHANNEL IS, NOT BY WHAT IT IS CALLED.
  *
@@ -128,6 +150,7 @@ function intoDecks(channel, data) {
 
 let pending = null;      // channel -> the latest state seen
 let timer = null;
+let settle = null;       // the trailing resend, armed on every flush
 let audience = () => null;   // 'room' | 'driven' | null when this tab relays nothing
 let out = () => {};
 /* What the room has already been told, per channel, so that only differences travel.
@@ -165,6 +188,19 @@ function changed(channel, data) {
   return any ? now : null;
 }
 
+/**
+ * Put one patch on the wire, stamped so the far side can tell what is behind.
+ *
+ * ITS ANSWER IS BELIEVED. `send` in live.js drops silently when there is no socket, which is
+ * the right behaviour for a channel and the wrong thing to ignore here: recording a key as
+ * sent when it was not means the diff will never offer it again, so a stroke drawn during a
+ * reconnection is lost for the rest of the lesson rather than for a second. The resend below
+ * is the other half of that, for the frames nothing local can know were lost.
+ */
+function put(channel, patch) {
+  return out(channel, patch, audience(), { origin: ORIGIN, seq: ++seq }) !== false;
+}
+
 function flush() {
   timer = null;
   if (!pending) return;
@@ -179,8 +215,29 @@ function flush() {
       if (body === undefined) { patch[k] = null; delete next[k]; }
       else { patch[k] = JSON.parse(body); next[k] = body; }
     }
-    sent[channel] = next;
-    out(channel, patch, audience());
+    // Only once it has actually gone - see `put`. Otherwise the next diff skips it forever.
+    if (put(channel, patch)) sent[channel] = next;
+  }
+  clearTimeout(settle);
+  settle = setTimeout(resend, SETTLE);
+}
+
+/**
+ * Once the hand stops: say again, in full, what the room should be holding.
+ *
+ * Not a diff and not conditional on anything having changed - the whole point is the case
+ * where this tab believes a key arrived and it did not. The far side applies it
+ * last-write-wins over identical bytes, so the ordinary outcome is that nothing happens.
+ *
+ * Bounded by the number of ANNOTATED SLIDES in the deck rather than by the length of the
+ * lesson, and only after drawing has settled, so it is one message per stroke.
+ */
+function resend() {
+  settle = null;
+  for (const [channel, keys] of Object.entries(sent)) {
+    const patch = {};
+    for (const [k, body] of Object.entries(keys)) patch[k] = JSON.parse(body);
+    if (Object.keys(patch).length) put(channel, patch);
   }
 }
 
@@ -219,9 +276,12 @@ export function watchDecks(whoFor, send) {
   return () => {
     removeEventListener('message', fromDeck);
     clearTimeout(timer);
+    clearTimeout(settle);
     timer = null;
+    settle = null;
     pending = null;
     sent = {};
+    seen = {};
     audience = () => null;
     out = () => {};
   };
@@ -251,6 +311,34 @@ function filtered(channel, data) {
   return out;
 }
 
+/* The highest sequence heard from each sending tab, per channel.
+ *
+ * `origin` is in the key because two tabs count independently and neither knows about the
+ * other: an educator's room tab and their control tab are two senders, and a student being
+ * helped hears both. Merged into one counter they would each read as stale to the other and
+ * one of the two would stop drawing entirely. */
+let seen = {};
+
+/**
+ * Whether this patch is newer than the last one heard from the same tab on the same channel.
+ *
+ * A DECK PATCH IS LAST-WRITE-WINS WHOLE-SLIDE SVG, and the frames arrive out of order: each
+ * one is its own concurrent Lambda invocation and API Gateway orders nothing. So a stroke's
+ * final frame can land before an earlier one and be overwritten by it - which is the whole
+ * of "I drew a square and only three sides appeared". Nothing on the wire can be ordered, so
+ * the sender counts and this drops what is behind.
+ *
+ * Unstamped patches pass. An older deployment sends none, and a deck patch arriving without
+ * one is worth applying out of order far more than it is worth discarding.
+ */
+function fresh(channel, origin, n) {
+  if (!origin || typeof n !== 'number') return true;
+  const key = `${origin}\u0000${channel}`;
+  if (seen[key] !== undefined && n <= seen[key]) return false;
+  seen[key] = n;
+  return true;
+}
+
 /**
  * A patch off the channel, on its way into the deck.
  *
@@ -263,7 +351,8 @@ function filtered(channel, data) {
  * comes back should find what was drawn while they were gone, not a blank slide - the state
  * is keyed by slide number and Slidev renders whichever one is showing.
  */
-export function applyDeck(channel, data) {
+export function applyDeck(channel, data, { origin, seq: n } = {}) {
+  if (!fresh(channel, origin, n)) return;
   const keep = carried(channel, data);
   if (keep) intoDecks(channel, filtered(channel, keep));
 }
