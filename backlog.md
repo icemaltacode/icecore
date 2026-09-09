@@ -70,8 +70,23 @@ in a month.
   another row has Run pressed on their own half-written attempt by somebody who cannot see
   it.
 - In the admin screen, when viewing users, can we see dots to indicate if they're online?
-- When code is highlighted in the editor, clicking Run code should only run the highlighted code, not the whole file.
-- Is Pyodide (or the pgsql wasm thing) loading and unloading for each exercise? Can't we just leave it loaded once it's loaded?
+- [x] **When code is highlighted in the editor, clicking Run code should only run the
+  highlighted code, not the whole file.** — done and live, 2026-09-09. Whole lines and
+  dedented, because half a statement is not a smaller statement and Python refuses a block
+  lifted out of its loop. Check is deliberately untouched: it grades a SUBMISSION, so a
+  verdict against three highlighted lines would be wrong rather than smaller. The button
+  says "Run selection" before it does it — silently running something other than the file
+  is a surprise, sharpest in Python where a run is the setup and then the code with nothing
+  carried over, so a selection leaning on the student's own earlier lines raises NameError.
+  `selection.js` is pure and shared by both exercise types, so Run cannot come to mean two
+  things in two halves of one course.
+
+- [x] **Is Pyodide (or the pgsql wasm thing) loading and unloading for each exercise?** — no,
+  and nothing needed changing. `py.js` keeps one interpreter and rebuilds it only when the
+  declared package set changes, which is a unit boundary; PGlite caches per dataset-and-setup.
+  What is slow is the FIRST load of a session — Pyodide, then pandas and whatever else the
+  unit wants, then the grader's own wheels — and that is paid once. Confirmed by Keith on
+  2026-09-09: only the first one is slow. Closed as moot rather than fixed.
 
 ## Problems in the Python ONEY (and NumPy Module of the Data Analysis Course) — all fixed and live, 2026-09-09
 
