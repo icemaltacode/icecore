@@ -62,7 +62,37 @@ in a month.
 - When code is highlighted in the editor, clicking Run code should only run the highlighted code, not the whole file.
 - Is Pyodide (or pgsql) loading and unloading for each exercise? Can't we just leave it loaded once it's loaded?
 
-## Problems in the Python ONEY (and NumPy Module of the Data Analysis Course)
-- 1.1.2: Something is wrong with the data. For example, the "Subsetting 2D NumPy Arrays" exercise says to make a new variable np_weight_lb, containing the second column of np_baseball. However, looking at np_baseball, there are two columns, which seem to be weight in kg, and height in centimeters. So 1) The columns are flipped, 2) The units don't match. 
-- In the following exercise, 2D Arithmetic, running the code yields: FileNotFoundError: [Errno 44] No such file or directory: 'update.csv'
-- 1.2.1 - "Your First Workbook" - a download link for the file is never actually generated. 
+## Problems in the Python ONEY (and NumPy Module of the Data Analysis Course) — all fixed and live, 2026-09-09
+
+Two of the three were the PLATFORM, not the content, which is worth knowing before the next
+one of these is reported: both looked exactly like bad course material from the outside.
+
+- [x] **1.1.2 — the columns are flipped and the units don't match.** They are not flipped.
+  Height runs 67 to 83 with a mean of 73.7 and Weight runs 150 to 290 with a mean of 201 —
+  inches and pounds, column 0 then column 1, exactly as the instructions say, and
+  `np_weight_lb` names its own unit. But `[74, 180]` is a perfectly good 74kg and 180cm to
+  anyone who has never used imperial units, and every reader here is one. Imperial is
+  load-bearing — 2D Arithmetic multiplies by `[0.0254, 0.453592, 1]` to get metric — so the
+  fix is to say so: the columns are named where they are introduced, and **every instruction
+  that produces a value now names its unit**, in the bullet and in the comments of both the
+  starter and the solution. 24 exercises across ONEY, the Data Analyst course and FIAU, whose
+  module 4 is the same material.
+
+- [x] **2D Arithmetic — `FileNotFoundError: 'update.csv'`.** The file was in the bucket the
+  whole time. Data files are mounted per module at `/ice-data/<module>` and the mount cache
+  was keyed on that DIRECTORY — but the file set belongs to the exercise. "Subsetting"
+  declares baseball.csv; "2D Arithmetic", the very next one, declares baseball.csv AND
+  update.csv. In that order the directory was already mounted, the first exercise's promise
+  came back, and update.csv was never fetched. Open the second one first and it worked
+  perfectly, which is why it survived. Keyed per file now, and a failed fetch is evicted
+  rather than remembered.
+
+- [x] **1.2.1 — the download link is never generated.** The workbook was written and then
+  looked for in the wrong place. A run happens in `cwd or os.getcwd()`, and an exercise with
+  no `data:` mounts nothing and is handed the empty string — so the run took place in the
+  interpreter's home while the player joined each filename onto `''` and read from the
+  filesystem ROOT. The read threw, was swallowed as "gone, or not a plain file after all",
+  and a student who pressed Run saw their output and no file. The run reports the directory
+  it actually used now. Every existing artefact check missed it because they all pass a
+  mounted data directory, where the two paths happen to be the same string; there is one
+  without data files now. 
