@@ -57,10 +57,21 @@ in a month.
   on that network.
 
 ## Less Severe, but still bad
-- When I'm sharing my editor and I click Run Code or Check Answer, the student's system should also Run Code or Check Answer. 
+- [x] **When I'm sharing my editor and I click Run Code or Check Answer, the student's
+  system should also Run Code or Check Answer.** — done and live, 2026-09-09. Control had
+  this hole first and it was fixed a while back; sharing an editor had exactly the same one,
+  one audience further out. So it is the same message rather than a new one: `act` now takes
+  an audience the way `deck` does, because the two tabs an educator has open are one PERSON
+  and the server cannot tell a demonstration from a rescue by looking at who sent it. It
+  checks the claim instead — control of that student for `driven`, the sync switch and the
+  lesson for `room`. The gesture travels and the result does not, for the reason it did the
+  first time: each browser holds its own database and writes its own progress rows. Gated on
+  the buffer actually being the educator's, not on the switch, or a student sitting on
+  another row has Run pressed on their own half-written attempt by somebody who cannot see
+  it.
 - In the admin screen, when viewing users, can we see dots to indicate if they're online?
 - When code is highlighted in the editor, clicking Run code should only run the highlighted code, not the whole file.
-- Is Pyodide (or pgsql) loading and unloading for each exercise? Can't we just leave it loaded once it's loaded?
+- Is Pyodide (or the pgsql wasm thing) loading and unloading for each exercise? Can't we just leave it loaded once it's loaded?
 
 ## Problems in the Python ONEY (and NumPy Module of the Data Analysis Course) — all fixed and live, 2026-09-09
 
