@@ -259,10 +259,20 @@ export async function startSession(idJwt) {
  * Call an /api/* route with the current token. Refreshes it once through Cognito on a
  * 401, which is what happens when a tab has been left open past the token's lifetime.
  */
-export async function api(path, { method = 'GET', body, retry = true } = {}) {
+/* `keepalive` IS THE ONLY WAY A CLOSING TAB CAN SAY ANYTHING AT ALL. A normal fetch is
+ * cancelled when the document goes away, so a request started from `pagehide` never leaves -
+ * which is exactly the moment presence.js has something to report. `navigator.sendBeacon` is
+ * the usual answer and cannot be used here: it sets no headers, and every route behind this
+ * function is guarded by a JWT authorizer that wants an Authorization one.
+ *
+ * It is not free and must not spread: a keepalive request survives the page, so a failure
+ * has nowhere to be reported and the browser caps the total body size across all of them at
+ * 64KB. It is for the goodbye and nothing else. */
+export async function api(path, { method = 'GET', body, retry = true, keepalive = false } = {}) {
   if (PREVIEW) return previewApi(path, { method, body });
   const r = await fetch(`${BASE}api/${path}`, {
     method,
+    keepalive,
     headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });

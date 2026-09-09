@@ -652,6 +652,15 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
         if (walk[k]) hints[walk[k]] = n;
       return { course, students, hints };
     }
+    /* PRESENCE ON ITS OWN, which the People list polls every thirty seconds. Matched on the
+     * PARSED query rather than on the path, because `route` above has already had the query
+     * split off it - a branch keyed on the whole string would never be reached, the poll
+     * would fall through to the listing below, and every dot would go dark thirty seconds
+     * into a preview run for no visible reason.
+     *
+     * Answered from the same constant the listing uses, so the two cannot disagree. */
+    if (method === 'GET' && q.get('presence'))
+      return { online: [...PREVIEW_ONLINE], seen: {} };
     if (method === 'GET')
       return {
         /* `courses` and `online` derived on the way out, exactly as the real listing

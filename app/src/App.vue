@@ -1321,6 +1321,12 @@ async function onAuthenticated(token) {
 watch(() => session.sub, sub => (sub ? startPresence() : stopPresence()), { immediate: true });
 onUnmounted(stopPresence);
 
+/* SIGNING OUT SAYS SO FIRST, and the order is the whole of it: `signOut` clears the token,
+ * and the goodbye is an authenticated call. Left to the watcher above - which fires on the
+ * sub being cleared, by which time there is nothing to sign the request with - it would fail
+ * silently and the dot would fade out over the next two and a half minutes instead. */
+const signOutHere = () => { stopPresence(); signOut(); };
+
 /* A solve carries the code that did it, so an exercise a student comes back to shows their
  * own answer rather than the starter.
  *
@@ -1413,7 +1419,7 @@ watch(currentId, id => {
       :avatar="session.avatar"
       :xp-today="xpToday"
       :watching="!!watched"
-      @home="backToCourses" @admin="goAdmin()" @account="goAccount()" @signout="signOut" />
+      @home="backToCourses" @admin="goAdmin()" @account="goAccount()" @signout="signOutHere" />
 
     <!-- Above everything, always, for as long as the session is open. The screens below it
          are the ordinary player, so this band is the only thing distinguishing a student's

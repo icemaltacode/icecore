@@ -105,6 +105,32 @@ if (filterSelect) {
         `${document.querySelectorAll('tbody tr').length} rows left`);
 }
 
+// -------------------------------------------------- and the dots keep moving
+/* A DOT THAT ONLY CHANGES ON A REFRESH IS A TIMESTAMP WITH A COLOUR. The People list polls
+ * presence on its own - one query for the whole room rather than the listing again - and
+ * patches the rows in place.
+ *
+ * ASSERTED THROUGH THE STAND-IN'S OWN DOOR rather than by waiting thirty seconds for the
+ * timer. What can go wrong here is the ROUTE: `previewApi` splits the query off the path
+ * before matching, so a branch keyed on 'admin/users?presence=1' is never reached, the poll
+ * falls through to the full listing, `online` comes back undefined and every dot goes dark
+ * half a minute into a run - silently, for no reason anything on screen explains. That is
+ * the failure this checks, and it is exactly the shape the poll would take in production
+ * against a route the function did not answer. */
+{
+  const beat = await player.previewApi('admin/users?presence=1');
+  check('presence can be asked for on its own', Array.isArray(beat?.online),
+        JSON.stringify(beat)?.slice(0, 200));
+  check('and it answers about the same people the listing did',
+        beat.online.includes('preview-3') && beat.online.length === 1,
+        JSON.stringify(beat.online));
+  /* It must NOT be the listing wearing a different name: that is a Cognito page walk plus
+   * two queries per user, and running it every thirty seconds is the thing this route
+   * exists to avoid. */
+  check('and it is not the whole listing again', !beat.users,
+        Object.keys(beat).join(','));
+}
+
 app.unmount();
 dom.restore();
 console.log(failures ? `\n${failures} failing` : '\nall green');

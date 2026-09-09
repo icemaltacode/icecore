@@ -629,16 +629,35 @@ async function reset(sub, course) {
  * presence indicator anywhere means, and it is why the window is minutes rather than hours.
  */
 const PRESENCE_DAYS = 90;
-async function here(sub) {
+/* HOW LONG ONE BEAT IS GOOD FOR, and it lives HERE rather than on the reader. The client
+ * beats every 60 seconds, so this is a missed beat and a half of slack - a throttled
+ * background tab or one dropped request must not blink somebody out of the room and back.
+ *
+ * THE WRITER DECIDES, WHICH IS WHAT MAKES GOODBYE POSSIBLE. Were the window a constant on
+ * the reading side, "here" would be a fact about a timestamp and a tab could only ever stop
+ * asserting it - so closing a window would mean waiting the window out, every time. An
+ * expiry written down instead is something a client can bring FORWARD, and that is the whole
+ * of the difference between a dot that goes out when you close the tab and one that does
+ * not. */
+const PRESENT_SECONDS = 150;
+
+async function here(sub, { gone } = {}) {
+  const now = Date.now();
   await ddb.send(new PutCommand({
     TableName: TABLE,
     Item: {
       pk: 'PRESENCE', sk: `SEEN#${sub}`,
-      at: new Date().toISOString(),
+      /* WHEN THEY WERE LAST HERE, which a goodbye does not move backwards: somebody closing
+       * a tab was here until this moment, and the Last seen column should say so. */
+      at: new Date(now).toISOString(),
+      /* AND UNTIL WHEN THAT COUNTS AS NOW. A goodbye is the same write with the expiry
+       * already past, which is why leaving needs no second route and no delete - and why it
+       * cannot be used to erase anything. */
+      until: new Date(gone ? now - 1000 : now + PRESENT_SECONDS * 1000).toISOString(),
       /* LONG, BECAUSE THIS ROW IS TWO THINGS. Within minutes of `at` it is presence; long
        * after, it is still the best answer to "when was this person last here", which is a
        * column on the same screen. A TTL sized to the dot would throw away the other one. */
-      ttl: Math.floor(Date.now() / 1000) + PRESENCE_DAYS * 86400,
+      ttl: Math.floor(now / 1000) + PRESENCE_DAYS * 86400,
     },
   }));
   return json(200, { ok: true });
@@ -662,7 +681,8 @@ export async function handler(event) {
     if (method === 'GET' && sub2 === 'export') return await exportAll(sub, claims);
     /* First, because it is by far the most frequent call this function takes - every open
      * tab, every couple of minutes - and it does one PutItem and nothing else. */
-    if (method === 'POST' && sub2 === 'here') return await here(sub);
+    if (method === 'POST' && sub2 === 'here')
+      return await here(sub, JSON.parse(event.body || '{}'));
     if (method === 'POST' && sub2 === 'avatar')
       return await setAvatar(sub, JSON.parse(event.body || '{}'));
     if (method === 'DELETE' && sub2 === 'avatar') return await clearAvatar(sub);

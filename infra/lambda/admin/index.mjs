@@ -182,25 +182,29 @@ async function lastSeen(sub) {
  * on purpose, because long after it has stopped meaning "here" it is still the best answer
  * to "when were they last here", which is the column beside the dot.
  */
-const PRESENT_MINUTES = 5;
 async function presence() {
   const rows = await queryAll({
     TableName: TABLE,
     KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
     ExpressionAttributeValues: { ':pk': 'PRESENCE', ':sk': 'SEEN#' },
     // `at` is a DynamoDB reserved word, and so is `sub` - which is why neither is named bare.
-    ProjectionExpression: 'sk, #a',
-    ExpressionAttributeNames: { '#a': 'at' },
+    ProjectionExpression: 'sk, #a, #u',
+    ExpressionAttributeNames: { '#a': 'at', '#u': 'until' },
   });
-  const cutoff = new Date(Date.now() - PRESENT_MINUTES * 60000).toISOString();
+  /* THE EXPIRY IS ON THE ROW, NOT A WINDOW APPLIED HERE - see `here()` in the account
+   * function. A constant on this side would make "online" a property of how old a stamp is,
+   * which a tab can only ever stop refreshing; written down, it is something a closing tab
+   * can bring forward, and the dot goes out when the window closes rather than three minutes
+   * later. This side just asks whether the moment has passed. */
+  const now = new Date().toISOString();
   const seen = new Map();
-  for (const r of rows) if (typeof r.at === 'string') seen.set(r.sk.slice('SEEN#'.length), r.at);
-  return {
-    /* TWO MINUTES OF PING AND THREE OF SLACK. One missed beat - a hiccup, a throttled
-     * background tab - must not blink somebody out of the room and back. */
-    online: new Set([...seen].filter(([, at]) => at > cutoff).map(([s]) => s)),
-    seen,
-  };
+  const online = new Set();
+  for (const r of rows) {
+    const sub = r.sk.slice('SEEN#'.length);
+    if (typeof r.at === 'string') seen.set(sub, r.at);
+    if (typeof r.until === 'string' && r.until > now) online.add(sub);
+  }
+  return { online, seen };
 }
 
 /**
@@ -555,6 +559,15 @@ export async function handler(event) {
     /* Three GETs on one path, told apart by what they carry rather than by a mode flag -
      * the same idiom the progress function uses, where one call names a course and the
      * other an instant. Everyone, one person, or one person on one course. */
+    /* PRESENCE ON ITS OWN, and it is here so that the People list can keep the dots moving
+     * without re-asking the expensive question. The full listing is one Cognito page walk
+     * plus two DynamoDB queries PER USER - fine once when a screen opens, absurd every
+     * thirty seconds - and this is one query for the whole room. Checked first because it is
+     * the most frequent GET this function takes. */
+    if (method === 'GET' && q.presence) {
+      const { online, seen } = await presence();
+      return json(200, { online: [...online], seen: Object.fromEntries(seen) });
+    }
     if (method === 'GET' && q.sub) return await getPerson(q.sub, q.course);
     if (method === 'GET' && q.course) return await getCourse(q.course);
     if (method === 'GET') return await getUsers();

@@ -23,7 +23,7 @@
  * thousands, and the API says `truncated` when it has stopped rather than letting a partial
  * list read as the whole pool.
  */
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { api } from '../auth.js';
 import UserDialog from './UserDialog.vue';
 import UserImport from './UserImport.vue';
@@ -81,6 +81,40 @@ async function refresh() {
 }
 onMounted(refresh);
 
+/* THE DOTS KEEP MOVING WITHOUT THE SCREEN BEING RELOADED, which is the difference between
+ * presence and a timestamp. A dot that only changes when somebody presses refresh is a
+ * timestamp with a colour, and the whole point of it is that it is true NOW.
+ *
+ * IT IS NOT THE LISTING BEING FETCHED AGAIN. That is a Cognito page walk plus two DynamoDB
+ * queries per user - right once when the screen opens, absurd every half minute - so the
+ * function answers presence on its own, one query for the whole room, and only the dots and
+ * the Last seen cells are patched from it. Everything else on the row is a fact that does
+ * not change while you watch it.
+ *
+ * IN PLACE, ROW BY ROW, rather than by replacing `users`. A new array re-keys the table and
+ * throws away the sort and any open row for a poll that usually changes nothing.
+ *
+ * ONLY WHILE THE PEOPLE LIST IS ON SCREEN. A poll running behind the cohorts page, or behind
+ * a modal, is a request every thirty seconds for something nobody is looking at. */
+const PULSE = 30 * 1000;
+let pulse = null;
+
+async function repoll() {
+  try {
+    const r = await api('admin/users?presence=1');
+    const online = new Set(r.online || []);
+    for (const u of users.value) {
+      u.online = online.has(u.sub);
+      /* The newer of the two, exactly as the listing composes it - the presence stamp is
+       * the fresher half and `LAST#` is the half that reaches back before presence existed,
+       * so a poll must not overwrite a date it has nothing to say about. */
+      const stamped = r.seen?.[u.sub];
+      if (stamped && (!u.seen || stamped > u.seen)) u.seen = stamped;
+    }
+  } catch { /* a dot that is a poll behind is not worth an error on an admin's screen */ }
+}
+
+
 /* `#/admin/people/<sub>` is one person, and the page is what it draws. The listing arrives
  * after the route does on a deep link, so `viewing` is the sub and the row is looked up
  * whenever it turns up - the page draws what it has and fills in the rest.
@@ -90,6 +124,16 @@ onMounted(refresh);
  * from a dialog would otherwise mean something different from Back anywhere else. */
 const viewing = computed(() => (section.value === 'people' ? route.value?.id || '' : ''));
 const person = computed(() => users.value.find(u => u.sub === viewing.value));
+
+/* AND WHEN THE POLL ABOVE RUNS. Below `viewing` because it reads it: in `<script setup>` an
+ * immediate watcher evaluates where it is written, and one placed beside `repoll` would
+ * reach a const that is still in its temporal dead zone. */
+const pulsing = computed(() => section.value === 'people' && !viewing.value);
+watch(pulsing, on => {
+  clearInterval(pulse);
+  pulse = on ? setInterval(repoll, PULSE) : null;
+}, { immediate: true });
+onUnmounted(() => clearInterval(pulse));
 
 /* A course id in the URL that names no published course falls back to the list rather than
  * drawing an empty page: the catalogue is assembled from the bucket, so a course really can
