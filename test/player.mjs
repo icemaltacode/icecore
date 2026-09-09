@@ -358,6 +358,37 @@ await settle(150);
         !got.some(m => m?.kind === 'ice:deck-sync'), JSON.stringify(got).slice(0, 160));
 }
 
+// ------------------------------------------------------------- where Python comes from
+/* NOT A CDN, AND ABSOLUTE. Two separate properties, and the second one shipped broken.
+ *
+ * Pyodide resolves every wheel with `new URL(file_name, packageBaseUrl)`, and a relative base
+ * makes that throw `Invalid URL` - so the runtime boots perfectly and then no package loads
+ * at all. What that looks like from the outside is Python starting and immediately saying
+ * "No module named micropip", which names nothing anybody could search for.
+ *
+ * It only breaks in a BROWSER. `initializeConfiguration` puts `indexURL` through its own
+ * resolver and `packageBaseUrl` through nothing, so the fault is invisible in Node, where the
+ * base is an absolute filesystem path - which is exactly how it got past a smoke test that
+ * booted the real interpreter against the real files and loaded micropip successfully.
+ *
+ * So this asserts the one thing that test could not: the shape of the URL the browser gets.
+ */
+{
+  const opts = player.pyodideOptions();
+  check('Python is fetched from our own origin, never a CDN',
+        !/cdn\.|jsdelivr|unpkg/.test(opts.indexURL + opts.packageBaseUrl), JSON.stringify(opts));
+  check('and the index URL is ABSOLUTE',
+        /^https?:\/\//.test(opts.indexURL), opts.indexURL);
+  /* The exact call Pyodide makes for every wheel in the lock file. */
+  let resolved = null;
+  try { resolved = new URL('micropip-0.11.1-py3-none-any.whl', opts.packageBaseUrl).href; }
+  catch (e) { resolved = `THREW ${e.message}`; }
+  check('so a wheel resolves against it rather than throwing Invalid URL',
+        resolved.startsWith('http') && resolved.endsWith('.whl'), resolved);
+  check('and it names the version the app was built against',
+        opts.indexURL.includes('/pyodide/'), opts.indexURL);
+}
+
 // ------------------------------------------------------- the paperclip, afterwards
 /* WHAT A STUDENT FINDS LATER. The board itself is live and gone; this is the half that
  * survives it, and the half a student who missed the lesson is actually served by.

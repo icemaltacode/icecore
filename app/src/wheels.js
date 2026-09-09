@@ -31,26 +31,34 @@ const WHEEL_URLS = Object.fromEntries(
  * built with a base and a deck is not the only thing that can be served from a subpath; the
  * trailing slash is required - Pyodide concatenates filenames onto this string.
  *
+ * ABSOLUTE, and that is not tidiness. Pyodide resolves each wheel with `new URL(file_name,
+ * packageBaseUrl)`, and a relative base makes that throw `Invalid URL` - so every package
+ * fails to fetch while the runtime itself boots perfectly, because `indexURL` IS put through
+ * the loader's own resolver and `packageBaseUrl` is not (`initializeConfiguration` does
+ * `k(w(t))` for one and a bare `k()` for the other). What that looks like is Python starting
+ * and then "No module named micropip", which names nothing you could search for.
+ *
  * The version is the installed package's, so this cannot name a distribution the bundled
  * loader was not compiled against - which would fail as a missing wasm export, a long way
  * from its cause.
  */
-export const pyodideIndexUrl = () =>
-  `${import.meta.env.BASE_URL}${pyodideDir(version)}/`;
+export const pyodideIndexUrl = () => {
+  const at = `${import.meta.env.BASE_URL}${pyodideDir(version)}/`;
+  return typeof location === 'undefined' ? at : new URL(at, location.href).href;
+};
 
 /**
  * What `loadPyodide` is given, in full - and `packageBaseUrl` is NOT redundant.
  *
- * Packages already resolve against `indexURL`, because they are resolved relative to
- * `lockFileURL` and that defaults to `${indexURL}pyodide-lock.json`. What is left over is
- * `cdnUrl`, which the loader computes as `packageBaseUrl ?? cdn.jsdelivr.net/...` - so with
- * `packageBaseUrl` unset, a jsDelivr URL survives in the runtime's own config as the
+ * Packages already resolve against `indexURL` - they are relative to `lockFileURL`, which
+ * defaults from it - but `cdnUrl` is computed as `packageBaseUrl ?? cdn.jsdelivr.net/...`, so
+ * with `packageBaseUrl` unset a jsDelivr URL survives in the runtime's own config as the
  * fallback for anything the lock file does not name. That is precisely the dependency this
- * change exists to remove, and it would have stayed in as the one path nobody tested.
+ * removes, and it would have stayed in as the one path nobody tested.
  *
- * Setting it means a wheel that is not staged 404s against our own origin rather than
- * quietly succeeding from a CDN. That is the failure we want: a hidden CDN dependency is
- * invisible everywhere except on the network that blocks it.
+ * Setting it means a wheel that is not staged 404s against our own origin rather than quietly
+ * succeeding from a CDN. That is the failure we want: a hidden CDN dependency is invisible
+ * everywhere except on the network that blocks it.
  */
 export const pyodideOptions = () => {
   const indexURL = pyodideIndexUrl();

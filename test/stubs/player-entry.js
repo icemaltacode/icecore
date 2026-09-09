@@ -20,3 +20,9 @@ export * as delivery from '../../app/src/delivery.js';
  * re-read happened could only assert that nothing changed. */
 export { previewRole, stopPreviewRoom, previewApi } from '../../app/src/preview.js';
 export { session, restore, startSession } from '../../app/src/auth.js';
+/* WHERE PYTHON IS FETCHED FROM, which only the BUILT app can answer: it is composed from
+ * `import.meta.env.BASE_URL` and the installed Pyodide version, and neither exists in a plain
+ * Node import. Everything else about the runtime is aliased away here - see stubs/absent.js -
+ * but the URL is a string, and a wrong one is the difference between every Python exercise
+ * working and none of them. */
+export { pyodideOptions } from '../../app/src/wheels.js';
