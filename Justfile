@@ -321,9 +321,23 @@ pyodide:
     echo "$(ls "$dir"/*.whl 2>/dev/null | wc -l) packages in $dir"
     # No --delete. Nothing else writes this prefix, and a partial local copy must never be
     # able to remove what is already serving a lesson.
+    #
+    # TWO PASSES, BECAUSE THE LOCK FILE IS AN INDEX AND THE REST IS NOT - the same split
+    # `deploy` makes between `index.html` and `assets/*`, and missed here at a cost. A wheel
+    # carries its version in its filename, so that URL can never mean anything else and a year
+    # is right. `pyodide-lock.json` is the one file at a FIXED url whose whole job is to say
+    # what the others are - and it was published `immutable` and then republished with
+    # different contents, which is a promise broken rather than a setting mistuned. Every
+    # browser that read the first one is pinned to it until 2027 and no invalidation can
+    # reach that: an invalidation clears CloudFront, not a disk cache that was told never to
+    # ask again.
     aws s3 sync "$dir/" "s3://$bucket/pyodide/$v/" \
-      --exclude '*.map' --exclude '*.d.ts' --exclude '*.html' \
+      --exclude '*.map' --exclude '*.d.ts' --exclude '*.html' --exclude 'pyodide-lock.json' \
       --cache-control 'public,max-age=31536000,immutable'
+    # `no-cache` is REVALIDATE, not "never store": one conditional request per interpreter
+    # boot, and usually a 304. Trivial beside the megabytes of wasm it is the index for.
+    aws s3 cp "$dir/pyodide-lock.json" "s3://$bucket/pyodide/$v/pyodide-lock.json" \
+      --cache-control 'no-cache'
     aws cloudfront create-invalidation --distribution-id "$dist" \
       --paths "/pyodide/$v/*" >/dev/null
     echo "pyodide $v is live"
