@@ -71,29 +71,42 @@ async function graderFor(exercise) {
 
 /* A module's data files, fetched once and written into the interpreter's filesystem.
  *
- * Keyed by MODULE rather than by topic because that is how they are published: a DataCamp
+ * Published per MODULE rather than per topic because that is how they exist: a DataCamp
  * course's loose files are shared across all its chapters, and module 4's casts.p is 8.6MB.
  * Fetched lazily - a student doing module 1 never pays for module 4's pickles - and cached
  * by the promise, so two exercises starting at once share one download rather than racing
- * to write the same path. */
+ * to write the same path.
+ *
+ * CACHED PER FILE, NOT PER DIRECTORY, and the difference was a bug that only appeared in the
+ * right order. The cache was keyed on `/ice-data/<module>`, but the file SET is a property of
+ * the exercise: 1.1.2's "Subsetting" declares baseball.csv and "2D Arithmetic", the very next
+ * one, declares baseball.csv AND update.csv. Opening them in that order found the directory
+ * already mounted, returned the first exercise's promise, and never fetched update.csv at
+ * all - `FileNotFoundError: 'update.csv'` on a file that was sitting in the bucket. Open the
+ * second one first and it worked, which is exactly the kind of fault that survives testing.
+ *
+ * A FAILURE IS NOT REMEMBERED. A rejected promise left in the map is a file that can never be
+ * fetched again for the life of the interpreter, so one dropped request would break an
+ * exercise until the tab was reloaded. */
 const mounts = new Map();
 
 function mountData(pyodide, course, mod, files = []) {
   const at = `/ice-data/${mod}`;
   if (!files.length) return Promise.resolve('');
-  if (!mounts.has(at)) {
-    mounts.set(at, (async () => {
-      pyodide.FS.mkdirTree(at);
-      await Promise.all(files.map(async name => {
+  pyodide.FS.mkdirTree(at);
+  const each = files.map(name => {
+    const path = `${at}/${name}`;
+    if (!mounts.has(path)) {
+      mounts.set(path, (async () => {
         const url = `${dataBase(course)}${encodeURIComponent(mod)}/${encodeURIComponent(name)}`;
         const r = await fetch(url, { credentials: 'include' });
         if (!r.ok) throw new Error(`cannot load ${name} (${r.status})`);
-        pyodide.FS.writeFile(`${at}/${name}`, new Uint8Array(await r.arrayBuffer()));
-      }));
-      return at;
-    })());
-  }
-  return mounts.get(at);
+        pyodide.FS.writeFile(path, new Uint8Array(await r.arrayBuffer()));
+      })().catch(e => { mounts.delete(path); throw e; }));
+    }
+    return mounts.get(path);
+  });
+  return Promise.all(each).then(() => at);
 }
 
 /* `6.1.2` -> `module-6`. The numbering is the hierarchy, so the module never needs storing.
@@ -137,7 +150,12 @@ export async function runPython(course, exercise, step, submission) {
   const g = await graderFor(exercise);
   const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
   const r = await g.run({ pec: exercise.setup, submission, cwd, seed: seedFor(exercise) });
-  return { ...r, files: readFiles(g.pyodide, cwd, r.files) };
+  /* READ FROM WHERE THE RUN ACTUALLY HAPPENED, which is not always the directory handed to
+   * it. An exercise with no `data:` mounts nothing, so `cwd` is the empty string and the run
+   * takes place in the interpreter's own home - and joining a filename onto '' reads from
+   * the filesystem ROOT, finds nothing, and drops the file. The student pressed Run, saw the
+   * output, and was offered no workbook. See `_ice_run` in python.js. */
+  return { ...r, files: readFiles(g.pyodide, r.cwd || cwd, r.files) };
 }
 
 /* The bytes of each file the run wrote. Read here rather than base64'd through the bridge:

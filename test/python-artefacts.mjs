@@ -108,6 +108,32 @@ const check = (label, ok, detail = '') => {
     sct: 'Ex().check_object("ws")\nsuccess_msg("yes")', cwd: '/ice-data/module-1',
   });
   check('an openpyxl exercise grades', graded.correct === true, graded.message);
+
+  /* ---- AND AN EXERCISE WITH NO DATA FILES AT ALL --------------------------
+   *
+   * THE ONE THAT SHIPPED BROKEN, and every check above missed it for the same reason: they
+   * all pass a mounted data directory, where the directory the run happens in and the
+   * directory the caller reads from happen to be the same string.
+   *
+   * 1.2.1 "Your First Workbook" declares no `data:`, so `mountData` mounts nothing and hands
+   * back the empty string - and the run then happens in the interpreter's HOME. The caller
+   * joined each filename onto the empty string it had passed in, read from the filesystem
+   * root, found nothing, and silently offered the student no workbook. They pressed Run, saw
+   * their output, and the download link they were told about never appeared.
+   *
+   * So the run reports where it actually happened, and this is the assertion that says so.
+   */
+  const home = await g.run({ pec: '', submission: code, cwd: '' });
+  check('an exercise with no data files still writes its workbook',
+        home.files.includes('report.xlsx'), `files=${JSON.stringify(home.files)}`);
+  check('and says which directory to read it from',
+        !!home.cwd && home.cwd !== '', JSON.stringify(home.cwd));
+  check('...which is where the file actually is',
+        Buffer.from(pyodide.FS.readFile(`${home.cwd}/report.xlsx`))
+          .subarray(0, 2).toString() === 'PK', `${home.cwd}/report.xlsx`);
+  /* The bug in one line: this is the path the caller used to build. */
+  check('and NOT the filesystem root, which is what joining onto "" gives',
+        home.cwd !== '/' && !`/report.xlsx`.startsWith(`${home.cwd}/`), home.cwd);
 }
 
 console.log(failures ? `\n${failures} failing` : '\nall green');

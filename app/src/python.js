@@ -272,7 +272,16 @@ def _ice_run(pec, code, cwd, seed):
     setup = _ice_setup(pec, seed)
     with ChDir(wd):
         _, raw, err = run_single_process(setup, code, mode="stub")
-        return {"output": raw or "", "error": err or "",
+        # cwd is where the run ACTUALLY happened, which is not always what was passed in:
+        # an exercise with no data files mounts nothing and is given the empty string, and
+        # the run then happens in the interpreter's own home. The caller reads the bytes of
+        # these files out of the filesystem itself, so it has to be told which directory to
+        # read them from - joining names onto the empty string it passed in reads from the
+        # root, finds nothing, and quietly offers the student no file at all.
+        #
+        # (No backticks in here. This whole block is a JS template literal - see the top of
+        # the file - and one would end the string somewhere else entirely.)
+        return {"output": raw or "", "error": err or "", "cwd": wd,
                 "figures": _ice_figures(), "files": _ice_written(wd)}
 
 def _ice_setup(pec, seed, capture=True):
@@ -386,11 +395,13 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
     },
 
     /**
-     * Run a submission without grading it. Returns { output, error, figures, files }.
+     * Run a submission without grading it. Returns { output, error, cwd, figures, files }.
      *
      * `figures` are base64 PNGs of whatever the run drew - the Agg backend means plt.show()
      * produced nothing a student could see. `files` are the NAMES of files the run created
-     * or changed in `cwd`; the caller reads their bytes out of `pyodide.FS` itself.
+     * or changed; the caller reads their bytes out of `pyodide.FS` itself, and `cwd` is the
+     * directory to read them from - which is NOT always the one passed in, because an
+     * exercise with no data files mounts nothing and runs in the interpreter's home.
      */
     async run({ pec = '', submission, cwd = '', seed = DEFAULT_SEED }) {
       return plain(exec(pec, submission, cwd, seed));
