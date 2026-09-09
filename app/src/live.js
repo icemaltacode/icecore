@@ -67,10 +67,17 @@ const listeners = new Map();
  * half-open socket would go unnoticed for the better part of a quarter of an hour. Thirty
  * seconds is two messages a minute per client - for a class of thirty, one invocation a
  * second against a route that already carries fifteen pointer frames a second from one. */
-const HEARTBEAT = 30 * 1000;
+const HEARTBEAT = 20 * 1000;
 /* Three missed answers. Two would fire on one slow round trip over a phone tethering, and
- * declaring a working socket dead costs a reconnection nobody asked for; four is a minute
- * and a half of a lesson happening to somebody who cannot hear it. */
+ * declaring a working socket dead costs a reconnection nobody asked for.
+ *
+ * This is the BACKSTOP, and the number is chosen as one. `offline` below catches every
+ * failure the machine knows about - wifi off, cable out, a laptop waking - within a frame, so
+ * what is left for the heartbeat is the silent kind: a NAT that forgot the flow, an access
+ * point that stopped forwarding, a captive portal that swallowed the connection. Nothing
+ * announces those, so the only instrument is the question going unanswered - and at three
+ * missed answers a student sits through a minute of a lesson they cannot hear, which is about
+ * as long as is tolerable and the reason this is twenty seconds rather than thirty. */
 const SILENT = 3 * HEARTBEAT + 5000;
 /* Backoff, capped. The cap matters more than the curve: the two-hour disconnect arrives
  * mid-lesson, and a client that has backed off to five minutes by then is a student who
@@ -203,12 +210,13 @@ function schedule(cohort, mine) {
   retry = setTimeout(() => { if (mine === generation) attach(cohort, mine); }, waitFor(attempt++));
 }
 
-/* ---- the two moments worth not waiting out --------------------------------
+/* ---- the moments worth not waiting out -------------------------------------
  *
- * The backoff caps at fifteen seconds, which is the right answer when there is no
- * information. These are the two times there IS some: the network came back, and the person
- * came back. Waiting out a timer in either case is a student looking at a reconnecting
- * banner on a working connection, which reads as the platform being broken.
+ * The backoff caps at fifteen seconds and the heartbeat takes a minute to conclude anything,
+ * which are the right answers when there is no information. These are the times there IS
+ * some: the network went, the network came back, and the person came back. Waiting out a
+ * timer in any of them is either a student looking at a reconnecting banner on a working
+ * connection, or - worse - a working banner on a connection that has gone.
  *
  * The attempt counter is reset too, not only the timer - otherwise a laptop that spent an
  * hour asleep wakes up already backed off to the cap.
@@ -232,8 +240,34 @@ function nudge() {
   if (live.status === 'open') beat(live.cohort, generation);
 }
 
+/**
+ * The machine says there is no network.
+ *
+ * THE ONE FAILURE THAT ANNOUNCES ITSELF, and until this existed it was waited out like every
+ * silent one: wifi switched off mid-lesson left a student watching a live band over a dead
+ * socket for a minute, because nothing had asked a question yet. The browser already knew.
+ *
+ * Treated as a death rather than as a hint - the socket is closed and the reconnection
+ * scheduled - because that is what it almost always is, and the cost of being wrong is one
+ * reconnection and a band that says "reconnecting" for the second it takes. `online` above
+ * then retries immediately rather than waiting out the backoff, so a blip costs a blink.
+ *
+ * `navigator.onLine` is not consulted anywhere: it is false for a captive portal that is
+ * perfectly able to carry this socket, and reading it would turn a lie into a disconnection.
+ * The EVENT is a statement that something changed; the flag is a guess about the present.
+ */
+function dropped() {
+  if (!live.cohort || live.status === 'closed') return;
+  if (socket) { socket.onclose = null; try { socket.close(); } catch { /* already gone */ } }
+  clearInterval(heart); heart = null;
+  socket = null;
+  live.lost = true;
+  schedule(live.cohort, generation);
+}
+
 if (typeof addEventListener === 'function') {
   addEventListener('online', nudge);
+  addEventListener('offline', dropped);
   addEventListener('visibilitychange', () => {
     if (typeof document === 'undefined' || document.visibilityState === 'visible') nudge();
   });

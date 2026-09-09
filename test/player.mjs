@@ -105,6 +105,47 @@ player.stopPreviewRoom();
 check('the band says whose session it is',
       /Following .* live/.test(text()), text().slice(0, 200));
 
+/* ---- and what it says when the connection goes ----------------------------
+ *
+ * THE STATE NOBODY CAN LOOK AT. A dropped socket and a finished lesson were indistinguishable
+ * from where a student sits - the room went quiet, and the only way to find out which had
+ * happened was to reload - so the band has to say which, and it has to say it somewhere that
+ * survives a small screen. The old wording was an aside on a `.sub` line that is
+ * `display: none` under 720px.
+ *
+ * Driven through the channel's own reactive state rather than by dropping a socket, because
+ * there is no socket here: `socketUrl()` is null in preview, so nothing can be disconnected.
+ * That state is exactly what LiveBand reads, and it is the whole of the difference between
+ * the two sentences.
+ */
+{
+  const band = () => document.querySelector('.band');
+  check('the band is not yellow while the room is live',
+        !band()?.classList.contains('away'), band()?.className);
+
+  player.channel.lost = true;
+  player.channel.status = 'waiting';
+  await settle(60);
+  check('losing the connection turns the band yellow',
+        !!band()?.classList.contains('away'), band()?.className);
+  /* THE PRIMARY SENTENCE, not an aside: this is the half of the band that is never hidden. */
+  check('and it says the connection went rather than that the lesson ended',
+        /reconnect/i.test(band()?.textContent || ''), band()?.textContent?.slice(0, 160));
+  check('and that they are still in the lesson',
+        /still in/i.test(band()?.textContent || ''), band()?.textContent?.slice(0, 160));
+  /* Leave is still there. A student who has had enough of waiting must not be trapped by a
+   * band that has taken its own controls away. */
+  check('and the way out is still offered',
+        /Leave/.test(band()?.textContent || ''), band()?.textContent?.slice(0, 160));
+
+  player.channel.status = 'open';
+  player.channel.lost = false;
+  await settle(60);
+  check('and it goes back to the ordinary sentence when it comes back',
+        !band()?.classList.contains('away') && /Following .* live/.test(text()),
+        text().slice(0, 160));
+}
+
 const tutor = { sub: 'preview-9', name: 'Sarah Mifsud', role: 'tutor', seen: new Date().toISOString() };
 const moved = (exercise, title, slide = null) => player.emitLocal({
   type: 'moved', sub: tutor.sub, position: { exercise, title, slide },
