@@ -138,6 +138,7 @@ const shown = computed(() => {
       if (!f) return true;
       if (f === '!none') return !u.courses.length;
       if (f === '!admins') return u.admin;
+      if (f === '!online') return !!u.online;
       if (f === '!invited') return u.status === 'FORCE_CHANGE_PASSWORD';
       if (f === '!suspended') return !u.enabled;
       if (f === '@none') return !(u.cohorts || []).length;
@@ -150,6 +151,33 @@ const shown = computed(() => {
 const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
   : u.status === 'FORCE_CHANGE_PASSWORD' ? { text: 'Invited', tone: 'wait' }
   : { text: 'Active', tone: 'good' });
+
+/* WHEN SOMEBODY WAS LAST WORKING, in the words the answer is actually useful in.
+ *
+ * RELATIVE WHILE IT IS RECENT AND A DATE ONCE IT IS NOT. "Four days ago" is a fact you can
+ * act on and "213 days ago" is arithmetic nobody asked for - so the phrasing changes where
+ * the question does, which is at about a week.
+ *
+ * DELIBERATELY NOT `CoursePage`'s `when`, which is a bare date, and the difference is the
+ * question rather than the style: that column is sorted over weeks to find who has stopped,
+ * and this one is read to see who is around today. One helper serving both would have to be
+ * wrong for one of them.
+ *
+ * NEVER IS AN EM DASH, NOT "never". The row already says "Invited" when somebody has not
+ * opened their account, and saying it twice in two columns reads as two different facts. */
+const MINUTE = 60000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
+const seenAt = iso => {
+  if (!iso) return '—';
+  const then = new Date(iso);
+  if (Number.isNaN(+then)) return '—';
+  const gap = Date.now() - +then;
+  if (gap < 2 * MINUTE) return 'just now';
+  if (gap < HOUR) return `${Math.round(gap / MINUTE)} min ago`;
+  if (gap < DAY) { const h = Math.round(gap / HOUR); return `${h} hour${h === 1 ? '' : 's'} ago`; }
+  if (gap < 2 * DAY) return 'yesterday';
+  if (gap < 7 * DAY) return `${Math.round(gap / DAY)} days ago`;
+  return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+};
 </script>
 
 <template>
@@ -232,6 +260,7 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
             </optgroup>
             <optgroup label="Accounts">
               <option value="!admins">Admins</option>
+              <option value="!online">In a lesson now</option>
               <option value="!invited">Not signed in yet</option>
               <option value="!suspended">Suspended</option>
             </optgroup>
@@ -246,11 +275,19 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
         <div v-else class="tablewrap">
           <table>
             <thead>
-              <tr><th>Name</th><th>Email</th><th>Cohort</th><th>Courses</th><th>Status</th><th></th></tr>
+              <tr><th>Name</th><th>Email</th><th>Cohort</th><th>Courses</th>
+                  <th>Last seen</th><th>Status</th><th></th></tr>
             </thead>
             <tbody>
               <tr v-for="u in shown" :key="u.sub" @click="go('people', u.sub)">
                 <td>
+                  <!-- CONNECTED RIGHT NOW, which is only ever true while a lesson is
+                       running - so it is a dot beside the name rather than a column of its
+                       own, which would be empty most of the day. The Last seen column is
+                       what the row says the rest of the time. Titled, because a coloured
+                       dot with no words is a legend somebody has to be told. -->
+                  <span class="dot" :class="{ live: u.online }"
+                        :title="u.online ? 'In a lesson now' : 'Not connected'"></span>
                   <strong>{{ u.name || '—' }}</strong>
                   <span v-if="u.admin" class="tag admin">admin</span>
                 </td>
@@ -270,6 +307,12 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
                     <span v-for="c in u.courses" :key="c" class="tag">{{ titles[c] || c }}</span>
                   </template>
                 </td>
+                <!-- "In the lesson" outranks a timestamp: somebody connected right now was
+                     also working a minute ago, and printing "1 min ago" beside a live dot
+                     says the smaller of the two true things. -->
+                <td class="seen" :class="{ dim: !u.online && !u.seen }">
+                  {{ u.online ? 'In the lesson' : seenAt(u.seen) }}
+                </td>
                 <td><span class="state" :class="state(u).tone">{{ state(u).text }}</span></td>
                 <!-- The whole row opens the dialog, so this is the keyboard route to the
                      same thing rather than the only one - hence a real button with a label
@@ -279,7 +322,7 @@ const state = u => (!u.enabled ? { text: 'Suspended', tone: 'bad' }
                           @click.stop="go('people', u.sub)"><Icon name="edit" :size="15" /></button>
                 </td>
               </tr>
-              <tr v-if="!shown.length"><td colspan="6" class="none">
+              <tr v-if="!shown.length"><td colspan="7" class="none">
                 {{ users.length ? 'Nobody matches that.' : 'Nobody yet.' }}
               </td></tr>
             </tbody>
@@ -367,6 +410,15 @@ td strong { font-weight: 500; }
        background: var(--ice-bg-soft); border-radius: 5px; padding: 1px 7px; margin: 1px 4px 1px 0; }
 .tag.admin { color: var(--ice-primary-strong); border-color: var(--ice-primary-soft); margin-left: 8px;
              text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }
+/* THE DOT IS DARK BY DEFAULT AND NOT ABSENT, so the column keeps its shape whether or not
+   a lesson is running - a mark that appears and disappears makes the names jump sideways
+   every time somebody connects. It is also drawn for everybody rather than only for the
+   people who are on, which is what makes it read as a state rather than as a decoration. */
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px;
+       background: var(--ice-border); vertical-align: middle; }
+.dot.live { background: var(--ice-good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ice-good) 22%, transparent); }
+.seen { font-size: 12px; color: var(--ice-fg-muted); white-space: nowrap; }
+.seen.dim { opacity: 0.55; }
 .state { font-size: 12px; }
 .state.good { color: var(--ice-good); }
 .state.wait { color: var(--ice-fg-muted); }

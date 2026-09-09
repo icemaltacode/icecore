@@ -129,6 +129,81 @@ async function memberships(sub) {
 }
 
 /**
+ * WHEN SOMEBODY WAS LAST DOING SOMETHING, or null if they never have been.
+ *
+ * A SECOND QUERY RATHER THAN A WIDER RANGE, and that is deliberate. `COHORT#` and `LAST#`
+ * are adjacent enough that one `BETWEEN` would fetch both - which is exactly the trick
+ * `memberships` above was rewritten to STOP doing, because the bound swallows every later
+ * prefix that happens to sort between them. Two queries per user that run together cost a
+ * few milliseconds; a listing that invents rows nobody wrote costs an afternoon.
+ *
+ * IT IS "LAST WORKED", NOT "LAST SIGNED IN", and the screen says so rather than rounding it
+ * off. `LAST#<course>` is written as a student moves through material, so somebody who signs
+ * in and reads a page writes nothing - which is the honest shape of the only record there
+ * is. Whether they have EVER signed in is a different question with a better answer already
+ * on the row: Cognito's `FORCE_CHANGE_PASSWORD`.
+ *
+ * The newest across every course, because it is a fact about the person and not about a
+ * course - the same reason today's XP is counted across all of them.
+ */
+async function lastSeen(sub) {
+  const r = await ddb.send(new QueryCommand({
+    TableName: TABLE,
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': `USER#${sub}`, ':sk': 'LAST#' },
+    ProjectionExpression: '#a',
+    ExpressionAttributeNames: { '#a': 'at' },
+  }));
+  let newest = null;
+  for (const i of r.Items || []) if (typeof i.at === 'string' && (!newest || i.at > newest)) newest = i.at;
+  return newest;
+}
+
+/**
+ * WHO HAS A LIVE SOCKET RIGHT NOW - every one of them, across every session running.
+ *
+ * COSTED AGAINST SESSIONS, NOT AGAINST PEOPLE, which is what makes it affordable on the one
+ * screen in this app that already fans out per user. A connection row is
+ * `CONN#<id>`/`LIVECONN#<cohort>` and `byCourse` inverts the key, so one query per running
+ * session returns every connection in it - and there is usually one session running and
+ * often none. The alternative, asking per person, would be a query each to answer a question
+ * about a handful of rooms.
+ *
+ * COUNTED BY PERSON, NOT BY CONNECTION. Somebody with two tabs is two rows and one student,
+ * which is the same rule the room panel keeps with `conns` - here a Set collapses it,
+ * because a dot is on or off and cannot be on twice.
+ *
+ * NOBODY IS ONLINE WHEN NOTHING IS RUNNING, and that is the truth rather than a failure. It
+ * is also why this is not the whole answer on that screen: outside a lesson every dot is
+ * dark, so `lastSeen` is what the row actually says most of the time.
+ */
+async function connectedSubs() {
+  const sessions = await queryAll({
+    TableName: TABLE,
+    KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+    ExpressionAttributeValues: { ':pk': COHORTS, ':sk': 'LIVE#' },
+    ProjectionExpression: 'sk',
+  });
+  /* `begins_with(sk, 'LIVE#')` IS THE WHOLE FILTER, and it is enough because of how the
+   * neighbouring rows are spelled: a bookmark is `LIVEMARK#` and a finished lesson is
+   * `LIVEPAST#`, deliberately without the `#` after LIVE, so neither is inside this range.
+   * `running()` in the live function is the same query and the rule is stated there - this
+   * is a second reader of it, not a second version of it, so it must not invent a guard of
+   * its own that would then be the only thing keeping the two agreeing.
+   *
+   * WHAT THIS CAN BE STALE ABOUT is a socket that died without saying so: the row goes on
+   * `$disconnect` and otherwise on its TTL. That is the same set of rows the room panel
+   * draws from, which is the point - two screens disagreeing about who is in the lesson
+   * would be worse than both being briefly generous. */
+  const cohorts = sessions.map(r => r.sk.slice('LIVE#'.length)).filter(Boolean);
+  const here = new Set();
+  const rooms = await Promise.all(
+    cohorts.map(c => byCourse(`LIVECONN#${c}`, { ProjectionExpression: 'sub' })));
+  for (const room of rooms) for (const r of room) if (r.sub) here.add(r.sub);
+  return here;
+}
+
+/**
  * THE ONE DEFINITION OF WHAT SOMEBODY'S COURSES ARE: the union of the courses of every
  * cohort they are in.
  *
@@ -487,8 +562,8 @@ export async function handler(event) {
 }
 
 async function getUsers() {
-  const [{ users, truncated }, admins, cohorts] = await Promise.all([
-    listUsers(), adminSubs(), listCohorts(),
+  const [{ users, truncated }, admins, cohorts, here] = await Promise.all([
+    listUsers(), adminSubs(), listCohorts(), connectedSubs(),
   ]);
   /* One query per user rather than one per course, because only the first is authoritative:
    * the catalogue of courses lives in the content bucket and is assembled from every
@@ -500,11 +575,24 @@ async function getUsers() {
    * read; they are derived from the cohorts this response is already carrying, so the whole
    * of a person's courses is a lookup in a map of tens of rows rather than anything on the
    * wire. Which is the shape the change was worth having for. */
-  const on = await mapLimit(users, FANOUT, u => memberships(u.sub));
+  /* TWO QUERIES PER USER NOW, RUN TOGETHER - the intakes they are in and when they were last
+   * working. Inside one `mapLimit` slot rather than a second pass over the list, so the
+   * fan-out and the wall clock are what they were and only the read units doubled. */
+  const on = await mapLimit(users, FANOUT, async u => {
+    const [cohortIds, seen] = await Promise.all([memberships(u.sub), lastSeen(u.sub)]);
+    return { cohortIds, seen };
+  });
   const byId = new Map(cohorts.map(c => [c.id, c]));
   return json(200, {
     users: users.map((u, i) => ({
-      ...u, admin: admins.has(u.sub), cohorts: on[i], courses: coursesFrom(on[i], byId),
+      ...u, admin: admins.has(u.sub),
+      cohorts: on[i].cohortIds, courses: coursesFrom(on[i].cohortIds, byId),
+      /* TWO FACTS, SAID SEPARATELY, because neither can stand in for the other. `online` is
+       * true only while there is a lesson to be connected to; `seen` is the answer the rest
+       * of the time. Folded into one field, a screen would have to guess which it was
+       * looking at, and would guess "offline" for everybody every evening. */
+      online: here.has(u.sub),
+      seen: on[i].seen,
     })),
     cohorts,
     truncated,

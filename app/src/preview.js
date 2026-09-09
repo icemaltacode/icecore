@@ -43,17 +43,30 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
  * `ada@example.com` is the signed-in preview user - see PREVIEW_TOKEN in auth.js - so the
  * self-editing rules have somebody to apply to. */
 let nextSub = 100;
+/* WHEN EACH OF THEM WAS LAST WORKING, spread across every phrase the People list can print:
+ * minutes, hours, yesterday, days, a date, and never. Relative to the moment the preview
+ * loads rather than fixed, or the column would say "8 months ago" for everybody by spring
+ * and the one thing this seed exists to show would be unreachable. */
+const ago = ms => new Date(Date.now() - ms).toISOString();
+const MIN = 60000, HR = 60 * MIN, DY = 24 * HR;
 const people = [
   { sub: 'preview-1', email: 'ada@example.com', name: 'Ada Lovelace',
-    status: 'CONFIRMED', enabled: true, admin: true, cohorts: [] },
+    status: 'CONFIRMED', enabled: true, admin: true, cohorts: [], seen: ago(40 * MIN) },
   { sub: 'preview-2', email: 'grace@example.com', name: 'Grace Hopper',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: ['sept-2026-evening'] },
+    /* Invited and never signed in, so there is nothing to have a last-seen FROM. The row
+     * says so once, in the Status column, and the Last seen column stays an em dash. */
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: ['sept-2026-evening'],
+    seen: null },
   { sub: 'preview-3', email: 'katherine@example.com', name: 'Katherine Johnson',
-    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['sept-2026-evening', 'data-team'] },
+    /* The one who is CONNECTED - see `previewOnline` below. Her row is the only place the
+      * green dot and "In the lesson" can be seen at all without a running session. */
+    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['sept-2026-evening', 'data-team'],
+    seen: ago(3 * MIN) },
   { sub: 'preview-4', email: 'margaret@example.com', name: 'Margaret Hamilton',
-    status: 'CONFIRMED', enabled: false, admin: false, cohorts: ['jan-2026', 'data-team'] },
+    status: 'CONFIRMED', enabled: false, admin: false, cohorts: ['jan-2026', 'data-team'],
+    seen: ago(30 * DY) },
   { sub: 'preview-5', email: 'joan@example.com', name: '',
-    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: [] },
+    status: 'FORCE_CHANGE_PASSWORD', enabled: true, admin: false, cohorts: [], seen: null },
   /* Alone in the cohort that takes every course there is - which is what makes the course
    * PICKER reachable. It only appears when a cohort takes more than one, so it needs a run
    * with more than one content directory:
@@ -61,8 +74,17 @@ const people = [
    * With one course the picker is correctly skipped, which is a different thing worth
    * seeing and not a substitute for seeing this. */
   { sub: 'preview-6', email: 'dorothy@example.com', name: 'Dorothy Vaughan',
-    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['oct-2026-morning'] },
+    status: 'CONFIRMED', enabled: true, admin: false, cohorts: ['oct-2026-morning'],
+    seen: ago(3 * DY) },
 ];
+/* WHO HAS A LIVE SOCKET, in a stand-in that has no sockets at all.
+ *
+ * A CONSTANT RATHER THAN THE PREVIEW ROOM'S OWN ROSTER, and on purpose: this screen has to
+ * be reachable without starting a lesson, which is exactly the state the real thing shows
+ * nothing in. A dot that could only be seen by doing something else first is a dot nobody
+ * checks before shipping - the same argument `--as signin`'s refusals are seeded on. */
+const PREVIEW_ONLINE = new Set(['preview-3']);
+
 /* ONE OF EACH STATE THE COHORT SCREEN DRAWS DIFFERENTLY, which since the Live button means
  * one per reason that button can be off - four of them, none guessable from the row:
  *
@@ -625,8 +647,10 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     }
     if (method === 'GET')
       return {
-        // `courses` derived on the way out, exactly as the real listing derives it.
-        users: users.map(u => ({ ...u, courses: coursesOf(u) })),
+        /* `courses` and `online` derived on the way out, exactly as the real listing
+         * derives them - a stub that STORED what the real thing computes would go on
+         * working after somebody broke the computation. */
+        users: users.map(u => ({ ...u, courses: coursesOf(u), online: PREVIEW_ONLINE.has(u.sub) })),
         cohorts: classes.map(c => ({ ...c })),
         truncated: false,
       };
