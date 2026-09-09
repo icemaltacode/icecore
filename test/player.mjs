@@ -352,6 +352,60 @@ check('a drive that moves them to another exercise carries its code with it',
   await settle(300);
   check('and now Run reaches the class, not only the tab it was pressed in', reached(),
         text().slice(-240));
+
+  // Left as it was found, so what follows is not testing against a frozen editor.
+  player.emitLocal({ type: 'syncing', on: false });
+  await settle(200);
+}
+
+// ------------------------------------------- and Run runs what is highlighted
+/* EVERY EDITOR A STUDENT HAS EVER USED runs the highlighted lines, and this one ran the
+ * whole file regardless - so trying one line meant commenting out the rest and remembering
+ * to put it back.
+ *
+ * WHAT IS ASSERTED HERE IS THE WIRING, and it is asserted through the BUTTON because that is
+ * what a student sees: the editor's selection has to reach the component and change what the
+ * button says it is about to do. What the selection resolves TO - whole lines, dedented,
+ * blank is nothing - is pure and lives in test/selection.mjs, where it can be stated as
+ * fifteen cases instead of one.
+ *
+ * The label is the feature and not decoration. Running something other than the file is what
+ * every other editor does, but doing it silently would be a surprise the student had no way
+ * to see coming - sharpest in Python, where a run is the setup and then the code with
+ * nothing carried over, so a selection leaning on their own earlier lines raises NameError.
+ */
+{
+  const runButton = () =>
+    [...document.querySelectorAll('.actions button')].find(b => /^Run/.test(b.textContent.trim()));
+  const runLabel = () => runButton()?.textContent.trim() ?? '(no Run button)';
+  const view = player.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  check('the editor is reachable, so a selection can be put in it', !!view);
+
+  const MULTI = 'SELECT one\nFROM t\nWHERE x = 1';
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: MULTI } });
+  await settle(250);
+  check('with nothing highlighted the button runs the file', runLabel() === 'Run code', runLabel());
+
+  // The second line, exactly - the offsets either side of 'FROM t'.
+  view.dispatch({ selection: { anchor: 11, head: 17 } });
+  await settle(250);
+  check('highlighting some of it changes what the button says it will do',
+        runLabel() === 'Run selection', runLabel());
+
+  /* A STRAY DRAG IS NOT A SELECTION. Two spaces highlighted would otherwise offer to run
+   * nothing, which is a button press that does nothing and looks like a fault. */
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: 'SELECT 1\n   \n' } });
+  view.dispatch({ selection: { anchor: 9, head: 12 } });
+  await settle(250);
+  check('but highlighting only whitespace is not', runLabel() === 'Run code', runLabel());
+
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: MULTI } });
+  view.dispatch({ selection: { anchor: 11, head: 17 } });
+  await settle(200);
+  view.dispatch({ selection: { anchor: 11, head: 11 } });
+  await settle(250);
+  check('and putting the caret back gives the whole file again',
+        runLabel() === 'Run code', runLabel());
 }
 
 // ------------------------------------------------- the educator goes to the board

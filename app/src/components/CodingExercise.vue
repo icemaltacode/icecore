@@ -11,6 +11,7 @@ import Icon from './Icon.vue';
 import RevealNotice from './RevealNotice.vue';
 import * as store from '../progress-store.js';
 import { progressId } from '../progress.js';
+import { selectedCode } from '../selection.js';
 
 const props = defineProps({
   /* REMOTE CONTROL, both directions. `frozen` makes the editor read-only for a student whose
@@ -69,11 +70,14 @@ watch(() => props.drivenCode, v => {
  * Short, because this is what somebody watching sees as "typing". Long enough that a burst
  * of keystrokes is one message rather than thirty. */
 const BEAT = 160;
-let cursorAt = null;
+/* REFS RATHER THAN PLAIN LOCALS, because the Run button reads them now as well as the beat
+ * below: it says whether it is about to run the selection or the file, and a label computed
+ * from something Vue is not watching would go stale the moment anybody dragged. */
+const cursorAt = ref(null);
 /* The far end of the selection, kept beside the caret and sent on the same beat. A range is
  * two offsets into ONE buffer; sending either without the other is sending a number with no
  * units, which is the argument the caret already made against a message of its own. */
-let anchorAt = null;
+const anchorAt = ref(null);
 let beat;
 const sendSoon = () => {
   clearTimeout(beat);
@@ -81,17 +85,24 @@ const sendSoon = () => {
     /* The STEP travels with the text, for the caret's reason one line up: a buffer
      * belongs to a step of an exercise, and the one writer that keeps drafts outside this
      * component has no other way to know which. */
-    () => emit('editor', { code: code.value, cursor: cursorAt, anchor: anchorAt,
+    () => emit('editor', { code: code.value, cursor: cursorAt.value, anchor: anchorAt.value,
                            step: stepIndex.value }), BEAT);
 };
 /* `{ head, anchor }` from the editor. An anchor equal to the head is a bare caret, and is
  * sent as null rather than as a zero-width range - the other side would draw a highlight
  * over no characters, which is a decoration that exists and cannot be seen. */
 const onCursor = ({ head, anchor }) => {
-  cursorAt = head;
-  anchorAt = anchor === head ? null : anchor;
+  cursorAt.value = head;
+  anchorAt.value = anchor === head ? null : anchor;
   sendSoon();
 };
+
+/* WHAT RUN WILL RUN - the highlighted lines, or null when nothing is highlighted. See
+ * selection.js, which owns every rule about it so that Run means one thing in both
+ * languages. Recomputed rather than captured when the drag ends: the buffer can change
+ * underneath a selection, and a range remembered against text that has moved runs
+ * characters nobody chose. */
+const running = computed(() => selectedCode(code.value, cursorAt.value, anchorAt.value));
 watch(code, sendSoon);
 onBeforeUnmount(() => clearTimeout(beat));
 
@@ -222,16 +233,28 @@ watch(() => props.pressed?.when, () => {
    * and a separate one; grading an empty answer as a failure is not a smaller version of it.
    */
   if (isMcqStep.value && picked.value === null) return;
-  if (p.do === 'run') doRun();
+  if (p.do === 'run') doRun({ whole: true });
   else if (p.do === 'check') doCheck();
 });
 
-async function doRun() {
+/* THE SELECTION IS THE STUDENT'S, AND ONLY RUN HONOURS IT.
+ *
+ * Check grades a SUBMISSION. Marking somebody on the three lines they happened to have
+ * highlighted would not be a smaller verdict, it would be a wrong one - and the exercise
+ * would then be recorded as solved, or not, on something they never submitted.
+ *
+ * `whole` IS FOR A PRESS THAT CAME FROM SOMEWHERE ELSE. An educator driving this screen or
+ * demonstrating to the room pressed Run against THEIR buffer; honouring a selection this
+ * student happens to have left lying in a frozen editor would run something nobody asked
+ * for, on a screen they cannot type in.
+ */
+async function doRun({ whole = false } = {}) {
   /* Said out loud on every press. Only a CONTROL TAB relays it - see App.vue - so a
    * press that arrived from one does not bounce back to where it came from. */
   emit('act', 'run');
+  const sending = whole ? code.value : (running.value ?? code.value);
   busy.value = true; error.value = ''; verdict.value = null;
-  try { result.value = await run(props.courseId, props.exercise.dataset, code.value, props.exercise.setup); }
+  try { result.value = await run(props.courseId, props.exercise.dataset, sending, props.exercise.setup); }
   catch (e) { error.value = e.message; result.value = null; urgeHelp.value = true; }
   finally { busy.value = false; }
 }
@@ -390,8 +413,17 @@ async function doReset() {
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>
-          <span v-else class="muted kbd">Cmd/Ctrl + Enter to run</span>
-          <button class="btn ghost" @click="doRun" :disabled="busy">Run code</button>
+          <span v-else class="muted kbd">
+            Cmd/Ctrl + Enter to run{{ running ? ' the selection' : '' }}
+          </span>
+          <!-- THE LABEL CHANGES BECAUSE THE BUTTON DOES. Running the highlighted lines is
+               what every other editor does, but a button that silently ran something other
+               than the file would be a surprise the student had no way to see coming -
+               most sharply in Python, where the setup is there and their own earlier lines
+               are not, so a selection can fail for a reason the label explains. -->
+          <button class="btn ghost" @click="doRun()" :disabled="busy">
+            {{ running ? 'Run selection' : 'Run code' }}
+          </button>
           <button class="btn primary" @click="doCheck"
                   :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
         </div>
