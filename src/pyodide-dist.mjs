@@ -17,25 +17,21 @@
  * nothing new has to be kept up to date: the version in `package.json` is the version that
  * ships, and it cannot drift from the loader compiled against it.
  *
- * ALL TWENTY-FOUR NPM SHIPS, not the six the courses name. The Playground exists so a
- * student can import what they like, and the six are only what an exercise DECLARES. 65MB in
- * a bucket that holds 520MB of deck PDFs.
+ * THE WHOLE DISTRIBUTION, not a curated subset. An earlier version of this staged the
+ * twenty-four packages npm happens to bundle and trimmed the lock file to match, on the
+ * reasoning that the six the courses declare were covered and 334MB is a lot of bucket. That
+ * was the wrong call and not one this file gets to make: jsDelivr served all 356, so a
+ * subset is a REGRESSION dressed as a saving - the Playground exists precisely so a student
+ * can import what they like, and `import networkx` failing on our own site is not something
+ * they can be expected to understand.
  *
- * BUT NOT ALL 356 PYODIDE HAS, and that is a real narrowing rather than an oversight. The
- * lock file describes Pyodide's whole catalogue - networkx, beautifulsoup4, opencv, astropy -
- * and jsDelivr served every one of them. The full distribution is a 334MB download, and
- * shipping it is a decision about the bucket rather than about this file, so it is left as
- * one: the staging step below would only have to copy more files.
+ * So the rule is simply that what used to come from jsDelivr now comes from icecampus.com,
+ * and nothing else changes. `just pyodide` puts the release tarball in the bucket, which is
+ * behind CloudFront, which is a CDN - the one thing that was ever wanted here.
  *
- * WHAT THE NARROWING MUST NOT DO IS LIE. Left whole, the lock file goes on naming 332
- * packages we do not have, so `loadPackagesFromImports` resolves one, fetches it from our
- * own origin and gets a 404 - a network error blamed on the platform for a package that was
- * never there. So the staged lock file is TRIMMED to what is beside it, and an import of
- * anything else fails as a plain `ModuleNotFoundError`, which is the truth.
- *
- * The npm set is dependency-closed - checked in test/setup-checks.mjs, because a trim that
- * broke the closure would install a package whose dependency 404s, which is the same fault
- * wearing a better disguise.
+ * WHICH IS WHY THE LOCK FILE IS COPIED RATHER THAN REWRITTEN. It describes the distribution
+ * and the distribution is now all of it, so there is nothing to reconcile and no chance of
+ * this side and the bucket disagreeing about which packages exist.
  *
  * THE PREFIX CARRIES THE VERSION, which is what makes these files cacheable forever and a
  * version bump a new set of URLs rather than a stale one. Same trade `assets/*` already
@@ -65,28 +61,3 @@ export const pyodideDir = version => `pyodide/${version}`;
  */
 export const shipped = name =>
   !/\.(map|d\.ts|html)$/.test(name) && name !== 'README.md' && name !== 'package.json';
-
-/**
- * The lock file as it should be published: only the packages actually staged beside it.
- *
- * Pure, and takes the parsed lock plus the filenames that are there, so the CLI can write it
- * and a test can assert on it without either owning the rule.
- */
-export function trimLock(lock, filenames) {
-  const there = filenames instanceof Set ? filenames : new Set(filenames);
-  const packages = Object.fromEntries(
-    Object.entries(lock.packages || {}).filter(([, p]) => there.has(p.file_name)));
-  return { ...lock, packages };
-}
-
-/**
- * Any dependency a trimmed lock names but no longer contains.
- *
- * Empty is the only acceptable answer: a package whose dependency was trimmed away installs
- * and then fails to import, which reads as the package being broken rather than as the trim.
- */
-export function dangling(lock) {
-  const names = new Set(Object.keys(lock.packages || {}));
-  return Object.entries(lock.packages || {}).flatMap(([n, p]) =>
-    (p.depends || []).filter(d => !names.has(d)).map(d => `${n} -> ${d}`));
-}

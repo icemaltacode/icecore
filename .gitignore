@@ -4,3 +4,4 @@ dist/
 infra/cdk.out/
 infra/node_modules/
 .icecore-bundle/
+.pyodide/

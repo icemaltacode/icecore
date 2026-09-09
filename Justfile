@@ -183,6 +183,15 @@ deploy: bundle _auth-json
     #!/usr/bin/env bash
     set -euo pipefail
     eval "$(just _targets)"
+    # THE PLAYER CANNOT RUN PYTHON WITHOUT THE DISTRIBUTION, and it is uploaded separately -
+    # see `pyodide` below. Checked rather than assumed, and checked BEFORE anything is
+    # written: a site whose Python never boots is a site where every coding exercise is broken
+    # and nothing on the page says why. Fail in the direction that shows.
+    want=$(node -p "require('./node_modules/pyodide/package.json').version")
+    if ! aws s3 ls "s3://$bucket/pyodide/$want/pyodide-lock.json" >/dev/null 2>&1; then
+      echo "pyodide $want is not in the bucket - run 'just pyodide' first." >&2
+      exit 1
+    fi
     # THE PLAYER ONLY, AND NEVER --delete ACROSS THE WHOLE BUCKET.
     #
     # This used to be `aws s3 sync dist/ --delete` against the bucket root, which is right
@@ -223,18 +232,14 @@ deploy: bundle _auth-json
     # `--delete` respects these filters, so each pass only ever removes files of its own kind
     # and the allowlist below is still the whole of what the app owns.
     #
-    # `pyodide/*` rides in this pass because it is the same KIND of thing as `assets/*`: the
-    # version is in the path, so a URL under it can never change meaning and a bump is a new
-    # set of names rather than a stale one. It cannot BE in assets/ - Pyodide builds its own
-    # URLs by filename out of pyodide-lock.json, so content hashing would leave it asking for
-    # files that do not exist. See src/pyodide-dist.mjs.
-    #
-    # A prefix rather than a list of thirty version-tagged filenames, which is the same
-    # licence `assets/*` already takes and rests on the same fact: the whole prefix belongs to
-    # the app. `--delete` then removes the previous version's copy on a bump, which is the
-    # wanted behaviour and the reason 65MB does not accumulate.
+    # `pyodide/` IS NOT IN THIS LIST, and must not be. It is uploaded by `just pyodide` from
+    # the release tarball, and `dist/` holds whatever this machine happened to stage - npm's
+    # 24 packages on a machine that has not downloaded the full distribution. Included here,
+    # `--delete` would then remove the other 330 from the bucket, which is this file's oldest
+    # foot-gun wearing a new hat. It belongs to its own recipe for the same reason `brand/`
+    # belongs to the stack: it is a bucket asset with its own lifecycle, not an app file.
     aws s3 sync dist/ "s3://$bucket/" --delete \
-      --exclude '*' --include 'assets/*' --include 'pyodide/*' \
+      --exclude '*' --include 'assets/*' \
       --cache-control 'public,max-age=31536000,immutable'
     # `no-cache` is REVALIDATE, not "never store": the browser keeps it and asks whether it
     # is still current, which is one conditional request and usually a 304. `no-store` would
@@ -264,6 +269,64 @@ deploy: bundle _auth-json
     [ "$domain" = "None" ] && domain=$(aws cloudfront get-distribution --id "$dist" \
       --query 'Distribution.DomainName' --output text)
     echo "live: https://$domain"
+
+# THE PYTHON RUNTIME, IN OUR OWN BUCKET, BEHIND OUR OWN CLOUDFRONT.
+#
+# It used to load from jsDelivr, which is what DataCamp's own player does - and it worked
+# everywhere except the one class behind a network that blocks CDNs, where every coding
+# exercise simply never started. So what used to come from jsDelivr comes from icecampus.com
+# now, and the bucket is behind CloudFront, which is a CDN: the one thing that was ever
+# wanted here.
+#
+# ALL OF IT, not the twenty-four packages npm bundles. jsDelivr served the whole catalogue,
+# so a subset is a regression dressed as a saving - the Playground exists precisely so a
+# student can import what they like. 334MB compressed, once per Pyodide version.
+#
+# ITS OWN RECIPE RATHER THAN PART OF `deploy`, because it is a bucket asset with its own
+# lifecycle - the same reason `brand/` is deployed by the stack. It also must not ride the
+# app's sync: `dist/` holds whatever this machine staged, and `--delete` against a partial
+# one would remove the rest. `deploy` checks the bucket instead and refuses to publish an app
+# whose Python is not there.
+#
+# Idempotent at every step: the tarball is not re-downloaded, not re-extracted, and `s3 sync`
+# uploads only what is missing. The prefix carries the version, so nothing here can overwrite
+# what a running lesson is loading.
+#
+# Put the whole Python runtime in the bucket. Once per Pyodide version.
+pyodide:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    eval "$(just _targets)"
+    v=$(node -p "require('./node_modules/pyodide/package.json').version")
+    dir=".pyodide/$v"
+    if [[ ! -f "$dir/pyodide-lock.json" ]]; then
+      tar="pyodide-$v.tar.bz2"
+      url="https://github.com/pyodide/pyodide/releases/download/$v/$tar"
+      mkdir -p .pyodide
+      # Downloaded beside the target and moved into place, so an interrupted fetch is not
+      # mistaken for a complete one by the next run.
+      if [[ ! -f ".pyodide/$tar" ]]; then
+        echo "fetching $url"
+        curl -fL --progress-bar "$url" -o ".pyodide/$tar.part"
+        mv ".pyodide/$tar.part" ".pyodide/$tar"
+      fi
+      echo "extracting..."
+      rm -rf "$dir.part" && mkdir -p "$dir.part"
+      # The tarball's own root is `pyodide/`; strip it so the version directory is the files.
+      tar -xjf ".pyodide/$tar" -C "$dir.part" --strip-components=1
+      [[ -f "$dir.part/pyodide-lock.json" ]] || { echo "no pyodide-lock.json in $tar" >&2; exit 1; }
+      rm -rf "$dir" && mv "$dir.part" "$dir"
+      rm -f ".pyodide/$tar"
+    fi
+    echo "$(ls "$dir"/*.whl 2>/dev/null | wc -l) packages in $dir"
+    # No --delete. Nothing else writes this prefix, and a partial local copy must never be
+    # able to remove what is already serving a lesson.
+    aws s3 sync "$dir/" "s3://$bucket/pyodide/$v/" \
+      --exclude '*.map' --exclude '*.d.ts' --exclude '*.html' \
+      --cache-control 'public,max-age=31536000,immutable'
+    aws cloudfront create-invalidation --distribution-id "$dist" \
+      --paths "/pyodide/$v/*" >/dev/null
+    echo "pyodide $v is live"
 
 # Push content and slides only — no app rebuild. The usual path for fixing an exercise.
 #

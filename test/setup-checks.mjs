@@ -31,7 +31,7 @@
  * mistake, and the fix for a flagged line is always to move the declaration up.
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { shipped, trimLock, dangling } from '../src/pyodide-dist.mjs';
+import { shipped } from '../src/pyodide-dist.mjs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..', 'app', 'src');
@@ -321,26 +321,17 @@ for (const file of everyFile(ROOT, n => /\.(js|vue|css)$/.test(n))
       console.log(`      Pyodide fetches it on every boot; without it nothing starts at all.`);
       bad++;
     }
-    /* WHAT IS PUBLISHED IS THE TRIMMED LOCK, so that is what is checked. npm ships 24 of
-     * Pyodide's 356 packages and the lock file it ships describes all 356 - asserting
-     * against THAT would be asserting we vendor the entire Pyodide catalogue, which we
-     * deliberately do not. */
-    const staged = trimLock(lock, there);
-    const loose = dangling(staged);
-    for (const d of loose) {
-      console.log(`FAIL  the staged Pyodide lock names a dependency it does not contain: ${d}`);
-      console.log(`      That package installs and then fails to import, which reads as the`);
-      console.log(`      package being broken rather than as the set being incomplete.`);
-      bad++;
-    }
-    /* An absolute file_name is somebody else's server, which is the whole point of this. */
-    for (const [name, pkg] of Object.entries(staged.packages)) {
+    /* WHAT THE BUCKET HOLDS IS THE WHOLE DISTRIBUTION - `just pyodide` unpacks the release
+     * tarball into it - so there is nothing to reconcile between the lock file and the files
+     * beside it. What is still worth refusing is a lock file that points a package at
+     * somebody else's server, which is the whole of what this change was for. */
+    for (const [name, pkg] of Object.entries(lock.packages || {})) {
       if (!/^https?:/.test(pkg.file_name)) continue;
       console.log(`FAIL  pyodide-lock.json points ${name} at ${pkg.file_name}`);
       bad++;
     }
-    if (!Object.keys(staged.packages).length) {
-      console.log('FAIL  the staged Pyodide lock has no packages in it at all');
+    if (!Object.keys(lock.packages || {}).length) {
+      console.log('FAIL  the Pyodide lock has no packages in it at all');
       bad++;
     }
   }

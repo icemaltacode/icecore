@@ -19,7 +19,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
-import { pyodideDir, shipped, trimLock } from '../src/pyodide-dist.mjs';
+import { pyodideDir, shipped } from '../src/pyodide-dist.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
 import { slidesSrcDir, deckFiles, readDecks, affectedDecks, deckPrefix } from '../src/decks.mjs';
 import { checkAgainst, borrowed, readListing, resolveAgainst, MANIFEST }
@@ -724,20 +724,32 @@ function copyRootFiles(staging) {
  * the site being broken rather than as an install that did not happen.
  */
 function copyPyodide(staging) {
-  const from = path.join(ROOT, 'node_modules', 'pyodide');
-  if (!fs.existsSync(from)) {
+  const npm = path.join(ROOT, 'node_modules', 'pyodide');
+  if (!fs.existsSync(npm)) {
     die('node_modules/pyodide is missing - run `npm ci` before building');
   }
   /* THE VERSION THE APP WAS COMPILED AGAINST, read from the installed package rather than
-   * written down. `app/src/wheels.js` reads the same number from the same place through the
-   * bundler, so the directory this stages and the one the player asks for cannot drift - and
-   * a drift surfaces as a 404 for a wasm file, a long way from its cause.
+   * written down - and read from npm even when the files come from the tarball, because that
+   * is the number the bundled loader will check itself against. `app/src/wheels.js` reads the
+   * same number from the same place through the bundler, so the directory this stages and the
+   * one the player asks for cannot drift; a drift surfaces as a 404 for a wasm file, a long
+   * way from its cause.
    *
    * Read HERE and not in a const beside it: this file's command dispatch is top-level code,
-   * so a module-level read runs for `icecore verify` and `icecore slides` too - commands
-   * that want nothing to do with Python and would fail on an install that is merely
-   * incomplete. */
-  const version = JSON.parse(fs.readFileSync(path.join(from, 'package.json'), 'utf8')).version;
+   * so a module-level read runs for `icecore verify` and `icecore slides` too - commands that
+   * want nothing to do with Python and would fail on an install that is merely incomplete. */
+  const version = JSON.parse(fs.readFileSync(path.join(npm, 'package.json'), 'utf8')).version;
+
+  /* THE WHOLE DISTRIBUTION IF IT IS HERE, and npm's twenty-four if it is not.
+   *
+   * `just pyodide` unpacks the release into `.pyodide/<version>/` and puts it in the bucket;
+   * that is what a deployed site serves. Locally the download is 334MB for a long tail no
+   * exercise uses, so `dev` falls back to what `npm ci` already brought - every package the
+   * courses declare, and enough to run any of them. The difference is only which packages the
+   * PLAYGROUND can reach, and it is said out loud rather than left to be discovered. */
+  const full = path.join(ROOT, '.pyodide', version);
+  const from = fs.existsSync(path.join(full, 'pyodide-lock.json')) ? full : npm;
+
   const to = path.join(staging, ...pyodideDir(version).split('/'));
   fs.mkdirSync(to, { recursive: true });
   const names = fs.readdirSync(from).filter(shipped);
@@ -745,15 +757,10 @@ function copyPyodide(staging) {
     const at = path.join(to, name);
     if (!fs.existsSync(at)) fs.copyFileSync(path.join(from, name), at);
   }
-  /* THE LOCK FILE IS REWRITTEN, not copied - see `trimLock`. npm ships 24 of Pyodide's 356
-   * packages, and the lock file describes all 356: left whole, an `import networkx` resolves
-   * to a wheel we do not have and 404s against our own origin, which reads as the platform
-   * being broken rather than as a package that was never here. Written every time rather
-   * than skipped-if-present, because unlike the wheels its content is ours and a stale one
-   * from a half-finished run would be silently wrong. */
-  const lock = JSON.parse(fs.readFileSync(path.join(from, 'pyodide-lock.json'), 'utf8'));
-  fs.writeFileSync(path.join(to, 'pyodide-lock.json'),
-                   JSON.stringify(trimLock(lock, names)));
+  const wheels = names.filter(n => n.endsWith('.whl')).length;
+  console.log(from === full
+    ? `  python ${version}: the whole distribution, ${wheels} packages`
+    : `  python ${version}: npm's ${wheels} packages - \`just pyodide\` for all of them`);
 }
 
 async function cmdBundle() {
