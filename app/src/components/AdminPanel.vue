@@ -410,13 +410,22 @@ td strong { font-weight: 500; }
        background: var(--ice-bg-soft); border-radius: 5px; padding: 1px 7px; margin: 1px 4px 1px 0; }
 .tag.admin { color: var(--ice-primary-strong); border-color: var(--ice-primary-soft); margin-left: 8px;
              text-transform: uppercase; letter-spacing: .05em; font-size: 10px; }
-/* THE DOT IS DARK BY DEFAULT AND NOT ABSENT, so the column keeps its shape whether or not
-   a lesson is running - a mark that appears and disappears makes the names jump sideways
-   every time somebody connects. It is also drawn for everybody rather than only for the
-   people who are on, which is what makes it read as a state rather than as a decoration. */
-.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 8px;
-       background: var(--ice-border); vertical-align: middle; }
-.dot.live { background: var(--ice-good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ice-good) 22%, transparent); }
+/* THE DOT IS DRAWN FOR EVERYBODY AND NOT ONLY FOR WHOEVER IS ON, so the column keeps its
+   shape whether or not a lesson is running - a mark that appears and disappears makes every
+   name jump sideways the moment somebody connects, and one that is only ever present when
+   lit is a decoration rather than a state.
+
+   UNLIT IS A RING, NOT A PALE FILL, and that is the whole difference between this being
+   visible and not. It was `--ice-border`, which is #e2e8f0 - a seven-pixel near-white circle
+   on a near-white row, invisible in exactly the state it is in most of the day, so the
+   feature read as not having shipped. A border colour is for lines a metre long; it does not
+   survive being cut down to a 3.5px radius. So the empty state is an OUTLINE in the muted
+   text colour, which is a colour chosen to be read. */
+.dot { display: inline-block; box-sizing: border-box; width: 9px; height: 9px;
+       border-radius: 50%; margin-right: 8px; vertical-align: middle;
+       border: 1.5px solid var(--ice-fg-muted); background: transparent; opacity: .75; }
+.dot.live { border-color: var(--ice-good-line); background: var(--ice-good-line); opacity: 1;
+            box-shadow: 0 0 0 3px var(--ice-good-fill); }
 .seen { font-size: 12px; color: var(--ice-fg-muted); white-space: nowrap; }
 .seen.dim { opacity: 0.55; }
 .state { font-size: 12px; }
