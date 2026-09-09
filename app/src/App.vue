@@ -995,24 +995,35 @@ function editorChanged({ code, cursor, anchor, step }) {
 }
 
 /**
- * RUN AND CHECK, ON THE SCREEN BEING DRIVEN.
+ * RUN AND CHECK, ON THE SCREENS THAT ARE WATCHING THIS ONE.
  *
- * FROM A CONTROL TAB AND NOWHERE ELSE, which is `editorChanged`'s gate and for the same
- * reason. `drivingSomebody()` is true in the educator's ORDINARY live tab as well while
- * their other tab holds control - so gated on that alone, an educator pressing Run in front
- * of the class would fire it into one student's browser.
+ * WHICH TAB THIS IS DECIDES WHO HEARS IT, and the question is `watchDecks`' question with
+ * `watchDecks`' answer - a control tab is asked FIRST, because it also belongs to the person
+ * delivering the lesson and would otherwise answer 'room'. `drivingSomebody()` is true in the
+ * educator's ORDINARY live tab as well while their other tab holds control, so gated on that
+ * alone an educator pressing Run in front of the class would fire it into one student's
+ * browser and nowhere else.
  *
- * The press travels, the result does not: the student's browser has the student's database
- * and writes the student's progress rows, so their run is the one that has to appear on
- * their screen. What the educator sees is their own copy of the same gesture, which they
- * already had - it is the only half that was ever working.
+ * THE ROOM AUDIENCE IS THE SHARED EDITOR'S MISSING HALF. Sharing put the educator's code on
+ * every screen and then stopped: the class watched an answer being typed and then watched
+ * nothing happen to it, which is exactly what control did before this function existed.
  *
- * NOT A LOOP. A relayed press runs `doRun`/`doCheck` on the student's side, which announces
- * itself here exactly as a local one does, and is dropped because a student's tab is not a
- * control tab.
+ * The press travels, the result does not: each browser has its own database and writes its
+ * own progress rows, so the run that appears on a screen has to be that screen's own. What
+ * the educator sees is their own copy of the same gesture, which they already had - it is
+ * the only half that was ever working.
+ *
+ * NOT A LOOP, either way round. A relayed press runs `doRun`/`doCheck` on the receiving
+ * side, which announces itself here exactly as a local one does, and is dropped there
+ * because a student's tab is neither a control tab nor the deliverer's.
  */
 const relayAct = what => {
-  if (controlSub.value && drivingSomebody()) press(what, current.value?.id ?? null);
+  const at = current.value?.id ?? null;
+  if (controlSub.value) {
+    if (drivingSomebody()) press(what, at, 'driven');
+    return;
+  }
+  if (delivery.mine && sync.on) press(what, at, 'room');
 };
 
 /* THE POINTER, WATCHED ONLY WHILE THIS TAB IS DRIVING SOMEBODY.
@@ -1627,7 +1638,14 @@ watch(currentId, id => {
           @slide="onDeckSlide" @board="viewingBoard = $event" />
         <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there are two
              ways to end up with two: somebody driving this screen, and the educator writing
-             in every screen at once. Hence `frozen` in both cases, and a band for each. -->
+             in every screen at once. Hence `frozen` in both cases, and a band for each.
+
+             AND THE SAME TWO ANSWER THE EDUCATOR'S BUTTON - see `relayAct`. `syncedHere`
+             rather than `synced` is the whole care needed: a press to the room reaches
+             everybody connected, and only a screen actually holding the educator's buffer
+             for THIS exercise should run it. Gated on the switch alone, a student who has
+             the sync on but is sitting on another row would have Run pressed on their own
+             half-written attempt by somebody who cannot see it. -->
         <component
           v-else-if="current"
           :is="componentFor[current.type] || CodingExercise"
@@ -1640,7 +1658,7 @@ watch(currentId, id => {
           :class-answers="classAnswers"
           :frozen="beingDriven() || synced"
           :driven-code="shownCode"
-          :pressed="beingDriven() ? pressed : null"
+          :pressed="beingDriven() || syncedHere ? pressed : null"
           @solved="markSolved"
           :peer-at="beingDriven() ? driven.cursor : (syncedHere ? sync.cursor : null)"
           :peer-anchor="beingDriven() ? driven.anchor : (syncedHere ? sync.anchor : null)"

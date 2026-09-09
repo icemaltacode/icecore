@@ -84,7 +84,13 @@ export const driven = reactive({
 export const borrowed = reactive({ at: null, code: null, when: null });
 
 /**
- * THE BUTTON THE EDUCATOR PRESSED, on the screen they pressed it for.
+ * THE BUTTON THE EDUCATOR PRESSED, on the screens they pressed it for.
+ *
+ * TWO AUDIENCES, ONE MESSAGE. Driving one student, it goes to that student; demonstrating to
+ * a room with the editor shared, it goes to everybody watching. Those are the same gesture
+ * seen from two distances and there is nothing about the press itself that differs, so a
+ * second message type would be the same three fields under another name - and a second
+ * watcher in every exercise component to read it.
  *
  * Control could move a driven screen and write into its editor, and then Run and Check did
  * nothing there - they ran in the educator's own tab, against the educator's own database,
@@ -398,9 +404,11 @@ const HANDLERS = {
     if (m.anchor !== undefined) driven.anchor = m.anchor;
     driven.at = m.at || new Date().toISOString();
   },
-  /* Run or Check, from whoever is driving this screen. The Lambda addresses it to the
-   * controlled student alone and refuses it from anybody who is not currently driving them,
-   * so there is nothing to check here beyond what arrived. */
+  /* Run or Check, from whoever is driving this screen or demonstrating to the room. The
+   * Lambda decides which of those it is and refuses a press from anybody not entitled to
+   * that audience, so there is nothing to check about the SENDER here. Who acts on it is
+   * still this side's question - see App.vue: a press to the room reaches everybody
+   * connected, and only a screen actually showing the educator's buffer should run it. */
   /* Fifteen a second while a hand is moving, and the first thing on this channel that is
    * continuous rather than discrete. Assigned rather than replaced so a component watching
    * it re-renders without a new object every frame. */
@@ -563,14 +571,25 @@ export const drive = where => send('drive', {
 });
 
 /**
- * Press Run or Check on the screen being driven.
+ * Press Run or Check on the screens that are watching this one.
  *
  * Separate from `drive` rather than a field on it, because they are different kinds of fact
  * and arrive at different rates: a drive is where the screen IS and travels with every
  * keystroke, and this is a thing that happened once. Folded together, every keystroke would
  * carry a stale verb that the other side would have to know to ignore.
+ *
+ * `to` is 'room' or 'driven', and it is `sendDeck`'s parameter for `sendDeck`'s reason: the
+ * two tabs an educator has open are one PERSON, so the server cannot tell a demonstration
+ * from a rescue by looking at who sent this. It can only check that whoever did is entitled
+ * to the audience they asked for - control for one student, the sync switch for the room.
+ *
+ * THE ROOM AUDIENCE IS THE OTHER HALF OF A DEMONSTRATION. Sharing an editor put the
+ * educator's code on every screen and then stopped: Run and Check ran in their own tab
+ * alone, so a class watched an answer being typed and then watched nothing happen to it -
+ * exactly the fault control had before `act` existed, one audience further out.
  */
-export const press = (what, at) => send('act', { do: what, at: at ?? null });
+export const press = (what, at, to = 'driven') =>
+  send('act', { do: what, at: at ?? null, to });
 
 /**
  * Say where the pointer is, or that it has gone.

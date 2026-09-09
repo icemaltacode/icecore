@@ -5,7 +5,7 @@
  *   ws   $disconnect                            forget the connection
  *   ws   $default           { type, ... }       ping, active, marked, roster, history, say,
  *                                                 control, sharing, release, drive, buffer,
- *                                                 sync, push
+ *                                                 act, sync, push
  *
  * One function serving two HTTP routes and three WebSocket routes, told apart by the shape
  * of the event and then by path - the same way the admin function tells users from cohorts.
@@ -1241,12 +1241,23 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
-    /* THE EDUCATOR'S BUTTON, ON THE SCREEN THEY ARE DRIVING.
+    /* THE EDUCATOR'S BUTTON, ON THE SCREENS THEY PRESSED IT FOR.
      *
      * Control could move a student's screen and write into their editor, and then the two
      * gestures that make an editor an editor did nothing: Run and Check ran in the
      * educator's own tab and nowhere else. The student watched their query being typed for
      * them and then watched nothing happen to it.
+     *
+     * SHARING AN EDITOR HAD THE SAME HOLE, one audience further out: `sync` put the
+     * educator's code on every screen in the room and stopped there, so a class watched an
+     * answer being typed and then watched nothing happen to it. Same fault, same fix, and
+     * therefore the same message - what differs is only who is entitled to hear it.
+     *
+     * SO THE SENDER NAMES THE AUDIENCE, exactly as `deck` does and for `deck`'s reason: the
+     * two tabs an educator has open are one PERSON, so this function cannot tell a rescue
+     * from a demonstration by looking at who sent the message. It can only check the claim -
+     * control of that student for 'driven', the sync switch and the lesson for 'room'. Those
+     * are the gates `drive` and `push` already apply, quoted rather than invented.
      *
      * THE GESTURE TRAVELS, NOT THE RESULT. The student's browser holds the student's
      * database and writes the student's progress rows, so it is their run that has to
@@ -1263,11 +1274,21 @@ async function tallied(cohort, mark, seeded = false) {
      * driver may press is closed and short.
      */
     case 'act': {
-      const held = await sessionFor(row.cohort);
-      const c = held?.control;
-      if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
       const what = ['run', 'check'].includes(msg.do) ? msg.do : null;
       if (!what) return { statusCode: 200, body: 'no such act' };
+      const held = await sessionFor(row.cohort);
+      /* 'driven' is the default because it is the older audience and the narrower one: a
+       * client that has not been taught to name an audience must not have its presses
+       * broadcast to a room by a server that guessed. */
+      const room = msg.to === 'room';
+      /* `push`'s gate for the room, `drive`'s for the one student. Both read the session row
+       * rather than trusting the sender's role: `tutor` says somebody may run a lesson, not
+       * that they are running THIS one, and it says nothing about who currently holds
+       * control. */
+      const c = held?.control;
+      if (room ? !(held?.sync && held.by === row.sub) : !(c && c.by === row.sub)) {
+        return { statusCode: 200, body: room ? 'not syncing' : 'not driving' };
+      }
       await emit(event, row.cohort, {
         type: 'acting',
         do: what,
@@ -1276,7 +1297,9 @@ async function tallied(cohort, mark, seeded = false) {
          * instruction - pressing Run twice is two presses, and a watcher on the verb alone
          * would see the second as nothing having changed. Same reason `driven.at` exists. */
         when: now,
-      }, { sub: c.sub });
+      /* Everybody but the sender, or the one person being driven. A press that came back to
+       * the tab that made it would run the educator's own exercise a second time. */
+      }, room ? { except: id } : { sub: c.sub });
       return { statusCode: 200, body: 'ok' };
     }
 

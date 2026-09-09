@@ -783,10 +783,31 @@ try {
         skip('a student cannot switch it off', 'one account was used for both sockets');
       }
 
+      /* THE BUTTON, TO THE ROOM. Sharing put the educator's code on every screen and stopped
+       * there: Run and Check ran in their own tab alone, so a class watched an answer being
+       * typed and then watched nothing happen to it - control's old hole one audience out.
+       *
+       * SAME MESSAGE, AND THE SENDER NAMES THE AUDIENCE, because the two tabs an educator
+       * has open are one person and the server cannot tell a demonstration from a rescue by
+       * looking at who sent it. What it checks is the claim. */
+      A.ws.send(JSON.stringify({ type: 'act', do: 'run', at: '101', to: 'room' }));
+      const roomAct = await heardB.next('acting');
+      check('pressing Run while sharing reaches the class',
+            roomAct?.do === 'run' && roomAct?.at === '101', JSON.stringify(roomAct));
+
       A.ws.send(JSON.stringify({ type: 'sync', on: false }));
       const offB = await heardB.next('syncing');
       await heardA.next('syncing');
       check('and it can be switched off again', offB?.on === false, JSON.stringify(offB));
+
+      /* THE SWITCH IS THE GATE, not the role. An educator who is not demonstrating pressing
+       * Run in their own tab must not fire it into thirty browsers - which is the same
+       * sentence `push` above is checked with, and has to be, because they are now the same
+       * capability seen from two messages. */
+      A.ws.send(JSON.stringify({ type: 'act', do: 'run', at: '101', to: 'room' }));
+      check('and after it nothing is pressed either',
+            (await heardB.next('acting', 1500)) === null,
+            'a press reached the room after the switch was thrown back');
       A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT nope' }));
       check('after which nothing is pushed', (await heardB.next('synced', 1500)) === null,
             'an editor reached the room after the switch was thrown back');

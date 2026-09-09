@@ -299,6 +299,61 @@ await settle(300);
 check('a drive that moves them to another exercise carries its code with it',
       at() === '4 / 4' && /driven_across_a_move/.test(editorText()), `${at()} ${editorText()}`);
 
+// -------------------------------- and the same button, to the whole room at once
+/* SHARING AN EDITOR HAD CONTROL'S OLD HOLE, one audience further out. The educator's code
+ * appeared on every screen in the room and then stopped: Run and Check ran in their own tab
+ * alone, so a class watched an answer being typed and then watched nothing happen to it.
+ *
+ * THE INSTRUMENT IS THE SAME STUB and it can only be read once per row, because the
+ * component is keyed by the row and a remount clears what it said. So this runs on a row
+ * nothing has run on yet, and the REFUSAL is asserted before the acceptance - the other
+ * order proves nothing, since a screen that has already complained goes on complaining.
+ */
+{
+  player.emitLocal({ type: 'controlling', control: null });
+  await settle(150);
+  [...document.querySelectorAll('button')].find(b => /Catch up/.test(b.textContent))?.click();
+  await settle(120);
+  /* The first row, and only it: the fixture puts a dataset there so that a run reaching for
+   * the database says so. A row without one fails earlier and for another reason, which
+   * proves the fetch rather than the run. */
+  moved('101', 'First');
+  await settle(250);
+  check('the class is back with the educator, on a row nothing has run on',
+        at() === '2 / 4' && !reached(), `${at()} ${text().slice(-160)}`);
+
+  const SHOWN = 'SELECT the_answer_everybody_watched;';
+  const shows = () => editorText().includes('the_answer_everybody_watched');
+  const pressRun = at => player.emitLocal(
+    { type: 'acting', do: 'run', at, when: new Date().toISOString() });
+
+  player.emitLocal({ type: 'syncing', on: true });
+  await settle(150);
+
+  /* THE SWITCH IS NOT THE GATE, and this is the half that would be silently wrong. A press
+   * to the room reaches every connection, so a student sitting on a different row from the
+   * push has the educator's button pressed on THEIR OWN half-written attempt, by somebody
+   * who cannot see it. The verb names the exercise on screen, so the component's own check
+   * passes - only the buffer being the educator's can tell these two apart. */
+  player.emitLocal({ type: 'synced', at: '102', code: SHOWN, cursor: null, anchor: null,
+                     when: new Date().toISOString() });
+  await settle(200);
+  check("a push for another row does not put the educator's code here", !shows(), editorText());
+  pressRun('101');
+  await settle(300);
+  check('and Run does not reach a screen that is not showing what they wrote', !reached(),
+        text().slice(-200));
+
+  player.emitLocal({ type: 'synced', at: '101', code: SHOWN, cursor: null, anchor: null,
+                     when: new Date().toISOString() });
+  await settle(250);
+  check("the educator's editor is on the student's screen", shows(), editorText());
+  pressRun('101');
+  await settle(300);
+  check('and now Run reaches the class, not only the tab it was pressed in', reached(),
+        text().slice(-240));
+}
+
 // ------------------------------------------------- the educator goes to the board
 /* THE STUDENT'S SIDE OF THE WHITEBOARD, which is the half `--as admin` cannot show: an
  * educator's board is drauu drawing on their own screen, and a student's is markup arriving
