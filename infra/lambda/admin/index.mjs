@@ -197,8 +197,18 @@ async function connectedSubs() {
    * would be worse than both being briefly generous. */
   const cohorts = sessions.map(r => r.sk.slice('LIVE#'.length)).filter(Boolean);
   const here = new Set();
-  const rooms = await Promise.all(
-    cohorts.map(c => byCourse(`LIVECONN#${c}`, { ProjectionExpression: 'sub' })));
+  /* `sub` IS A DYNAMODB RESERVED WORD and has to be aliased, exactly as `at` is a line
+   * above. Projected bare it is a ValidationException, and because this whole function is
+   * inside the listing's `Promise.all` that is not a missing dot - it is the People screen
+   * answering 400 and drawing nothing.
+   *
+   * IT WOULD HAVE WAITED FOR A LESSON TO SHOW ITSELF, which is what makes it worth a
+   * comment: with no session running `cohorts` is empty, `Promise.all([])` runs no query,
+   * and the bad projection is never evaluated. So it works perfectly until the first time
+   * somebody starts teaching. */
+  const rooms = await Promise.all(cohorts.map(c => byCourse(`LIVECONN#${c}`, {
+    ProjectionExpression: '#s', ExpressionAttributeNames: { '#s': 'sub' },
+  })));
   for (const room of rooms) for (const r of room) if (r.sub) here.add(r.sub);
   return here;
 }
