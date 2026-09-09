@@ -17,11 +17,11 @@
  * last expression, any figures, and the traceback if there was one. A traceback is output
  * too - shown in the pane, not raised as a failure.
  */
-import { loadPyodide, version } from 'pyodide';
+import { loadPyodide } from 'pyodide';
 import { WHEELS_BY_NAME } from './python.js';
-import { readWheel } from './wheels.js';
+import { readWheel, pyodideOptions } from './wheels.js';
 
-const INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
+
 
 /* Where a set's files land, and the interpreter's working directory. A student writes
  * `pd.read_csv('gapminder.csv')` and never sees a unit number or a course id - which is the
@@ -333,7 +333,7 @@ export const started = () => ready !== null;
 
 function session() {
   if (!ready) ready = (async () => {
-    const pyodide = await loadPyodide({ indexURL: INDEX_URL });
+    const pyodide = await loadPyodide(pyodideOptions());
     /* Agg BEFORE matplotlib can possibly be imported. Pyodide's default backend draws to a
      * canvas it expects to find in the page; there is no such canvas here, and figures are
      * collected as PNG bytes instead. An environment variable rather than `matplotlib.use`

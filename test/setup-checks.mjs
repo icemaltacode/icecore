@@ -30,7 +30,8 @@
  * False positives are possible and are the right failure direction: this is a linter for one
  * mistake, and the fix for a flagged line is always to move the declaration up.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { shipped, trimLock, dangling } from '../src/pyodide-dist.mjs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..', 'app', 'src');
@@ -262,7 +263,91 @@ for (const file of mjs(path.join(import.meta.dirname, '..', 'infra', 'lambda')))
   }
 }
 
+/* ---- and nothing the player needs comes from somebody else's server -------
+ *
+ * A STUDENT ON A RESTRICTED NETWORK IS THE TEST NOBODY RUNS. Python used to boot from
+ * jsDelivr - which is what DataCamp's own player does - and it worked everywhere except the
+ * one class that was behind a network blocking CDNs, where every coding exercise in the
+ * course simply never started. See src/pyodide-dist.mjs.
+ *
+ * The whole runtime is staged from node_modules now, so the property holds today. It is the
+ * kind of property that rots by accident: a font, a chart library, an icon set - each one
+ * added for a good reason by somebody who was not on that network. So it is asserted rather
+ * than remembered.
+ *
+ * TWO HALVES, and neither covers the other. The first is that nothing in the app NAMES a
+ * remote host. The second is that everything Pyodide will ask for is a file we actually
+ * ship - an upgrade that renames a file into a shape `shipped()` excludes would pass the
+ * first check and fail as a package that cannot be imported, weeks later, on one exercise.
+ */
+const APP = path.join(import.meta.dirname, '..', 'app');
+const REPO = path.join(import.meta.dirname, '..');
+
+function everyFile(dir, ok) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return everyFile(full, ok);
+    return e.isFile() && ok(e.name) ? [full] : [];
+  });
+}
+
+for (const file of everyFile(ROOT, n => /\.(js|vue|css)$/.test(n))
+                    .concat([path.join(APP, 'index.html')])) {
+  const src = readFileSync(file, 'utf8');
+  for (const m of src.matchAll(/https?:\/\/([A-Za-z0-9._-]+)/g)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    console.log(`FAIL  ${path.relative(REPO, file)}:${line}`);
+    console.log(`      the player must not fetch from ${m[1]} - a student on a network that`);
+    console.log(`      blocks it gets a broken page and nobody else can reproduce it.`);
+    console.log(`      Vendor it, the way src/pyodide-dist.mjs stages the Python runtime.`);
+    bad++;
+  }
+}
+
+/* Every wheel the lock file names has to survive `shipped()`, because that is the filter the
+ * CLI stages with. Read from node_modules rather than from a list here: the list IS the lock
+ * file, and a second copy of it is a copy that goes stale on the next upgrade. */
+{
+  const dist = path.join(REPO, 'node_modules', 'pyodide');
+  if (!existsSync(dist)) {
+    console.log('SKIP  node_modules/pyodide is not installed - cannot check the Python runtime');
+  } else {
+    const lock = JSON.parse(readFileSync(path.join(dist, 'pyodide-lock.json'), 'utf8'));
+    const there = new Set(readdirSync(dist).filter(shipped));
+    /* The runtime's own files, which the lock file does not name and every boot needs. */
+    for (const n of ['pyodide.asm.wasm', 'pyodide.asm.mjs', 'python_stdlib.zip']) {
+      if (there.has(n)) continue;
+      console.log(`FAIL  node_modules/pyodide/${n} is not staged by src/pyodide-dist.mjs`);
+      console.log(`      Pyodide fetches it on every boot; without it nothing starts at all.`);
+      bad++;
+    }
+    /* WHAT IS PUBLISHED IS THE TRIMMED LOCK, so that is what is checked. npm ships 24 of
+     * Pyodide's 356 packages and the lock file it ships describes all 356 - asserting
+     * against THAT would be asserting we vendor the entire Pyodide catalogue, which we
+     * deliberately do not. */
+    const staged = trimLock(lock, there);
+    const loose = dangling(staged);
+    for (const d of loose) {
+      console.log(`FAIL  the staged Pyodide lock names a dependency it does not contain: ${d}`);
+      console.log(`      That package installs and then fails to import, which reads as the`);
+      console.log(`      package being broken rather than as the set being incomplete.`);
+      bad++;
+    }
+    /* An absolute file_name is somebody else's server, which is the whole point of this. */
+    for (const [name, pkg] of Object.entries(staged.packages)) {
+      if (!/^https?:/.test(pkg.file_name)) continue;
+      console.log(`FAIL  pyodide-lock.json points ${name} at ${pkg.file_name}`);
+      bad++;
+    }
+    if (!Object.keys(staged.packages).length) {
+      console.log('FAIL  the staged Pyodide lock has no packages in it at all');
+      bad++;
+    }
+  }
+}
+
 console.log(bad ? `\n${bad} problem${bad === 1 ? '' : 's'}`
                 : 'every setup block imports what it uses and declares before it reads,'
-                  + ' and no projection names a reserved word');
+                  + ' no projection names a reserved word,'
+                  + '\nand the player fetches nothing from anybody else\u2019s server');
 process.exit(bad ? 1 : 0);

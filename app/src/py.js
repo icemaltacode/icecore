@@ -7,23 +7,27 @@
  * and importing pandas is seconds, and every check after that is milliseconds in the same
  * interpreter. So there is exactly one interpreter per session and it is never rebuilt.
  *
- * WHERE PYODIDE COMES FROM. The loader is bundled; the wasm and the packages are fetched
- * from jsDelivr, which is what DataCamp's own player does - campus.datacamp.com loads
- * cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js. The version is read from the package
- * rather than written down, so the CDN path can never drift from the API we compiled
- * against; a mismatch there would fail as a missing wasm export, a long way from its cause.
+ * WHERE PYODIDE COMES FROM: our own origin, and nowhere else. The loader is bundled and the
+ * wasm, the stdlib and every package are staged out of node_modules into `pyodide/<version>/`
+ * - see src/pyodide-dist.mjs and `pyodideIndexUrl` in wheels.js.
  *
- * The one exception is the grader itself. pythonwhat is unmaintained - 2.30.1, and DataCamp
- * does not appear to load it in the browser at all - so nothing keeps it alive on PyPI. It
- * is vendored under `public/py/` and served from our own origin.
+ * This used to be jsDelivr, which is what DataCamp's own player does - campus.datacamp.com
+ * loads cdn.jsdelivr.net/pyodide/.../pyodide.js - and it was fine until a class turned out to
+ * be behind a network that blocks CDNs. Then the interpreter simply never arrives and every
+ * coding exercise in the course is broken for that student and for nobody else.
+ *
+ * The grader itself was always ours: pythonwhat is unmaintained - 2.30.1, and DataCamp does
+ * not appear to load it in the browser at all - so nothing keeps it alive on PyPI. It is a
+ * vendored wheel under `app/py/`, installed through micropip's `emfs:` scheme. So the whole
+ * of Python now comes from one host, which is the property that was actually wanted.
  */
-import { loadPyodide, version } from 'pyodide';
+import { loadPyodide } from 'pyodide';
 import { createGrader, seedFor, packageKey } from './python.js';
 import { dataBase } from './content.js';
 // Shared with the Playground's interpreter - see wheels.js.
-import { readWheel } from './wheels.js';
+import { readWheel, pyodideOptions } from './wheels.js';
 
-const INDEX_URL = `https://cdn.jsdelivr.net/pyodide/v${version}/full/`;
+
 
 
 /* One grader, rebuilt when the exercise needs a different set of packages.
@@ -52,7 +56,7 @@ async function graderFor(exercise) {
   // Serialised: two exercises starting at once must not build two interpreters.
   if (building) { await building; return graderFor(exercise); }
   building = (async () => {
-    const pyodide = await loadPyodide({ indexURL: INDEX_URL });
+    const pyodide = await loadPyodide(pyodideOptions());
     const g = await createGrader({
       pyodide,
       packages: exercise.packages || [],

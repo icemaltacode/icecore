@@ -19,6 +19,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
+import { pyodideDir, shipped, trimLock } from '../src/pyodide-dist.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
 import { slidesSrcDir, deckFiles, readDecks, affectedDecks, deckPrefix } from '../src/decks.mjs';
 import { checkAgainst, borrowed, readListing, resolveAgainst, MANIFEST }
@@ -28,6 +29,7 @@ import { validate as validateDragDrop, allItems } from '../app/src/dragdrop.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(HERE, '..', 'app');
+const ROOT = path.join(HERE, '..');
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -361,6 +363,7 @@ async function cmdDev() {
   const staging = path.join(contentDir, '..', '.icecore', String(port));
   await buildAll(staging);
   copyRootFiles(staging);
+  copyPyodide(staging);
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
   // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
   // `bundle` sets false - preview cannot leak into anything that ships.
@@ -703,6 +706,56 @@ function copyRootFiles(staging) {
   }
 }
 
+/**
+ * The Python runtime, staged from node_modules so it is served from our own origin.
+ *
+ * See src/pyodide-dist.mjs for why it is not a CDN any more. Copied into the staging
+ * directory for `copyRootFiles`'s reason and by the same mechanism: that directory IS Vite's
+ * publicDir, so `dev` serves these on exactly the terms a deployment does and the one path
+ * that matters - a browser resolving `pyodide-lock.json` against `indexURL` - is exercised
+ * locally rather than first discovered in production.
+ *
+ * SKIPPED WHEN IT IS ALREADY THERE, which is safe only because the version is in the path:
+ * these 30 files are 65MB, `buildAll` wipes the staging directory on every run, and `dev` is
+ * run all day. A file that exists under `pyodide/<version>/` cannot be a different file.
+ *
+ * A MISSING PACKAGE IS FATAL RATHER THAN QUIET. Without it the first Python exercise a
+ * student opens fails inside `loadPyodide` with a fetch error naming a URL, which reads as
+ * the site being broken rather than as an install that did not happen.
+ */
+function copyPyodide(staging) {
+  const from = path.join(ROOT, 'node_modules', 'pyodide');
+  if (!fs.existsSync(from)) {
+    die('node_modules/pyodide is missing - run `npm ci` before building');
+  }
+  /* THE VERSION THE APP WAS COMPILED AGAINST, read from the installed package rather than
+   * written down. `app/src/wheels.js` reads the same number from the same place through the
+   * bundler, so the directory this stages and the one the player asks for cannot drift - and
+   * a drift surfaces as a 404 for a wasm file, a long way from its cause.
+   *
+   * Read HERE and not in a const beside it: this file's command dispatch is top-level code,
+   * so a module-level read runs for `icecore verify` and `icecore slides` too - commands
+   * that want nothing to do with Python and would fail on an install that is merely
+   * incomplete. */
+  const version = JSON.parse(fs.readFileSync(path.join(from, 'package.json'), 'utf8')).version;
+  const to = path.join(staging, ...pyodideDir(version).split('/'));
+  fs.mkdirSync(to, { recursive: true });
+  const names = fs.readdirSync(from).filter(shipped);
+  for (const name of names) {
+    const at = path.join(to, name);
+    if (!fs.existsSync(at)) fs.copyFileSync(path.join(from, name), at);
+  }
+  /* THE LOCK FILE IS REWRITTEN, not copied - see `trimLock`. npm ships 24 of Pyodide's 356
+   * packages, and the lock file describes all 356: left whole, an `import networkx` resolves
+   * to a wheel we do not have and 404s against our own origin, which reads as the platform
+   * being broken rather than as a package that was never here. Written every time rather
+   * than skipped-if-present, because unlike the wheels its content is ours and a stale one
+   * from a half-finished run would be silently wrong. */
+  const lock = JSON.parse(fs.readFileSync(path.join(from, 'pyodide-lock.json'), 'utf8'));
+  fs.writeFileSync(path.join(to, 'pyodide-lock.json'),
+                   JSON.stringify(trimLock(lock, names)));
+}
+
 async function cmdBundle() {
   const outDir = path.resolve(flag('out', 'dist'));
   // Its own staging directory, deliberately: building the content wipes and recreates it,
@@ -711,6 +764,7 @@ async function cmdBundle() {
   const staging = path.join(contentDir, '..', '.icecore-bundle');
   await buildAll(staging);
   copyRootFiles(staging);
+  copyPyodide(staging);
   const { build } = await import('vite');
   await build({
     configFile: path.join(APP, 'vite.config.js'),

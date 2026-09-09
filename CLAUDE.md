@@ -826,10 +826,33 @@ and none is custom.
 - **A step with a Solution and no `### Check` accepts every submission.** That is the failure
   that gets worse the later it is found, so the build refuses to produce it — as it does a
   `type: coding` exercise with neither a `dataset:` nor an SCT.
-- Only pythonwhat and its two non-bundled companions are vendored, under `app/py/`;
-  everything else comes from the jsDelivr CDN, which is what DataCamp's own player does.
-  They are **build assets, not `public/`** — `icecore dev` points Vite's publicDir at the
-  course's staging directory, so the app's own `public/` is never served.
+- **THE WHOLE OF PYTHON COMES FROM OUR OWN ORIGIN.** The runtime used to load from jsDelivr
+  — which is what DataCamp's own player does — and it worked everywhere except the one class
+  behind a network that blocks CDNs, where every coding exercise simply never started: not
+  slow, not degraded, just an interpreter that never arrives, for that student and nobody
+  else. [`src/pyodide-dist.mjs`](src/pyodide-dist.mjs) is the one definition of where it is
+  published and which files it consists of; `copyPyodide` in the CLI stages it out of
+  `node_modules/pyodide` into `pyodide/<version>/` in the course's staging directory, which
+  is Vite's publicDir — so `dev` serves it on exactly a deployment's terms. `just deploy`
+  carries the prefix in the **immutable** pass beside `assets/*`, because the version is in
+  the path.
+  - **`packageBaseUrl` has to be set as well as `indexURL`.** Packages already resolve
+    against `indexURL` — they are relative to `lockFileURL`, which defaults from it — but
+    `cdnUrl` is computed as `packageBaseUrl ?? cdn.jsdelivr.net/…`, so leaving it unset
+    keeps a jsDelivr URL alive in the runtime's own config as the fallback for anything the
+    lock file does not name. `pyodideOptions()` in `wheels.js` is the one caller.
+  - **npm ships 24 of Pyodide's 356 packages, and the staged lock file is TRIMMED to them.**
+    That is a real narrowing — jsDelivr served all 356, and the full distribution is a 334MB
+    download — but it must not lie: left whole, `import networkx` resolves to a wheel we do
+    not have and 404s against our own origin, which reads as the platform being broken. The
+    24 are dependency-closed and `test/setup-checks.mjs` asserts that they stay so.
+  - The check also refuses **any `http(s)://` host named anywhere in `app/src`**. Today there
+    are none. It is the kind of property that rots by accident — a font, a chart library, an
+    icon set, each added by somebody who was not on that network — so it is asserted rather
+    than remembered.
+- Only pythonwhat and its two non-bundled companions are vendored as **wheels**, under
+  `app/py/`. They are **build assets, not `public/`** — `icecore dev` points Vite's publicDir
+  at the course's staging directory, so the app's own `public/` is never served.
 - **A `WHEELS_BY_NAME` value may be a list, and then it is in install order with
   dependencies first.** micropip resolves each install independently and would otherwise
   fetch the dependency from PyPI, which is the one bit of network trust vendoring exists to

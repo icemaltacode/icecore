@@ -222,8 +222,19 @@ deploy: bundle _auth-json
     #
     # `--delete` respects these filters, so each pass only ever removes files of its own kind
     # and the allowlist below is still the whole of what the app owns.
+    #
+    # `pyodide/*` rides in this pass because it is the same KIND of thing as `assets/*`: the
+    # version is in the path, so a URL under it can never change meaning and a bump is a new
+    # set of names rather than a stale one. It cannot BE in assets/ - Pyodide builds its own
+    # URLs by filename out of pyodide-lock.json, so content hashing would leave it asking for
+    # files that do not exist. See src/pyodide-dist.mjs.
+    #
+    # A prefix rather than a list of thirty version-tagged filenames, which is the same
+    # licence `assets/*` already takes and rests on the same fact: the whole prefix belongs to
+    # the app. `--delete` then removes the previous version's copy on a bump, which is the
+    # wanted behaviour and the reason 65MB does not accumulate.
     aws s3 sync dist/ "s3://$bucket/" --delete \
-      --exclude '*' --include 'assets/*' \
+      --exclude '*' --include 'assets/*' --include 'pyodide/*' \
       --cache-control 'public,max-age=31536000,immutable'
     # `no-cache` is REVALIDATE, not "never store": the browser keeps it and asks whether it
     # is still current, which is one conditional request and usually a 304. `no-store` would
