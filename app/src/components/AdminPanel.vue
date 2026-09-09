@@ -260,7 +260,7 @@ const seenAt = iso => {
             </optgroup>
             <optgroup label="Accounts">
               <option value="!admins">Admins</option>
-              <option value="!online">In a lesson now</option>
+              <option value="!online">Online now</option>
               <option value="!invited">Not signed in yet</option>
               <option value="!suspended">Suspended</option>
             </optgroup>
@@ -281,13 +281,13 @@ const seenAt = iso => {
             <tbody>
               <tr v-for="u in shown" :key="u.sub" @click="go('people', u.sub)">
                 <td>
-                  <!-- CONNECTED RIGHT NOW, which is only ever true while a lesson is
-                       running - so it is a dot beside the name rather than a column of its
-                       own, which would be empty most of the day. The Last seen column is
-                       what the row says the rest of the time. Titled, because a coloured
-                       dot with no words is a legend somebody has to be told. -->
+                  <!-- SIGNED IN RIGHT NOW, wherever they are and whatever they are doing -
+                       see presence.js. It is a dot beside the name rather than a column of
+                       its own because it is one bit, and the Last seen column beside it is
+                       the same fact once it has gone cold. Titled, because a coloured dot
+                       with no words is a legend somebody has to be told. -->
                   <span class="dot" :class="{ live: u.online }"
-                        :title="u.online ? 'In a lesson now' : 'Not connected'"></span>
+                        :title="u.online ? 'Online now' : 'Not online'"></span>
                   <strong>{{ u.name || '—' }}</strong>
                   <span v-if="u.admin" class="tag admin">admin</span>
                 </td>
@@ -307,11 +307,12 @@ const seenAt = iso => {
                     <span v-for="c in u.courses" :key="c" class="tag">{{ titles[c] || c }}</span>
                   </template>
                 </td>
-                <!-- "In the lesson" outranks a timestamp: somebody connected right now was
-                     also working a minute ago, and printing "1 min ago" beside a live dot
-                     says the smaller of the two true things. -->
+                <!-- "Online now" outranks a timestamp. Somebody signed in right now
+                     stamped their presence a minute ago, so this cell would otherwise read
+                     "1 min ago" beside a lit dot - the smaller of the two true things, and
+                     the one the reader has to translate. -->
                 <td class="seen" :class="{ dim: !u.online && !u.seen }">
-                  {{ u.online ? 'In the lesson' : seenAt(u.seen) }}
+                  {{ u.online ? 'Online now' : seenAt(u.seen) }}
                 </td>
                 <td><span class="state" :class="state(u).tone">{{ state(u).text }}</span></td>
                 <!-- The whole row opens the dialog, so this is the keyboard route to the

@@ -562,6 +562,13 @@ column in your \`SELECT\` is either grouped or aggregated. You are close.
     return { ticket: 'preview', expires: new Date(Date.now() + 60000).toISOString() };
   }
 
+  /* THE HEARTBEAT, ANSWERED AND OTHERWISE IGNORED. Every tab sends one every two minutes,
+   * including this one - `presence.js` has no idea it is talking to a stand-in - so without
+   * this a preview run throws on an unknown route every two minutes, forever. Nothing is
+   * recorded: who is online here is `PREVIEW_ONLINE`, a constant, because this screen has to
+   * be reachable in the state the real thing shows nothing in. */
+  if (route === 'account/here') return { ok: true };
+
   if (route === 'admin/users') {
     const users = await seed();
     /* One person, and one of their courses. Invented rather than read: nothing local holds

@@ -2,6 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount, onUnmounted } from 'vue';
 import { loadManifest, loadCourse, loadPlayground } from './content.js';
 import { loadAuthConfig, isEnabled, restore, startSession, signOut, session, api } from './auth.js';
+import { startPresence, stopPresence } from './presence.js';
 import { progressId } from './progress.js';
 import { me as mySubject, watching, driving } from './subject.js';
 import CodingExercise from './components/CodingExercise.vue';
@@ -1307,6 +1308,18 @@ async function onAuthenticated(token) {
   // has started opens the site, and the first thing they should see is the way in.
   if (!isAdmin.value) watchForSessions();
 }
+
+/* SAYING WE ARE HERE, for as long as we are. See presence.js.
+ *
+ * A WATCHER ON THE SUB RATHER THAN A CALL BESIDE EACH `startSession`, of which there are two
+ * - the restore on mount and the sign-in form - and there would be a third the next time
+ * somebody adds a way in. It also gets the ending for free: `signOut` clears the sub, and a
+ * tab that has signed out is not somebody who is here.
+ *
+ * `immediate`, because on the mount path the session is already established by the time this
+ * component's watchers are set up, so a lazy one would wait two minutes to say anything. */
+watch(() => session.sub, sub => (sub ? startPresence() : stopPresence()), { immediate: true });
+onUnmounted(stopPresence);
 
 /* A solve carries the code that did it, so an exercise a student comes back to shows their
  * own answer rather than the starter.

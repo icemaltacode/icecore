@@ -600,6 +600,50 @@ async function reset(sub, course) {
   return json(200, { ok: true, course, removed });
 }
 
+/**
+ * "I AM HERE" - the only thing on this whole platform that records somebody simply being
+ * signed in, rather than doing something.
+ *
+ * NOTHING ELSE COULD ANSWER IT. Progress rows say what was solved, `LAST#` says where
+ * somebody got to, and a live connection row says who is in a lesson - all of which are
+ * about an activity. "Is Brenda logged in right now" is not, and every attempt to derive it
+ * from those is a different question wearing its clothes: a dot lit from `LAST#` claims
+ * somebody is here who closed their laptop three minutes ago, and a dot lit from a socket is
+ * dark all day because there is no lesson to be connected to.
+ *
+ * ONE SHARED PARTITION, NOT A ROW PER PERSON IN THEIR OWN. The reader is the People list,
+ * which asks "who is here" about everybody at once - so `PRESENCE` answers the whole screen
+ * in ONE query, where a row in each student's own partition would be a query each on the
+ * slowest screen in the app. What keeps that safe is that the SORT key is built from the
+ * claims and from nothing else: this function still cannot write a row about anybody but its
+ * caller, which is the property the file exists to have.
+ *
+ * IT IS DELETED WITH THE PERSON, by `forget()` in the admin function. A row outside
+ * `USER#<sub>` is a row that would otherwise outlive them still naming their sub - the trap
+ * the hint ledger was deliberately shaped to avoid - and a TTL bounding it to three months
+ * is not the same as it being gone.
+ *
+ * A PING IS NOT A LOGIN. It says the tab was open a moment ago, which is the honest limit:
+ * a laptop that sleeps stops pinging and goes dark within the window, and a tab left open on
+ * a machine somebody walked away from reads as present. That is the same thing every
+ * presence indicator anywhere means, and it is why the window is minutes rather than hours.
+ */
+const PRESENCE_DAYS = 90;
+async function here(sub) {
+  await ddb.send(new PutCommand({
+    TableName: TABLE,
+    Item: {
+      pk: 'PRESENCE', sk: `SEEN#${sub}`,
+      at: new Date().toISOString(),
+      /* LONG, BECAUSE THIS ROW IS TWO THINGS. Within minutes of `at` it is presence; long
+       * after, it is still the best answer to "when was this person last here", which is a
+       * column on the same screen. A TTL sized to the dot would throw away the other one. */
+      ttl: Math.floor(Date.now() / 1000) + PRESENCE_DAYS * 86400,
+    },
+  }));
+  return json(200, { ok: true });
+}
+
 export async function handler(event) {
   const claims = event.requestContext?.authorizer?.jwt?.claims;
   const sub = claims?.sub;
@@ -616,6 +660,9 @@ export async function handler(event) {
     if (method === 'DELETE' && sub2 === 'progress')
       return await reset(sub, event.queryStringParameters?.course);
     if (method === 'GET' && sub2 === 'export') return await exportAll(sub, claims);
+    /* First, because it is by far the most frequent call this function takes - every open
+     * tab, every couple of minutes - and it does one PutItem and nothing else. */
+    if (method === 'POST' && sub2 === 'here') return await here(sub);
     if (method === 'POST' && sub2 === 'avatar')
       return await setAvatar(sub, JSON.parse(event.body || '{}'));
     if (method === 'DELETE' && sub2 === 'avatar') return await clearAvatar(sub);

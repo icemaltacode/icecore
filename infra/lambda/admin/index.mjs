@@ -160,57 +160,47 @@ async function lastSeen(sub) {
 }
 
 /**
- * WHO HAS A LIVE SOCKET RIGHT NOW - every one of them, across every session running.
+ * WHO IS SIGNED IN RIGHT NOW, wherever they are and whatever they are doing.
  *
- * COSTED AGAINST SESSIONS, NOT AGAINST PEOPLE, which is what makes it affordable on the one
- * screen in this app that already fans out per user. A connection row is
- * `CONN#<id>`/`LIVECONN#<cohort>` and `byCourse` inverts the key, so one query per running
- * session returns every connection in it - and there is usually one session running and
- * often none. The alternative, asking per person, would be a query each to answer a question
- * about a handful of rooms.
+ * IT USED TO BE WHO HELD A LIVE SOCKET, and that was the wrong question answered accurately.
+ * A connection only exists while a LESSON is running, so the dot was dark for everybody
+ * every evening - including for the admin looking at it, who was plainly signed in. A signal
+ * that is correct and useless reads exactly like one that is broken.
  *
- * COUNTED BY PERSON, NOT BY CONNECTION. Somebody with two tabs is two rows and one student,
- * which is the same rule the room panel keeps with `conns` - here a Set collapses it,
- * because a dot is on or off and cannot be on twice.
+ * SO SOMETHING HAD TO RECORD IT, because nothing did: every other row on this table is about
+ * an ACTIVITY - what was solved, where somebody got to, who is in a room - and being signed
+ * in is not one. `here()` in the account function is that write, one `PRESENCE` row per
+ * person, stamped by every open tab every couple of minutes.
  *
- * NOBODY IS ONLINE WHEN NOTHING IS RUNNING, and that is the truth rather than a failure. It
- * is also why this is not the whole answer on that screen: outside a lesson every dot is
- * dark, so `lastSeen` is what the row actually says most of the time.
+ * ONE QUERY FOR THE WHOLE SCREEN, which is the shape that partition was chosen for: the
+ * question is asked about everybody at once, and a row in each person's own partition would
+ * have been a query each on a listing that already fans out per user.
+ *
+ * THE WINDOW IS THE WHOLE DEFINITION, and a TTL cannot do this job: DynamoDB deletes an
+ * expired item within 48 hours rather than at the instant, so a row's existence says nothing
+ * about when it was written. The stamp is compared instead - and the row is kept for months
+ * on purpose, because long after it has stopped meaning "here" it is still the best answer
+ * to "when were they last here", which is the column beside the dot.
  */
-async function connectedSubs() {
-  const sessions = await queryAll({
+const PRESENT_MINUTES = 5;
+async function presence() {
+  const rows = await queryAll({
     TableName: TABLE,
     KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
-    ExpressionAttributeValues: { ':pk': COHORTS, ':sk': 'LIVE#' },
-    ProjectionExpression: 'sk',
+    ExpressionAttributeValues: { ':pk': 'PRESENCE', ':sk': 'SEEN#' },
+    // `at` is a DynamoDB reserved word, and so is `sub` - which is why neither is named bare.
+    ProjectionExpression: 'sk, #a',
+    ExpressionAttributeNames: { '#a': 'at' },
   });
-  /* `begins_with(sk, 'LIVE#')` IS THE WHOLE FILTER, and it is enough because of how the
-   * neighbouring rows are spelled: a bookmark is `LIVEMARK#` and a finished lesson is
-   * `LIVEPAST#`, deliberately without the `#` after LIVE, so neither is inside this range.
-   * `running()` in the live function is the same query and the rule is stated there - this
-   * is a second reader of it, not a second version of it, so it must not invent a guard of
-   * its own that would then be the only thing keeping the two agreeing.
-   *
-   * WHAT THIS CAN BE STALE ABOUT is a socket that died without saying so: the row goes on
-   * `$disconnect` and otherwise on its TTL. That is the same set of rows the room panel
-   * draws from, which is the point - two screens disagreeing about who is in the lesson
-   * would be worse than both being briefly generous. */
-  const cohorts = sessions.map(r => r.sk.slice('LIVE#'.length)).filter(Boolean);
-  const here = new Set();
-  /* `sub` IS A DYNAMODB RESERVED WORD and has to be aliased, exactly as `at` is a line
-   * above. Projected bare it is a ValidationException, and because this whole function is
-   * inside the listing's `Promise.all` that is not a missing dot - it is the People screen
-   * answering 400 and drawing nothing.
-   *
-   * IT WOULD HAVE WAITED FOR A LESSON TO SHOW ITSELF, which is what makes it worth a
-   * comment: with no session running `cohorts` is empty, `Promise.all([])` runs no query,
-   * and the bad projection is never evaluated. So it works perfectly until the first time
-   * somebody starts teaching. */
-  const rooms = await Promise.all(cohorts.map(c => byCourse(`LIVECONN#${c}`, {
-    ProjectionExpression: '#s', ExpressionAttributeNames: { '#s': 'sub' },
-  })));
-  for (const room of rooms) for (const r of room) if (r.sub) here.add(r.sub);
-  return here;
+  const cutoff = new Date(Date.now() - PRESENT_MINUTES * 60000).toISOString();
+  const seen = new Map();
+  for (const r of rows) if (typeof r.at === 'string') seen.set(r.sk.slice('SEEN#'.length), r.at);
+  return {
+    /* TWO MINUTES OF PING AND THREE OF SLACK. One missed beat - a hiccup, a throttled
+     * background tab - must not blink somebody out of the room and back. */
+    online: new Set([...seen].filter(([, at]) => at > cutoff).map(([s]) => s)),
+    seen,
+  };
 }
 
 /**
@@ -491,7 +481,14 @@ async function forget(sub) {
     removed += items.length;
     start = r.LastEvaluatedKey;
   } while (start);
-  return removed;
+
+  /* AND THE ONE ROW THAT IS NOT IN THEIR PARTITION. Presence lives under `PRESENCE` so the
+   * People list can read the whole room in one query - which means the loop above, which
+   * walks `USER#<sub>` and nothing else, cannot see it. Left behind it would be a row naming
+   * a deleted person for the next three months; a TTL bounding that is not the same as it
+   * being gone, and this is the file that promises it is. */
+  await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: 'PRESENCE', sk: `SEEN#${sub}` } }));
+  return removed + 1;
 }
 
 const clean = email => String(email || '').trim().toLowerCase();
@@ -572,8 +569,8 @@ export async function handler(event) {
 }
 
 async function getUsers() {
-  const [{ users, truncated }, admins, cohorts, here] = await Promise.all([
-    listUsers(), adminSubs(), listCohorts(), connectedSubs(),
+  const [{ users, truncated }, admins, cohorts, present] = await Promise.all([
+    listUsers(), adminSubs(), listCohorts(), presence(),
   ]);
   /* One query per user rather than one per course, because only the first is authoritative:
    * the catalogue of courses lives in the content bucket and is assembled from every
@@ -601,8 +598,13 @@ async function getUsers() {
        * true only while there is a lesson to be connected to; `seen` is the answer the rest
        * of the time. Folded into one field, a screen would have to guess which it was
        * looking at, and would guess "offline" for everybody every evening. */
-      online: here.has(u.sub),
-      seen: on[i].seen,
+      online: present.online.has(u.sub),
+      /* THE NEWER OF THE TWO, because they are two different records of the same fact and
+       * each reaches where the other cannot. The presence stamp is exact and knows about
+       * somebody who only ever reads; `LAST#` is written when work is done and predates
+       * presence existing at all, so it is what answers for everybody who has not been back
+       * since. Taking the max means the column was never empty for a day after this shipped. */
+      seen: [present.seen.get(u.sub), on[i].seen].filter(Boolean).sort().pop() || null,
     })),
     cohorts,
     truncated,

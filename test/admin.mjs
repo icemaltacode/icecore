@@ -54,17 +54,17 @@ check('and it has a Last seen column', /Last seen/.test(text()), text().slice(0,
 
 // --------------------------------------------------------------- connected now
 /* TWO FACTS, SAID SEPARATELY, and this is the pair that must not collapse into one. `online`
- * is only ever true while there is a lesson to be connected TO, so a screen that carried it
- * alone would show every dot dark every evening and read as broken; `seen` is what the row
- * says the rest of the time. */
+ * is a heartbeat inside the last few minutes - see presence.js - and `seen` is the same fact
+ * once it has gone cold. One field could not carry both: a timestamp cannot say "now" and a
+ * boolean cannot say "31 Aug". */
 const katherine = rowFor('Katherine Johnson');
 check('somebody connected right now is marked', !!katherine?.querySelector('.dot.live'),
       katherine?.innerHTML.slice(0, 160));
 check('and the row says so in words as well as in a colour',
-      /In the lesson/.test(katherine?.textContent || ''), katherine?.textContent);
+      /Online now/.test(katherine?.textContent || ''), katherine?.textContent);
 
 const ada = rowFor('Ada Lovelace');
-check('somebody who is not connected gets a dot that is not lit',
+check('somebody who is not online gets a dot that is not lit',
       !!ada?.querySelector('.dot') && !ada.querySelector('.dot.live'), ada?.innerHTML.slice(0, 160));
 /* THE DOT IS DRAWN FOR EVERYBODY, not only for the people who are on. A mark that appears
  * and disappears makes every name jump sideways the moment somebody connects, and a dot that
@@ -90,11 +90,11 @@ check('and its Last seen cell is blank rather than a claim',
       !!grace?.querySelector('.seen.dim'), grace?.innerHTML.slice(0, 240));
 
 // --------------------------------------------------------------- and filtering
-/* A FILTER FOR IT, because the question "who is actually in my lesson" is asked of a list
- * that may be hundreds long - and the dot is only findable by eye. */
+/* A FILTER FOR IT, because "who is online" is asked of a list that may be hundreds long and
+ * the dot is only findable by eye. */
 const filterSelect = [...document.querySelectorAll('select')]
   .find(s => [...s.options].some(o => o.value === '!online'));
-check('the list can be filtered to whoever is in a lesson', !!filterSelect,
+check('the list can be filtered to whoever is online', !!filterSelect,
       [...document.querySelectorAll('select')].map(s => s.name || s.className).join(','));
 if (filterSelect) {
   filterSelect.value = '!online';

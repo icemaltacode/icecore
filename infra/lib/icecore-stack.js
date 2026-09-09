@@ -503,6 +503,15 @@ export class IcecoreStack extends Stack {
       methods: [HttpMethod.POST, HttpMethod.DELETE],
       integration: new HttpLambdaIntegration('AccountAvatarIntegration', account),
     });
+    /* The heartbeat. On the account function because it is a fact about the caller written
+     * to a key built from their claims - which is the whole of that function's contract -
+     * and NOT on the session function, which is on the sign-in path, holds the signing key
+     * and is deliberately granted read only. */
+    api.addRoutes({
+      path: '/api/account/here',
+      methods: [HttpMethod.POST],
+      integration: new HttpLambdaIntegration('AccountHereIntegration', account),
+    });
     api.addRoutes({
       path: '/api/account/export',
       methods: [HttpMethod.GET],
