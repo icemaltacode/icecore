@@ -233,7 +233,7 @@ watch(() => props.pressed?.when, () => {
    * and a separate one; grading an empty answer as a failure is not a smaller version of it.
    */
   if (isMcqStep.value && picked.value === null) return;
-  if (p.do === 'run') doRun({ whole: true });
+  if (p.do === 'run') doRun({ whole: true, only: p.sel || null });
   else if (p.do === 'check') doCheck();
 });
 
@@ -247,12 +247,23 @@ watch(() => props.pressed?.when, () => {
  * demonstrating to the room pressed Run against THEIR buffer; honouring a selection this
  * student happens to have left lying in a frozen editor would run something nobody asked
  * for, on a screen they cannot type in.
+ *
+ * `only` IS THAT PRESS SAYING WHAT IT RAN. `whole` was the whole of the answer while a press
+ * could not carry a selection, and it was the wrong half of it: an educator running four
+ * lines of a long query had every screen in the room run the entire file, which is a
+ * different demonstration from the one they were giving. The educator's selection arrives as
+ * TEXT and is run as text - offsets would be indexed against this browser's copy of the
+ * buffer, which is a debounced beat behind theirs. `whole` still answers the press that
+ * carries nothing, which is what makes this student's stale highlight stay ignored.
  */
-async function doRun({ whole = false } = {}) {
-  /* Said out loud on every press. Only a CONTROL TAB relays it - see App.vue - so a
-   * press that arrived from one does not bounce back to where it came from. */
-  emit('act', 'run');
-  const sending = whole ? code.value : (running.value ?? code.value);
+async function doRun({ whole = false, only = null } = {}) {
+  /* The lines this press is against, or null for the buffer: what an educator's press
+   * brought with it, else what is highlighted here, else nothing. */
+  const sel = only ?? (whole ? null : running.value);
+  const sending = sel ?? code.value;
+  /* Said out loud on every press, WITH what it ran. Only a CONTROL TAB relays it - see
+   * App.vue - so a press that arrived from one does not bounce back to where it came from. */
+  emit('act', 'run', sel);
   busy.value = true; error.value = ''; verdict.value = null;
   try { result.value = await run(props.courseId, props.exercise.dataset, sending, props.exercise.setup); }
   catch (e) { error.value = e.message; result.value = null; urgeHelp.value = true; }

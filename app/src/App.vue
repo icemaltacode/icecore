@@ -1017,14 +1017,20 @@ function editorChanged({ code, cursor, anchor, step }) {
  * NOT A LOOP, either way round. A relayed press runs `doRun`/`doCheck` on the receiving
  * side, which announces itself here exactly as a local one does, and is dropped there
  * because a student's tab is neither a control tab nor the deliverer's.
+ *
+ * `sel` IS WHAT THE BUTTON WAS PRESSED AGAINST - the highlighted lines, or null for the
+ * buffer. It comes from the component rather than from `myCursor`/`myAnchor` here, and that
+ * is the point: those arrive on the editor's debounced beat, so an educator who highlights
+ * four lines and presses Run in the same movement would relay the selection they had a beat
+ * ago. The component knows exactly what its own press ran, and says so.
  */
-const relayAct = what => {
+const relayAct = (what, sel = null) => {
   const at = current.value?.id ?? null;
   if (controlSub.value) {
-    if (drivingSomebody()) press(what, at, 'driven');
+    if (drivingSomebody()) press(what, at, 'driven', sel);
     return;
   }
-  if (delivery.mine && sync.on) press(what, at, 'room');
+  if (delivery.mine && sync.on) press(what, at, 'room', sel);
 };
 
 /* THE POINTER, WATCHED ONLY WHILE THIS TAB IS DRIVING SOMEBODY.

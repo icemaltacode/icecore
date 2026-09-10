@@ -650,6 +650,23 @@ try {
      * having changed. */
     check('and carries a moment, so a second press is a second press', !!acted?.when,
           JSON.stringify(acted));
+    /* A PRESS AGAINST A SELECTION IS NOT A PRESS AGAINST THE BUFFER, and it arrived as one:
+     * a run of four highlighted lines ran the whole file on the other screen. The lines
+     * travel as TEXT, because this message does not carry the document a pair of offsets
+     * would index. */
+    check('and nothing was selected, so nothing is claimed to have been',
+          acted?.sel === null, JSON.stringify(acted));
+    A.ws.send(JSON.stringify({ type: 'act', do: 'run', at: '202', sel: 'SELECT 1' }));
+    check('a run against a selection carries the lines it ran',
+          (await heardB.next('acting'))?.sel === 'SELECT 1', 'the selection did not travel');
+
+    /* CHECK GRADES A SUBMISSION. A verdict on the three lines somebody happened to have
+     * highlighted would be wrong rather than smaller, so a selection on a Check is dropped
+     * here as well as ignored there - one rule, stated at both ends. */
+    A.ws.send(JSON.stringify({ type: 'act', do: 'check', at: '202', sel: 'SELECT 1' }));
+    const checked = await heardB.next('acting');
+    check('and a Check carries none, whatever it claims',
+          checked?.do === 'check' && checked?.sel === null, JSON.stringify(checked));
 
     /* MATCHED AGAINST A LIST, NOT PASSED THROUGH. It is a string from a client that arrives
      * at the other end as an instruction to execute something, and the set of things a

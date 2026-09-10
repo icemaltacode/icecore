@@ -105,8 +105,19 @@ export const borrowed = reactive({ at: null, code: null, when: null });
  * `at` NAMES THE EXERCISE, and `when` changes on every press so a watcher fires on the
  * MESSAGE rather than the verb: pressing Run twice is two presses, and watching `do` alone
  * would see the second as nothing having changed.
+ *
+ * `sel` IS THE LINES THAT WERE HIGHLIGHTED, as TEXT, and null when the press was against the
+ * whole buffer. It has to be the text rather than the two offsets, for the reason the caret
+ * already travels bundled with the code it indexes: a range is a pair of numbers INTO a
+ * document, this message does not carry that document, and the copy on the other side is a
+ * debounced beat behind the one the educator was looking at. Offsets against text that has
+ * moved slice out characters nobody chose - and running characters nobody chose in front of
+ * a class is worse than running too many.
+ *
+ * Check never carries one: it grades a SUBMISSION, and a verdict on a highlighted fragment
+ * would be wrong rather than smaller. Same rule the exercise components already state.
  */
-export const pressed = reactive({ do: null, at: null, when: null });
+export const pressed = reactive({ do: null, at: null, sel: null, when: null });
 
 /**
  * WHERE THE PERSON DRIVING THIS SCREEN IS POINTING - `{ region, x, y }` against a named
@@ -212,7 +223,7 @@ export function forget() {
   driven.position = null; driven.code = null; driven.cursor = null; driven.anchor = null;
   driven.at = null;
   borrowed.at = null; borrowed.code = null; borrowed.when = null;
-  pressed.do = null; pressed.at = null; pressed.when = null;
+  pressed.do = null; pressed.at = null; pressed.sel = null; pressed.when = null;
   pointer.region = null;
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
   sync.when = null;
@@ -429,6 +440,9 @@ const HANDLERS = {
   acting(m) {
     pressed.do = m.do || null;
     pressed.at = m.at ?? null;
+    /* Absent means the whole buffer, which is what every press was before selections could
+     * travel - so an old client's press goes on meaning exactly what it used to. */
+    pressed.sel = typeof m.sel === 'string' && m.sel ? m.sel : null;
     pressed.when = m.when || new Date().toISOString();
   },
   /* What the student had written when we took over. Only a controller ever receives one. */
@@ -587,9 +601,13 @@ export const drive = where => send('drive', {
  * educator's code on every screen and then stopped: Run and Check ran in their own tab
  * alone, so a class watched an answer being typed and then watched nothing happen to it -
  * exactly the fault control had before `act` existed, one audience further out.
+ *
+ * `sel` IS WHAT THE PRESS WAS AGAINST - the highlighted lines, or null for the buffer. An
+ * educator running four lines of a long query in front of a class had the whole file run on
+ * every screen, which is a different demonstration from the one they gave. See `pressed`.
  */
-export const press = (what, at, to = 'driven') =>
-  send('act', { do: what, at: at ?? null, to });
+export const press = (what, at, to = 'driven', sel = null) =>
+  send('act', { do: what, at: at ?? null, to, sel: sel || null });
 
 /**
  * Say where the pointer is, or that it has gone.

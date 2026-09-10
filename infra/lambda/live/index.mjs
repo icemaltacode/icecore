@@ -1272,6 +1272,15 @@ async function tallied(cohort, mark, seeded = false) {
      * The verb is matched against a list rather than passed through. It is a string from a
      * client that arrives as an instruction to execute something, and the set of things a
      * driver may press is closed and short.
+     *
+     * AND SO IS WHAT IT RAN. `sel` is the lines the educator had highlighted, as text: a
+     * press against a selection was arriving as a press against the buffer, so a class
+     * watching four lines of a long query be run saw the whole file run on their own screens.
+     * The TEXT rather than the two offsets, because this message does not carry the document
+     * the offsets would index and the copy on the other side is a beat behind - see the
+     * client's `pressed`. Bounded by EDITOR_LIMIT, which is what already bounds the buffer it
+     * is a piece of, and passed through untouched otherwise: it is code on its way to an
+     * editor, exactly as `push` and `drive` carry code.
      */
     case 'act': {
       const what = ['run', 'check'].includes(msg.do) ? msg.do : null;
@@ -1293,6 +1302,10 @@ async function tallied(cohort, mark, seeded = false) {
         type: 'acting',
         do: what,
         at: msg.at == null ? null : String(msg.at).slice(0, 200),
+        /* Only Run has one. Check grades a submission, so a Check that named a fragment
+         * would be asking for a verdict on something nobody submitted. */
+        sel: what === 'run' && typeof msg.sel === 'string' && msg.sel
+          ? msg.sel.slice(0, EDITOR_LIMIT) : null,
         /* Changes on every press, so the other side watches the MESSAGE rather than the
          * instruction - pressing Run twice is two presses, and a watcher on the verb alone
          * would see the second as nothing having changed. Same reason `driven.at` exists. */
