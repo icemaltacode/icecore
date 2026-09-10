@@ -1012,7 +1012,10 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
       roomTimers.push(setTimeout(() => {
         const row = demoAt();
         if (!row) return;
-        emit({ type: 'synced', at: row.at, code: DEMO.slice(0, i), cursor: i,
+        /* The step travels with the buffer - see `pushEditor`. Nought here, because the
+         * exercise this lands on is whichever the walk reached and a stand-in has no
+         * business asserting which step of it the educator is on. */
+        emit({ type: 'synced', at: row.at, code: DEMO.slice(0, i), cursor: i, step: 0,
                when: new Date().toISOString() });
       }, 45000 + i * 60));
     }

@@ -78,6 +78,88 @@ export function saveDraft(course, exercise, step, source) {
   try { localStorage.setItem(draftKey(course), JSON.stringify(rec)); } catch { /* full */ }
 }
 
+/* WHAT THE EDUCATOR WROTE IN FRONT OF THE CLASS, kept so a student can come back to it.
+ *
+ * Sharing an editor used to write into the student's own buffer and hand it back afterwards.
+ * It opens a tab of its own now, which is why this record exists at all: the demonstration
+ * is a second thing on the screen rather than a temporary state of the first, and a second
+ * thing on the screen has to survive the component remounting on the next navigation.
+ *
+ * NOT FOLDED INTO `drafts`, though it is the same shape. The whole rule the tab exists to
+ * keep is that the educator's text is not the student's work - one store holding both is
+ * that rule waiting to be forgotten, and `draftFor` is read straight into the editor a
+ * student is graded from.
+ *
+ * KEYED BY COHORT, and that is not a hypothetical. The store is local, so cohort B's browser
+ * never receives cohort A's push - but somebody retaking a course with the next intake is
+ * the SAME browser, and without the cohort in the key they come back to last term's
+ * demonstrations from a class they have left.
+ *
+ * Nested under one key per course rather than a key per cohort, so `forget(course)` stays a
+ * single `removeItem` like every other record here, and so the eviction bound is over the
+ * whole store: somebody in three intakes should not get three times the room in a
+ * five-megabyte box. Evicted by `at`, so it is the current term that survives.
+ *
+ * `by` RIDES ALONG because the tab is named after the educator, and a version read back
+ * outside a lesson has no live session to ask.
+ */
+const sharedKey = course => `ice-platform-shared:${course}`;
+
+/** Everything kept, as `{ cohort: { exerciseId: { at, by, steps } } }`. */
+export function shared(course) {
+  const raw = read(sharedKey(course));
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+}
+
+/**
+ * One exercise's demonstration, or null.
+ *
+ * `cohort` NULL MEANS "not in a lesson", and then the most recent across every intake wins -
+ * it is the last thing this student was taught, and the tab carries `by` so they can see
+ * whose it is. During a lesson the cohort is known and is the only honest answer, which is
+ * why it is asked for rather than always guessed at.
+ */
+export function sharedFor(course, cohort, exercise) {
+  const rec = shared(course);
+  const id = String(exercise);
+  if (cohort != null) return rec[String(cohort)]?.[id] || null;
+  let best = null;
+  for (const held of Object.values(rec)) {
+    const one = held?.[id];
+    if (one && (!best || (one.at || 0) > (best.at || 0))) best = one;
+  }
+  return best;
+}
+
+/**
+ * Keep what the educator has in their editor, for this cohort's copy of this exercise.
+ *
+ * Bounded and evicted exactly as a draft is, and for the same reason - it is text from an
+ * editor going into a store that has no second chance when it fills. The count is over every
+ * cohort at once, so the bound means what it says.
+ */
+export function saveShared(course, cohort, exercise, step, source, by) {
+  if (cohort == null || typeof source !== 'string' || source.length > DRAFT_STEP_LIMIT) return;
+  const rec = shared(course);
+  const c = String(cohort);
+  const id = String(exercise);
+  const held = rec[c] || (rec[c] = {});
+  held[id] = { at: Date.now(), by: by || held[id]?.by || '',
+               steps: { ...(held[id]?.steps || {}), [String(step)]: source } };
+  /* Flattened to `cohort/exercise` pairs so the oldest go first wherever they live - a bound
+   * counted per cohort would be three bounds for somebody in three intakes. */
+  const all = Object.entries(rec).flatMap(([ck, held_]) =>
+    Object.keys(held_).map(ek => [ck, ek, held_[ek].at || 0]));
+  if (all.length > DRAFT_KEEP) {
+    all.sort((a, b) => a[2] - b[2]);
+    for (const [ck, ek] of all.slice(0, all.length - DRAFT_KEEP)) {
+      delete rec[ck][ek];
+      if (!Object.keys(rec[ck]).length) delete rec[ck];
+    }
+  }
+  try { localStorage.setItem(sharedKey(course), JSON.stringify(rec)); } catch { /* full */ }
+}
+
 /* WHICH ANSWERS HAVE BEEN LOOKED AT, and the warning preference that guards them.
  *
  * Revealing a solution forfeits the exercise's XP, so this has to outlive the page: a
@@ -131,6 +213,9 @@ export function forget(course) {
   // Starting a course again means the answers are unseen again - otherwise a reset course
   // is one a student can never earn anything on.
   localStorage.removeItem(revealKey(course));
+  // And the demonstrations go with it: a reset that left last term's shared editors behind
+  // is a reset that did not work.
+  localStorage.removeItem(sharedKey(course));
 }
 
 /** What a course has earned so far, as `{ exerciseId: xp }`. */

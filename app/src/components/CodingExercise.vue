@@ -1,6 +1,6 @@
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
-import CodeEditor from './CodeEditor.vue';
+import EditorPane from './EditorPane.vue';
 import ResultGrid from './ResultGrid.vue';
 import { run, resetDb } from '../db.js';
 import { grade } from '../grade.js';
@@ -35,6 +35,16 @@ const props = defineProps({
   /** The far end of their selection, when they have one. Travels with the caret - see below. */
   peerAnchor: { type: Number, default: null },
   peerName: String,
+  /* WHAT THE EDUCATOR WROTE, for this step, as `{ code, by }` - the shared editor. It opens
+   * a tab of its own rather than being written into the buffer above: nothing of the
+   * student's is touched, so there is nothing to hand back when it stops. `live` says it is
+   * arriving now rather than being read back from a lesson that has finished. See
+   * EditorPane.vue, which owns everything about how the two are shown. */
+  shared: Object,
+  live: Boolean,
+  /** The educator's caret, in the educator's own tab. Not `peerAt`, which is this buffer. */
+  sharedAt: { type: Number, default: null },
+  sharedAnchor: { type: Number, default: null },
   courseId: String, exercise: Object, done: Boolean,
   /** What solved this exercise last time, keyed by step index. Absent until it has been. */
   saved: Object,
@@ -97,12 +107,21 @@ const onCursor = ({ head, anchor }) => {
   sendSoon();
 };
 
+/* WHICH BUFFER A RUN IS ABOUT, reported by the pane - `{ mine, code, cursor, anchor }`.
+ *
+ * There are two editors on this screen now, and Run acts on whichever the student is looking
+ * at: running the educator's code to see what it does is what a demonstration is FOR. Check
+ * is not offered the choice - it grades a submission, and only the student's own buffer is
+ * one. The same sentence `selection.js` already makes about a highlighted range. */
+const active = ref({ mine: true, code: '', cursor: null, anchor: null });
+
 /* WHAT RUN WILL RUN - the highlighted lines, or null when nothing is highlighted. See
  * selection.js, which owns every rule about it so that Run means one thing in both
  * languages. Recomputed rather than captured when the drag ends: the buffer can change
  * underneath a selection, and a range remembered against text that has moved runs
  * characters nobody chose. */
-const running = computed(() => selectedCode(code.value, cursorAt.value, anchorAt.value));
+const running = computed(() =>
+  selectedCode(active.value.code, active.value.cursor, active.value.anchor));
 watch(code, sendSoon);
 onBeforeUnmount(() => clearTimeout(beat));
 
@@ -260,7 +279,14 @@ async function doRun({ whole = false, only = null } = {}) {
   /* The lines this press is against, or null for the buffer: what an educator's press
    * brought with it, else what is highlighted here, else nothing. */
   const sel = only ?? (whole ? null : running.value);
-  const sending = sel ?? code.value;
+  /* A PRESS FROM SOMEWHERE ELSE RUNS WHAT IT WAS PRESSED AGAINST. While a demonstration is
+   * live that is the educator's version - it is the buffer they pressed Run on, and the one
+   * this student is being shown. A press from somebody DRIVING this screen is the opposite
+   * case: control writes into the student's own work deliberately, so that is the buffer. */
+  const buffer = whole
+    ? (props.live && typeof props.shared?.code === 'string' ? props.shared.code : code.value)
+    : active.value.code;
+  const sending = sel ?? buffer;
   /* Said out loud on every press, WITH what it ran. Only a CONTROL TAB relays it - see
    * App.vue - so a press that arrived from one does not bounce back to where it came from. */
   emit('act', 'run', sel);
@@ -342,7 +368,7 @@ async function doReset() {
 </script>
 
 <template>
-  <div class="coding">
+  <div class="coding" :class="{ demoing: live }">
     <section class="brief" data-point="prompt">
       <header>
         <h2>{{ exercise.title }}</h2>
@@ -414,13 +440,16 @@ async function doReset() {
     </section>
 
     <section class="work">
-      <div class="editor-pane" data-point="editor">
-        <div class="tabbar">
-          <span class="tab active">query.sql</span>
-          <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
-        </div>
-        <CodeEditor v-model="code" :readonly="frozen" :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
-                    @cursor="onCursor" @run="doRun" />
+      <div class="editor-pane">
+        <EditorPane v-model="code" name="query.sql" :readonly="frozen"
+                    :shared="shared" :live="live"
+                    :shared-at="sharedAt" :shared-anchor="sharedAnchor"
+                    :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
+                    @cursor="onCursor" @active="active = $event" @run="doRun()">
+          <template #right>
+            <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
+          </template>
+        </EditorPane>
         <div class="actions">
           <span v-if="verdict" class="verdict prose inline"
                 :class="{ pass: verdict.pass, fail: !verdict.pass }" v-html="mdx(verdict.reason)"></span>
@@ -432,8 +461,11 @@ async function doReset() {
                than the file would be a surprise the student had no way to see coming -
                most sharply in Python, where the setup is there and their own earlier lines
                are not, so a selection can fail for a reason the label explains. -->
+          <!-- AND IT SAYS WHOSE CODE, once there are two buffers to run. A student looking
+               at the educator's tab who pressed a button labelled "Run code" would fairly
+               expect their own. -->
           <button class="btn ghost" @click="doRun()" :disabled="busy">
-            {{ running ? 'Run selection' : 'Run code' }}
+            {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
           <button class="btn primary" @click="doCheck"
                   :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
@@ -448,7 +480,21 @@ async function doReset() {
 </template>
 
 <style scoped>
-.coding { display: grid; grid-template-columns: minmax(320px, 34%) minmax(0, 1fr); height: 100%; min-height: 0; }
+/* NARROWER THAN IT READS ALONE, because it is not alone any more. The prompt used to face
+   one editor and 34% was the comfortable share; facing two it is the column that decides
+   whether the split fits at all, and every point taken off it is a point of code. Still
+   floored, so a narrow window gives the instructions back rather than squeezing them to a
+   word a line.
+
+   AND IT GIVES WAY AGAIN WHILE A DEMONSTRATION IS RUNNING. A static reduction is the wrong
+   shape on its own: the instructions are the most useful thing on screen when a student is
+   working alone, and the least when they are watching somebody write the answer. So the
+   column that yields is the one whose value drops for exactly as long as the split needs the
+   room - and it comes straight back, because nothing was stored. The same reasoning as the
+   shell folding its chrome, one level further in. */
+.coding { display: grid; grid-template-columns: minmax(300px, 29%) minmax(0, 1fr);
+         height: 100%; min-height: 0; }
+.coding.demoing { grid-template-columns: minmax(260px, 21%) minmax(0, 1fr); }
 .brief { overflow: auto; padding: 24px 28px; border-right: 1px solid var(--ice-border); }
 header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 h2 { margin: 0 0 4px; font-size: 20px; }
@@ -489,6 +535,9 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 
 .work { display: grid; grid-template-rows: 1fr minmax(140px, 38%); min-height: 0; min-width: 0; }
 .editor-pane, .result-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* The editor pane is EditorPane's root; this only has to let it fill the row. Its own
+   internals - the tab bar, the split - are its business and are scoped to it. */
+.editor-pane > .pane { flex: 1; min-height: 0; }
 .result-pane { border-top: 1px solid var(--ice-border); }
 .tabbar { display: flex; align-items: center; gap: 8px; padding: 0 12px; background: var(--ice-bg-soft);
           border-bottom: 1px solid var(--ice-border); }

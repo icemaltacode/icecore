@@ -124,7 +124,19 @@ const WIDE = 1000;
 const remembered = localStorage.getItem(SIDEBAR_KEY);
 const pinned = ref(remembered === null ? innerWidth >= WIDE : remembered === 'yes');
 const peek = ref(false);
-const sidebarOpen = computed(() => pinned.value || peek.value);
+/* THE SIDEBAR AS THE LAYOUT SEES IT, which is not the same as the remembered answer.
+ *
+ * A demonstration folds the chrome away to make room for two editors, and folding it by
+ * narrowing the COLUMN alone is what broke: the rail is drawn only when `pinned` is false, so
+ * a pinned sidebar went on rendering its full self - brand, progress, contents - laid into
+ * 44px, and spilled across the exercise. A class cannot fold a component that is reading a
+ * different fact.
+ *
+ * So there is one fact, and everything reads it. `pinned` stays exactly what the student
+ * chose and is still what gets remembered; this is what the shell, the rail and the panel all
+ * ask. Same shape as LivePanel's `roomy`, and for the same reason. */
+const pinnedNow = computed(() => pinned.value && !makingRoom.value);
+const sidebarOpen = computed(() => pinnedNow.value || peek.value);
 
 watch(pinned, v => localStorage.setItem(SIDEBAR_KEY, v ? 'yes' : 'no'));
 
@@ -142,6 +154,11 @@ const hoverOut = () => {
 /* Unpinning does not slam it shut under the cursor - it just stops being permanent, and
  * the ordinary peek rules take it from there. */
 const togglePin = () => {
+  /* WHILE A DEMONSTRATION HAS FOLDED IT, THIS BUTTON ASKS FOR IT BACK. The remembered answer
+   * is already 'pinned' - it was the fold that took it away - so toggling that would turn a
+   * request to reopen into a request to close, and the control would look broken on the one
+   * screen where it is most in the way. */
+  if (makingRoom.value && pinned.value) { makingRoom.value = false; return; }
   pinned.value = !pinned.value;
   if (!pinned.value) peek.value = true;
 };
@@ -905,9 +922,49 @@ const myAt = ref(null);
  */
 const synced = computed(() => !!(delivery.cohort && !delivery.mine && !controlSub.value
   && sync.on && delivery.following && !beingDriven()));
+
 /** And whether the push in hand is for the exercise on screen - see `sync.at`. */
 const syncedHere = computed(() =>
   synced.value && sync.code != null && progressId(sync.at) === progressId(currentId.value));
+
+/* ---- FOLDING THE CHROME AWAY FOR A DEMONSTRATION --------------------------
+ *
+ * A demonstration is worth watching BESIDE your own work rather than instead of it, and two
+ * editors need room. The sidebar is 272px and the room is 336: railed and tucked they are 44
+ * each, which is 608px handed to the middle - usually the difference between a split and a
+ * fallback to tabs on the same screen.
+ *
+ * IT CHANGES WHAT THE COMPONENTS READ, NOT THE COLUMN THEY SIT IN, and that distinction is
+ * the whole of this. It began as a class on the shell - `railed`, `tucked` - forced on while
+ * a demonstration ran, which narrowed each column to 44px and told neither component. Both
+ * went on rendering their full selves into a rail: the room put a roster, a chat and a
+ * composer into it, and a PINNED sidebar put its brand, progress and contents there and
+ * spilled the lot across the exercise. The rail is only drawn when `pinned` is false, so
+ * folding the column without folding the fact left the layout with no rail and no room.
+ *
+ * So each side has one fact and everything reads it. `pinnedNow` is the sidebar's, `roomy`
+ * inside LivePanel is the room's, and the shell's classes follow them rather than lead.
+ *
+ * NEITHER PREFERENCE IS TOUCHED. `pinned` is still what the student chose and is still what
+ * is remembered; `open` inside the panel likewise. So the demonstration ending puts the shell
+ * back exactly as they had it, with nothing stored and nothing to put back - and if they want
+ * it back sooner, the pin says so (see `togglePin`) and the room's own button floats it over
+ * the exercise, which is what that component already does when a window is too narrow.
+ *
+ * ONLY WHERE THE DEMONSTRATION IS. `syncedHere` rather than `synced`, for the reason every
+ * other gate on this feature uses it: folding the whole shell for a push aimed at a row this
+ * student is not on would be the layout jumping for something they cannot see.
+ */
+const makingRoom = ref(false);
+watch(syncedHere, on => { makingRoom.value = on; });
+/* ASKING FOR IT BACK RELEASES IT, and there is exactly one way to ask: the pin. See
+ * `togglePin`, which is where that lives because the button already had to know.
+ *
+ * The room needs no release at all. `crowded` reaches LivePanel, which answers it the way it
+ * already answers a window too narrow to hold it - the panel FLOATS over the exercise rather
+ * than taking a column - so its button goes on working through a demonstration and nothing
+ * has to be handed back. That is the difference between folding a component and narrowing
+ * the column it is sitting in. */
 
 /**
  * WHAT THIS STUDENT HAD BEFORE THE DEMONSTRATION LANDED ON IT, so it can be given back.
@@ -921,25 +978,36 @@ const syncedHere = computed(() =>
  * cannot outlive the row it arrived on. That is why this is one stash rather than a map, and
  * why moving clears it.
  */
-const beforeSync = ref(null);
+/* TWO STEPS, AND THEY ARE NOT THE SAME NUMBER. `sharedStep` is the step the EDUCATOR wrote
+ * against, which arrives with the push and is what a demonstration is filed under. `myStep`
+ * is the step THIS student has open, which is the one to read a stored version back for.
+ * They agree most of the time, and the exercise where they do not is exactly the one where
+ * getting it wrong puts the wrong code on screen. */
+const sharedStep = computed(() => sync.step ?? 0);
+const myStep = ref(0);
+
 watch(() => sync.when, () => {
   if (!synced.value || progressId(sync.at) !== progressId(currentId.value)) return;
-  // The FIRST push into this exercise, and only it: every one after it would stash the
-  // educator's own text back over the student's.
-  if (beforeSync.value) return;
-  // And never from a buffer belonging to another row - see `myAt`. Nothing is stashed and
-  // nothing is restored, which is the honest failure next to handing back the wrong work.
-  if (progressId(myAt.value) !== progressId(currentId.value)) return;
-  beforeSync.value = { at: currentId.value, code: myCode.value };
+  if (typeof sync.code !== 'string') return;
+  /* AND NOT INTO SOMEBODY ELSE'S STORE. `subject.watching` covers a watched session and a
+   * control tab both, and it is the boundary `saveDraft` already draws for the same reason:
+   * these keys are this browser's own, so a tab looking at a student's lesson would leave
+   * that lesson's demonstrations in the admin's record of the course. */
+  if (subject.value.watching) return;
+  /* KEPT SO IT CAN BE COME BACK TO. The exercise component is keyed by row, so the tab would
+   * otherwise last exactly as long as the student stays on the exercise - and the point of
+   * a demonstration is that it is there afterwards.
+   *
+   * Every push, not the first: what is worth keeping is where the educator GOT TO, not the
+   * first keystroke of it. `saveShared` merges by step, so this is one entry being rewritten
+   * rather than a history of one lesson's typing. */
+  store.saveShared(course.value?.id, delivery.cohort, currentId.value,
+                   sharedStep.value, sync.code, delivery.name || 'Educator');
 });
-/* Moving retires it. The restore is a PROP CHANGE the mounted editor reacts to, so a stash
- * kept for a row that is no longer on screen could never be handed back anyway - the
- * component remounts on return and its watcher does not fire for the value a prop already
- * had. What that costs is real and worth saying: a student who walks out of a demonstration
- * mid-way leaves their own attempt behind with it. The case the promise is actually about -
- * the educator finishing and switching off while the class is still there - is the one that
- * restores. */
-watch(currentId, () => { beforeSync.value = null; });
+/* Moving resets which step a demonstration belongs to, and nothing else: there is no stash
+ * to retire any more. That a student who walked out of a demonstration mid-way lost their
+ * own attempt with it was the cost of the version this replaced. */
+watch(currentId, () => { myStep.value = 0; });
 
 /* Driving: every change goes with the position, because they change together - moving to an
  * exercise is also arriving at its starter code, and two messages would show one exercise's
@@ -951,6 +1019,9 @@ watch(currentId, () => { beforeSync.value = null; });
  * cannot be allowed to arrive describing different documents. */
 function editorChanged({ code, cursor, anchor, step }) {
   myCode.value = code;
+  /* Which step this student has open, so a demonstration is read back on the step it was
+   * given for. The educator's own step travels with the push - see `pushEditor`. */
+  myStep.value = step ?? 0;
   myCursor.value = cursor ?? null;
   myAnchor.value = anchor ?? null;
   myAt.value = current.value?.id ?? null;
@@ -991,7 +1062,7 @@ function editorChanged({ code, cursor, anchor, step }) {
    * component - the same beat the drive above travels on, because it is the same thing being
    * watched from further away. */
   if (delivery.mine && sync.on) {
-    pushEditor(current.value?.id ?? null, code, myCursor.value, myAnchor.value);
+    pushEditor(current.value?.id ?? null, code, myCursor.value, myAnchor.value, step ?? 0);
   }
 }
 
@@ -1091,18 +1162,31 @@ const draftHere = computed(() => (course.value && currentId.value && !subject.va
  * half-finished query into the wrong exercise is worse than not showing it. */
 const shownCode = computed(() => {
   if (beingDriven()) return driven.code ?? undefined;
-  // The demonstration, while it lasts and only where it belongs.
-  if (synced.value) return syncedHere.value ? sync.code : undefined;
-  /* And what was here before it. Reached the moment the switch goes off or the student
-   * moves, which are the two ways a sync ends - and guarded on the row, so nothing is handed
-   * back into an exercise it was never written in. */
-  if (beforeSync.value && progressId(beforeSync.value.at) === progressId(currentId.value))
-    return beforeSync.value.code;
+  /* A DEMONSTRATION IS NO LONGER ONE OF THESE. Sharing used to write the educator's text
+   * into this buffer and hand the student's own back when it stopped - one stash, cleared on
+   * navigation, so somebody who walked out of a demonstration half way left their attempt
+   * behind with it. It opens a tab of its own now, so nothing here is touched and there is
+   * nothing to give back. See `sharedHere` and EditorPane.vue. */
   if (controlSub.value && borrowed.code != null
       && progressId(borrowed.at) === progressId(currentId.value)) return borrowed.code;
   return undefined;
 });
 
+/* ---- WHAT THE EDUCATOR WROTE, for the exercise on screen -------------------
+ *
+ * Live while a demonstration is running, and read back out of the local record when it is
+ * not - a student who comes back to the exercise next week still gets the tab. `by` rides on
+ * the stored version because the tab is named after the person and a past lesson has no
+ * session left to ask. See progress-store.js for why it is kept per COHORT.
+ */
+const sharedHere = computed(() => {
+  if (syncedHere.value && sync.code != null)
+    return { code: sync.code, by: delivery.name || 'Educator' };
+  if (!course.value || !currentId.value || subject.value.watching) return null;
+  const held = store.sharedFor(course.value.id, delivery.cohort, currentId.value);
+  const code = held?.steps?.[String(myStep.value)];
+  return typeof code === 'string' ? { code, by: held.by } : null;
+});
 /** Stop driving, from the educator's tab. */
 function stopControl() {
   releaseControl();
@@ -1550,7 +1634,8 @@ watch(currentId, id => {
       :manifest="playground" :published="manifest" />
 
     <div v-else class="shell"
-         :class="{ railed: !pinned, live: !!delivery.cohort && !controlSub, tucked: !panelOpen }">
+         :class="{ railed: !pinnedNow, live: !!delivery.cohort && !controlSub,
+                   tucked: !panelOpen }">
       <!-- One hover target covering the rail and the panel that floats out of it, so
            crossing between the two is not a leave followed by a re-enter. -->
       <div class="dock" @pointerenter="hoverIn" @pointerleave="hoverOut">
@@ -1561,17 +1646,17 @@ watch(currentId, id => {
              There is no arrow to open it and none to close it. Hovering the rail does the
              first and leaving does the second, so a button for either was a control whose
              job had already been done by the time anyone could press it. -->
-        <aside v-if="!pinned" class="rail">
+        <aside v-if="!pinnedNow" class="rail">
           <button class="railbtn" title="Contents" @click="showContents = true">
             <Icon name="contents" :size="16" />
           </button>
         </aside>
 
-        <aside v-if="sidebarOpen" class="panel" :class="{ floating: !pinned }">
+        <aside v-if="sidebarOpen" class="panel" :class="{ floating: !pinnedNow }">
         <div class="brand">
           <strong>{{ course?.title || 'Loading…' }}</strong>
-          <button class="pin" :class="{ on: pinned }" :aria-pressed="pinned"
-                  :title="pinned ? 'Unpin the sidebar' : 'Keep the sidebar open'"
+          <button class="pin" :class="{ on: pinnedNow }" :aria-pressed="pinnedNow"
+                  :title="pinnedNow ? 'Unpin the sidebar' : 'Keep the sidebar open'"
                   @click="togglePin"><Icon name="pin" :size="16" /></button>
         </div>
 
@@ -1661,16 +1746,27 @@ watch(currentId, id => {
           :goto="followSlide"
           :row="current"
           @slide="onDeckSlide" @board="viewingBoard = $event" />
-        <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there are two
-             ways to end up with two: somebody driving this screen, and the educator writing
-             in every screen at once. Hence `frozen` in both cases, and a band for each.
+        <!-- TWO PEOPLE TYPING INTO ONE BUFFER is not a thing this can do, and there was
+             one way to end up with two once sharing stopped writing in here: somebody
+             DRIVING this screen. That is remote control, which puts the educator's help
+             into the student's own work on purpose - so `frozen` is theirs alone now, and
+             the band that explains it with them.
 
-             AND THE SAME TWO ANSWER THE EDUCATOR'S BUTTON - see `relayAct`. `syncedHere`
-             rather than `synced` is the whole care needed: a press to the room reaches
-             everybody connected, and only a screen actually holding the educator's buffer
-             for THIS exercise should run it. Gated on the switch alone, a student who has
-             the sync on but is sitting on another row would have Run pressed on their own
-             half-written attempt by somebody who cannot see it. -->
+             A DEMONSTRATION FREEZES NOTHING. It arrives as `shared` and opens a tab of its
+             own, so a student can go on working through it - which is the point, and was
+             the one thing the version this replaced could not do.
+
+             THE SAME TWO ANSWER THE EDUCATOR'S BUTTON - see `relayAct`. `syncedHere` rather
+             than `synced` is the whole care needed: a press to the room reaches everybody
+             connected, and only a screen actually holding the educator's buffer for THIS
+             exercise should run it. Gated on the switch alone, a student who has the sync
+             on but is sitting on another row would have Run pressed on their own
+             half-written attempt by somebody who cannot see it.
+
+             AND THE TWO CARETS GO TO TWO DIFFERENT DOCUMENTS. `peerAt` is somebody else's
+             caret in THIS STUDENT'S buffer, which only remote control puts there; `sharedAt`
+             is the educator's in their own tab. An offset is an offset INTO a buffer, so
+             passing one where the other is wanted points at characters nobody selected. -->
         <component
           v-else-if="current"
           :is="componentFor[current.type] || CodingExercise"
@@ -1681,12 +1777,16 @@ watch(currentId, id => {
           :saved="savedCode[current.id]"
           :draft="draftHere"
           :class-answers="classAnswers"
-          :frozen="beingDriven() || synced"
+          :frozen="beingDriven()"
           :driven-code="shownCode"
+          :shared="sharedHere"
+          :live="syncedHere"
           :pressed="beingDriven() || syncedHere ? pressed : null"
           @solved="markSolved"
-          :peer-at="beingDriven() ? driven.cursor : (syncedHere ? sync.cursor : null)"
-          :peer-anchor="beingDriven() ? driven.anchor : (syncedHere ? sync.anchor : null)"
+          :peer-at="beingDriven() ? driven.cursor : null"
+          :peer-anchor="beingDriven() ? driven.anchor : null"
+          :shared-at="syncedHere ? sync.cursor : null"
+          :shared-anchor="syncedHere ? sync.anchor : null"
           :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
           @editor="editorChanged"
@@ -1732,6 +1832,7 @@ watch(currentId, id => {
                  :here-at="currentId"
                  :marks="marksHere" :grading="delivery.mine && gradableHere"
                  :controlled="control.sub || ''"
+                 :crowded="makingRoom"
                  @width="w => panelOpen = w" @goto="goLive"
                  @control="who => takingOver = who" />
 

@@ -149,7 +149,8 @@ export const pointer = reactive({ region: null, x: 0, y: 0 });
  * `when` changes on every push so a watcher fires on the MESSAGE rather than the text, for
  * `driven.at`'s reason: typing a character back to what it was is still somebody typing.
  */
-export const sync = reactive({ on: false, at: null, code: null, cursor: null, anchor: null, when: null });
+export const sync = reactive({ on: false, at: null, code: null, cursor: null, anchor: null,
+                               step: 0, when: null });
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
 export const live = reactive({ running: {}, loading: false });
@@ -226,7 +227,7 @@ export function forget() {
   pressed.do = null; pressed.at = null; pressed.sel = null; pressed.when = null;
   pointer.region = null;
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
-  sync.when = null;
+  sync.step = 0; sync.when = null;
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -402,6 +403,9 @@ const HANDLERS = {
     sync.code = typeof m.code === 'string' ? m.code : null;
     sync.cursor = m.cursor ?? null;
     sync.anchor = m.anchor ?? null;
+    /* Which step of the exercise the educator wrote it against - see `pushEditor`. Absent
+     * from an older sender means the first, which is what every single-step exercise is. */
+    sync.step = Number.isInteger(m.step) ? m.step : 0;
     sync.when = m.when || new Date().toISOString();
   },
   driven(m) {
@@ -563,11 +567,16 @@ export function setSync(on) {
 }
 
 /** What the educator has in their editor, on its way to everybody following. */
-export const pushEditor = (at, code, cursor, anchor) => send('push', {
+export const pushEditor = (at, code, cursor, anchor, step) => send('push', {
   at: at ?? null,
   code: String(code ?? ''),
   cursor: cursor ?? null,
   anchor: anchor ?? null,
+  /* THE STEP TRAVELS WITH THE BUFFER, for the reason the caret does: a buffer belongs to a
+   * step of an exercise, and the educator can be on step 2 while a student reading along is
+   * still on step 1. The receiving side keeps the demonstration against the step it was
+   * written for, not against whichever one happened to be open. */
+  step: Number.isInteger(step) ? step : 0,
 });
 
 /** Send the controlled screen somewhere, and what to put in its editor. */

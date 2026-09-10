@@ -59,6 +59,14 @@ const props = defineProps({
   grading: Boolean,
   /** Whose screen is being driven right now, so their row says so instead of offering it. */
   controlled: String,
+  /* SOMETHING ELSE NEEDS THE WIDTH - a demonstration wanting to sit beside the student's own
+   * editor. Handled as a second reason for `narrow` rather than as a mode of its own,
+   * because the answer is the one this file already worked out: the panel floats instead of
+   * squeezing, the remembered answer is not touched, and the button still works. What must
+   * NOT happen is the column being narrowed from outside while this component goes on
+   * rendering as though it were not - that puts a roster and a chat into 44px and reads as a
+   * rendering fault. One source of truth for the width, and it is `roomy`. */
+  crowded: Boolean,
 });
 const emit = defineEmits(['width', 'goto', 'control']);
 
@@ -93,9 +101,9 @@ const onNarrow = e => { narrow.value = e.matches; };
 let mq = null;
 
 /** Open AND there is room for it. The column follows this; the panel's own state does not. */
-const roomy = computed(() => open.value && !narrow.value);
+const roomy = computed(() => open.value && !narrow.value && !props.crowded);
 /** Open where there is no room for it: over the exercise rather than beside it. */
-const floating = computed(() => open.value && narrow.value);
+const floating = computed(() => open.value && (narrow.value || props.crowded));
 watch(roomy, v => emit('width', v));
 
 onMounted(() => {

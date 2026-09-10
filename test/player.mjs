@@ -251,7 +251,14 @@ check("the educator pressing Run runs it on the STUDENT's screen", reached(), te
  * fix was gone by the time they walked back to it, which reads as remote control undoing
  * itself.
  */
-const editorText = () => document.querySelector('.cm-content')?.textContent ?? '(no editor)';
+/* THE STUDENT'S OWN, and it is the first because it is the first tab. There can be two
+ * editors on this screen now - see EditorPane.vue - and the whole promise of the second one
+ * is that it is not this. A helper that said "the editor" would quietly pass whichever
+ * happened to be in the DOM first and prove nothing about which. */
+const editors = () => [...document.querySelectorAll('.cm-content')].map(e => e.textContent);
+const editorText = () => editors()[0] ?? '(no editor)';
+/** What is on the screen, in either tab. */
+const anyEditor = () => editors().join('\n');
 const FIX = 'SELECT the_fix_the_educator_typed;';
 const holdsFix = () => editorText().includes('the_fix_the_educator_typed');
 
@@ -344,18 +351,70 @@ check('a drive that moves them to another exercise carries its code with it',
   check('and Run does not reach a screen that is not showing what they wrote', !reached(),
         text().slice(-200));
 
+  /* ---- and the shape of what a demonstration actually does ------------------
+   *
+   * IT OPENS A TAB; IT DOES NOT TAKE THE EDITOR. Sharing used to write the educator's text
+   * into the student's own buffer and hand it back afterwards - one stash, cleared on
+   * navigation, so a student who walked out of a demonstration half way left their attempt
+   * behind with it. Nothing of theirs is touched now, so there is nothing to give back, and
+   * these two assertions are the whole of that promise: it is on screen, and it is not in
+   * their editor.
+   */
+  const MINE = 'SELECT what_the_student_was_writing;';
+  const view0 = player.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  view0.dispatch({ changes: { from: 0, to: view0.state.doc.length, insert: MINE } });
+  await settle(200);
+
   player.emitLocal({ type: 'synced', at: '101', code: SHOWN, cursor: null, anchor: null,
-                     when: new Date().toISOString() });
+                     step: 0, when: new Date().toISOString() });
   await settle(250);
-  check("the educator's editor is on the student's screen", shows(), editorText());
+  check("the educator's editor is on the student's screen", anyEditor().includes(SHOWN),
+        anyEditor());
+  check('and it did NOT land in the student\'s own', editorText().includes('was_writing'),
+        editorText());
+  /* The tab is named after the person, because there is no file concept to borrow and a
+   * student in two intakes has two of these. */
+  check('the tab is named after whoever wrote it',
+        [...document.querySelectorAll('.tab')].some(t => /'s version/.test(t.textContent)),
+        [...document.querySelectorAll('.tab')].map(t => t.textContent.trim()));
+
   pressRun('101');
   await settle(300);
   check('and now Run reaches the class, not only the tab it was pressed in', reached(),
         text().slice(-240));
 
-  // Left as it was found, so what follows is not testing against a frozen editor.
   player.emitLocal({ type: 'syncing', on: false });
   await settle(200);
+
+  /* IT SURVIVES THE LESSON MOVING ON. The exercise component is keyed by row, so without a
+   * record of its own the tab would last exactly as long as the student stayed put - and
+   * being able to come back to it is the reason it is kept at all. */
+  check('the demonstration is still there when sharing stops', anyEditor().includes(SHOWN),
+        anyEditor());
+  check("and so is the student's own work", editorText().includes('was_writing'), editorText());
+
+  /* ---- taking it as your own ------------------------------------------------
+   *
+   * The one gesture that changes what Check submits, and the whole reason the version this
+   * replaced wanted a checkbox on a modal. It asks first, because there is something to lose.
+   */
+  const button = re => [...document.querySelectorAll('button')]
+    .find(b => re.test(b.textContent.trim()));
+  button(/Use this as my answer/)?.click();
+  await settle(150);
+  check('taking it as your own asks first, because there is work to lose',
+        !!button(/^Replace mine$/), [...document.querySelectorAll('.ask p')].map(n => n.textContent));
+  button(/^Keep mine$/)?.click();
+  await settle(150);
+  check('and declining leaves their own alone', editorText().includes('was_writing'),
+        editorText());
+
+  button(/Use this as my answer/)?.click();
+  await settle(120);
+  button(/^Replace mine$/)?.click();
+  await settle(200);
+  check('accepting puts it in their own editor, where Check can reach it',
+        editorText().includes('the_answer_everybody_watched'), editorText());
 }
 
 // ------------------------------------------- and Run runs what is highlighted

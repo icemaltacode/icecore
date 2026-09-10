@@ -123,8 +123,13 @@ const away = computed(() => channel.lost && channel.status !== 'open');
              gesture that ends following for every other reason - so this is a sentence about
              a rule the student already has rather than a second one to learn. And it
              promises the thing that makes moving safe: what they had written comes back. -->
-        <span class="sub" v-if="syncing">They are writing in your editor. Move on your own
-          whenever you like — your own work comes back.</span>
+        <!-- IT USED TO PROMISE THE WORK BACK, because sharing wrote into this student's own
+             buffer and handed it over afterwards. It opens a tab of its own now, so the
+             promise is not that their work returns - it is that it never went anywhere.
+             Said as a fact about where things are rather than as a reassurance about a
+             rescue, because there is no longer a rescue to describe. -->
+        <span class="sub" v-if="syncing">They are writing in a tab of their own. Your work is
+          untouched — switch back to it whenever you like.</span>
         <span class="sub" v-else>Your screen moves with theirs. Move on your own whenever you
           like — nothing is lost.</span>
       </template>

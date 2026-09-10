@@ -19,7 +19,8 @@
   ],
   "scripts": {
     "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content",
-    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/room.mjs && node test/player.mjs && node test/admin.mjs",
+    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/store.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/room.mjs && node test/player.mjs && node test/admin.mjs",
+    "test:store": "node test/store.mjs",
     "test:pointer": "node test/pointer.mjs",
     "test:decksync": "node test/decksync.mjs",
     "test:setup": "node test/setup-checks.mjs",

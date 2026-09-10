@@ -1631,6 +1631,12 @@ async function tallied(cohort, mark, seeded = false) {
         cursor: offset(msg.cursor) ?? null,
         // See `drive`: one range, two offsets, one message.
         anchor: offset(msg.anchor) ?? null,
+        /* WHICH STEP OF THE EXERCISE IT BELONGS TO. A buffer belongs to a step - the same
+         * reason the step travels with a draft - and the educator may be on step 2 while a
+         * student reading along is still on step 1. Without it the demonstration is kept
+         * against whatever step the student happened to have open, and read back later on
+         * the wrong one. */
+        step: Number.isInteger(msg.step) && msg.step >= 0 && msg.step < 100 ? msg.step : 0,
         /* Changes on every push, so the other side can watch the MESSAGE rather than the
          * text - retyping a character back to what it was is still somebody typing, and a
          * watcher on the code alone would not see it. */
