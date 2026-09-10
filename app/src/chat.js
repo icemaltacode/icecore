@@ -26,8 +26,12 @@ import { previewRole } from './preview.js';
 import { on, send, emitLocal } from './live.js';
 import { delivery } from './delivery.js';
 
-/** Mirrors CHAT_CHARS in the Lambda: a chat line, not an essay. */
-export const LIMIT = 500;
+/* Mirrors CHAT_CHARS in the Lambda, which is EDITOR_LIMIT there: what gets pasted into a
+ * lesson is code, and anything that fits in the editor it came from fits in a message about
+ * it. It was 500 - a chat line rather than an essay - which stood in for a byte budget on
+ * the session row that the Lambda now measures directly. See `keep()` there: a long message
+ * costs backlog instead of being impossible. */
+export const LIMIT = 20000;
 /** Mirrors CHAT_KEEP. Trimmed on this side too, so a long lesson is not an ever-growing list. */
 const KEEP = 200;
 

@@ -99,17 +99,38 @@ const epoch = seconds => Math.floor(Date.now() / 1000) + seconds;
  * reachable by neither, which is exactly the shape of thing that is discovered years later.
  * Making it transient removes the problem rather than handling it.
  *
- * The two numbers are a pair. A DynamoDB item is capped at 400KB and the session row also
- * carries the title, the course and the bookmark, so 200 x 600 bytes is the budget: 500
- * characters is a chat line rather than an essay, and the cap is what keeps the row inside
- * the limit however long a lesson runs. */
+ * WHAT BOUNDS IT IS BYTES, AND IT USED TO BE COUNTED IN MESSAGES. A DynamoDB item is capped
+ * at 400KB and this row also carries the board, the title, the course and the bookmark, so
+ * the real budget was always a size - `200 x 600 bytes`, with a 500-character cap on a
+ * message to hold up the second half of that arithmetic.
+ *
+ * The trouble with the proxy is that it cannot tell one long paste from four hundred short
+ * ones, so the only lever it left was making EVERY message small - and an educator pasting a
+ * section of code into a lesson was refused by a rule that exists to bound a row. `keep()`
+ * already has the whole list back from its own append, so it can weigh the row instead of
+ * estimating it, and then a long message costs BACKLOG rather than being impossible.
+ *
+ * The count survives as what a joiner has to render, which is a different question from what
+ * the item can hold and needs a bound of its own. Whichever bites first wins. */
 const CHAT_KEEP = 200;
-const CHAT_CHARS = 500;
 /* An editor buffer in flight. Matches STEP_LIMIT in shared/progress-rows.mjs, which is what
  * bounds the same text once it is written down - a buffer that could cross the channel and
  * then be refused by the row it was heading for would be a silent loss at exactly the moment
  * somebody was being helped. */
 const EDITOR_LIMIT = 20000;
+/* AND A CHAT MESSAGE IS BOUNDED BY THE SAME NUMBER, deliberately the same one rather than a
+ * second arbitrary figure: what a person pastes into a lesson is code, and anything that
+ * fits in the editor it came from fits in a sentence about it. A paste that size costs a few
+ * dozen lines of backlog, which is the trade stated rather than hidden. */
+const CHAT_CHARS = EDITOR_LIMIT;
+/* What the whole transcript may weigh. A full 200 x 500-character backlog measures about
+ * 133KB, so this is the ceiling the row has always had - said in the units it is actually
+ * spent in rather than in a count that stood in for them. Nothing about the item's worst
+ * case changes, which is the point: the board's share of the 400KB is untouched.
+ *
+ * Measured on the stored message, not on its text: the id, the sender, the moment and the
+ * origin ride along with every one of them. */
+const CHAT_BYTES = 140 * 1024;
 
 /* THE BOARD LIVES ON THE SESSION ROW, for the reason `sync` does: a student joining ten
  * minutes into a lesson has to arrive already knowing there is one, and a fact held only in
@@ -404,7 +425,32 @@ async function marks(cohort) {
 }
 
 /**
- * Keep one message on the session row, and trim the backlog back to CHAT_KEEP.
+ * HOW MANY OF THESE HAVE TO GO for the transcript to be inside both of its bounds.
+ *
+ * Walks BACKWARDS, because the newest message is the one that must survive: a paste larger
+ * than the whole budget has to leave the room holding that paste and nothing else, rather
+ * than being the one thing dropped. Never returns the whole list for that reason - somebody
+ * who pastes half a megabyte still gets their message kept, and pays for it with every other
+ * line in the room.
+ *
+ * The size is `JSON.stringify`'s, which is not what DynamoDB charges to the byte, and does
+ * not need to be: the budget is a fraction of a 400KB item shared with the board, so what is
+ * wanted is the right order of magnitude and a number that moves when the text does.
+ */
+function excess(list) {
+  let bytes = 0, keep = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    bytes += JSON.stringify(list[i]).length;
+    // Past either bound, everything OLDER than this one goes - and this one stays if it is
+    // the only one left, which is the paste-larger-than-the-budget case.
+    if (keep && (bytes > CHAT_BYTES || keep >= CHAT_KEEP)) return i + 1;
+    keep++;
+  }
+  return 0;
+}
+
+/**
+ * Keep one message on the session row, and trim the backlog back inside its bounds.
  *
  * THE CONDITION IS THE POINT: `attribute_exists` means a message sent into a session that
  * has just ended is fanned out to whoever is still listening and kept by nobody, rather
@@ -414,13 +460,17 @@ async function marks(cohort) {
  * `said` is the tally the summary quotes. A count rather than the text, because the summary
  * outlives the session and the text deliberately does not.
  *
+ * IT WEIGHS THE ROW RATHER THAN COUNTING IT, and that costs nothing: the append already asks
+ * for the list back, so the bytes are in hand. Counting was a proxy for the same budget that
+ * could not tell one long paste from four hundred short ones - see CHAT_BYTES.
+ *
  * The trim is append-then-remove rather than a read-modify-write, which loses a race by
  * construction; this one can only lose backlog. Two messages arriving together both see the
- * list one over and both drop the front entry, so the window is 199 rather than 200 for a
- * moment. That is a fair trade for something whose whole purpose is to be forgotten.
+ * list one over and both drop the front entry, so the window is one short for a moment. That
+ * is a fair trade for something whose whole purpose is to be forgotten.
  */
 async function keep(cohort, said) {
-  let after;
+  let list;
   try {
     const r = await ddb.send(new UpdateCommand({
       TableName: TABLE, Key: sessionKey(cohort),
@@ -430,17 +480,25 @@ async function keep(cohort, said) {
       ExpressionAttributeValues: { ':none': [], ':one': [said], ':one_': 1 },
       ReturnValues: 'UPDATED_NEW',
     }));
-    after = r.Attributes?.chat?.length || 0;
+    list = r.Attributes?.chat || [];
   } catch (e) {
     if (e.name !== 'ConditionalCheckFailedException')
       console.error('chat could not be kept', e.name, e.message);
     return;
   }
-  if (after <= CHAT_KEEP) return;
+  /* A single message used to push exactly one entry off the end, so the expression was one
+   * clause long. A paste can now evict most of the transcript at once - and an update
+   * expression is capped at 4KB, which `#chat[199], ` repeated far enough would exceed and
+   * fail the whole trim, leaving the row to grow instead. Bounded, because dropping from the
+   * front is monotone: whatever is left over goes with the next message. */
+  const drop = Math.min(excess(list), 150);
+  if (!drop) return;
   await ddb.send(new UpdateCommand({
     TableName: TABLE, Key: sessionKey(cohort),
+    /* Indexes are relative to the ORIGINAL list, which is what makes one expression removing
+     * a run from the front mean what it looks like it means. */
     UpdateExpression: 'REMOVE '
-      + Array.from({ length: after - CHAT_KEEP }, (_, i) => `#chat[${i}]`).join(', '),
+      + Array.from({ length: drop }, (_, i) => `#chat[${i}]`).join(', '),
     ExpressionAttributeNames: { '#chat': 'chat' },
   })).catch(e => console.error('chat could not be trimmed', e.name, e.message));
 }

@@ -66,11 +66,57 @@ const clock = at => {
 };
 const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase();
 
+/* ---- a message that is a piece of code -------------------------------------
+ *
+ * ENTER SENDS, so a line break cannot get into a message by accident: it was pasted, or
+ * typed with Shift held. Either way somebody meant the shape of the text to survive, which
+ * is the whole of what is being asked here - nothing tries to work out whether it is SQL.
+ * That is why the rule is a newline rather than a guess at the language, and why a one-line
+ * paste is left in the reading font where it belongs.
+ *
+ * `pre-wrap` already kept the indentation; the proportional font then lined none of it up.
+ */
+const code = m => m.text.includes('\n');
+const lines = m => m.text.split('\n').length;
+/* Long enough to be worth collapsing, in the units it is read in. A wall of code in a 420px
+ * window is not more information, it is the rest of the lesson pushed off the screen - and
+ * the transcript is also how somebody catches up on what they missed. */
+const CLAMP = 12;
+const long = m => lines(m) > CLAMP || m.text.length > 600;
+/* Which ones somebody has opened. Per message and never remembered: it is a reading gesture
+ * about one thing on screen, and a set that outlived the panel would decide for a message
+ * that had not arrived yet. */
+const open = ref(new Set());
+const toggle = id => { open.value.has(id) ? open.value.delete(id) : open.value.add(id); };
+
 function submit() {
   if (!say(draft.value)) return;
   draft.value = '';
+  cut.value = 0;
   stick = true;
 }
+
+/* ---- what a message that is too long does ---------------------------------
+ *
+ * `maxlength` stops typing at the limit, which a person notices, and TRUNCATES A PASTE,
+ * which they do not: the end of a file goes missing between the clipboard and the box, and
+ * the message reads as complete to whoever sent it. That was survivable while the cap was
+ * 500 - nobody pastes a file into a 500-character box by accident - and is the whole risk
+ * now that it is twenty thousand and the box is for exactly that.
+ *
+ * So the paste is measured against what is already in the draft and what it would replace,
+ * and the overflow is SAID. The browser still does the trimming; this only reports it.
+ */
+const cut = ref(0);
+function onPaste(e) {
+  const box = e.target;
+  const added = e.clipboardData?.getData('text') ?? '';
+  const room = LIMIT - (box.value.length - (box.selectionEnd - box.selectionStart));
+  cut.value = Math.max(0, added.length - room);
+}
+/* Cleared by typing, not by a timer: the notice is about the text sitting in the box, and it
+ * stops being true the moment that text changes. */
+watch(draft, () => { if (cut.value) cut.value = 0; });
 
 /* ---- dragging the floating one -------------------------------------------
  *
@@ -138,7 +184,11 @@ function drop() {
             <em v-if="m.role === 'tutor'">Educator</em>
             <time>{{ clock(m.at) }}</time>
           </span>
-          <p class="text">{{ m.text }}</p>
+          <p class="text" :class="{ code: code(m), clamp: long(m) && !open.has(m.id) }"
+             >{{ m.text }}</p>
+          <button v-if="long(m)" class="more" type="button" @click="toggle(m.id)">
+            {{ open.has(m.id) ? 'Show less' : `Show all ${lines(m)} lines` }}
+          </button>
           <button v-if="from(m)" class="where" type="button"
                   :title="`Go to ${from(m).title || from(m).exercise}`"
                   @click="emit('goto', from(m).exercise)">
@@ -151,9 +201,15 @@ function drop() {
     <form class="compose" @submit.prevent="submit">
       <textarea v-model="draft" rows="1" :maxlength="LIMIT"
                 placeholder="Say something to the session"
+                @paste="onPaste"
                 @keydown.enter.exact.prevent="submit"></textarea>
       <button class="btn primary" type="submit" :disabled="!draft.trim()">Send</button>
     </form>
+    <!-- Under the composer rather than over the log, so it cannot cover the thing somebody
+         is about to reply to. Says the number, because "too long" leaves them guessing how
+         much of their file arrived. -->
+    <p v-if="cut" class="cut" role="status">That paste was {{ cut.toLocaleString() }}
+      character{{ cut === 1 ? '' : 's' }} over the limit and the end was trimmed.</p>
   </section>
 </template>
 
@@ -200,6 +256,16 @@ h4 { margin: 0; font-size: 13px; font-weight: 600; flex: 1; color: var(--ice-fg)
 .meta time { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 10.5px; }
 .text { margin: 2px 0 0; font-size: 13px; line-height: 1.45; white-space: pre-wrap;
         overflow-wrap: anywhere; }
+/* Wrapped rather than scrolled sideways: a panel that scrolls horizontally hides the ends of
+   lines behind a gesture, and this one is 340px wide when it is floating. */
+.text.code { font-family: var(--ice-font-mono); font-size: 12px; line-height: 1.5; }
+.text.clamp { display: -webkit-box; -webkit-line-clamp: 12; line-clamp: 12;
+              -webkit-box-orient: vertical; overflow: hidden; }
+.more { margin-top: 2px; padding: 0; background: none; border: 0; font: inherit;
+        font-size: 11.5px; color: var(--ice-primary-strong); cursor: pointer; }
+.more:hover { text-decoration: underline; }
+.cut { margin: 0; padding: 0 12px 10px; font-size: 11.5px; color: var(--ice-fg-muted); }
+
 /* Our own are tinted rather than aligned to the other edge: a class of twelve reads as one
    column of who-said-what, and an alternating layout halves the width of every message to
    say something the name already says. */

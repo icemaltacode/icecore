@@ -579,6 +579,30 @@ try {
   A.ws.send(JSON.stringify({ type: 'say', text: '   ' }));
   check('an empty message is not sent', (await heardB.next('said', 1500)) === null);
 
+  /* ---- pasting a section of code ---------------------------------------------
+   *
+   * The cap was 500 characters, which was a chat line rather than an essay and also a proxy
+   * for a byte budget on the session row - and it refused the thing an educator most wants
+   * to put in front of a class mid-lesson. It is EDITOR_LIMIT now, and the row is weighed
+   * rather than counted, so a long message costs backlog instead of being impossible.
+   *
+   * Sent at the limit rather than near it: a cap that is off by one is off by one at exactly
+   * this length and nowhere else. */
+  const PASTE = 'SELECT 1;\n'.repeat(2000);           // 20,000 exactly
+  A.ws.send(JSON.stringify({ type: 'say', text: PASTE }));
+  const pasted = await heardB.next('said');
+  check('a section of code goes through whole', pasted?.text === PASTE,
+        `${pasted?.text?.length ?? 'nothing'} of ${PASTE.length} arrived`);
+
+  /* AND IT IS STILL BOUNDED. The row is a 400KB DynamoDB item shared with the board, so a
+   * message is trimmed rather than refused - the client stops at the same number, and this
+   * is the backstop for one that does not. */
+  A.ws.send(JSON.stringify({ type: 'say', text: `${PASTE}THIS SHOULD NOT SURVIVE` }));
+  const over = await heardB.next('said');
+  check('and one past the limit is trimmed to it',
+        over?.text?.length === PASTE.length && !over.text.includes('NOT SURVIVE'),
+        `${over?.text?.length ?? 'nothing'} arrived`);
+
   /* ---- remote control ---------------------------------------------------------
    *
    * Every assertion here is about a boundary rather than about a feature working: who may

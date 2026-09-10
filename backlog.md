@@ -32,6 +32,3 @@ in a month.
   - If unticked, a new tab opens up in the editor area. For example, if the editor shows 'script.py', the new tab is titled '[EDUCATOR] script.py'. When the Educator stops sharing, the tab remains, but the student's original work is still visible in the other tab. The new tab should be fully functional. If there is enough horizontal space, the educator's tab should be split screened on the right (collapse the participant and chat sidebar to make space if necessary).
 
 - Highlight UI: Can we add an option so the Educator can highlight a part of the UI for the students? For example, the educator clicks on the 'Slides' button, and it is highlighted prominently for the students... ideally with a flashing arrow, which then disappears after a few seconds. Tell me what this involves and whether we can do it.
-
-# Question
-- Is the max length of a chat set?
