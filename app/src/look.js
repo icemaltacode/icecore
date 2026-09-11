@@ -115,7 +115,19 @@ function taken(event) {
   point(el.dataset.show);
 }
 
+/* A MODE THAT EATS CLICKS HAS TO SAY WHICH CLICKS IT WILL EAT. Only about ten controls carry
+ * a name, and an unnamed one goes on working normally while it is on - so without this the
+ * mode behaves two ways with nothing on screen to say which you are about to get, and an
+ * educator who pressed the wrong thing learns the difference by watching it happen in front
+ * of the class.
+ *
+ * A CLASS ON <body>, because the named controls are spread across eight components and no
+ * scoped stylesheet can reach them all - SplitPane's `ice-splitting` for the same reason.
+ * The rule is in styles.css beside the other nudge. */
+const BODY = 'ice-pointing';
+
 watch(pointing, on => {
+  document.body.classList.toggle(BODY, on);
   if (on) document.addEventListener('click', taken, true);
   else document.removeEventListener('click', taken, true);
 });

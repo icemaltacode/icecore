@@ -806,6 +806,18 @@ be two things moving the same screen. One fact each.
   to arm and nothing to aim, the ordinary click **is** the instruction. Capture phase on the
   document, so it never reaches the control; a future named control that acted on
   `pointerdown` would need naming there too.
+- **And the mode says which clicks it will eat.** Only about ten controls carry a name, and an
+  unnamed one goes on working normally while the switch is on — so without an affordance the
+  mode behaves two ways with nothing on screen to say which you are about to get, and an
+  educator learns the difference by watching the wrong thing happen in front of the class.
+  Every named control outlines itself, dashed and quiet, against the solid ring and arrow the
+  thing being pointed *at* wears. An **outline** rather than a border, because an outline takes
+  no space and a border would move ten controls by a pixel the moment the switch was thrown.
+  A `body` class, since the named controls are spread across eight components and no scoped
+  stylesheet reaches them all — `SplitPane`'s `ice-splitting` for the same reason. Disabled
+  controls are left out, and not for tidiness: a browser dispatches no click for one, so the
+  capture listener can never see it and a dashed box round Next at the end of a topic would
+  advertise something that cannot be done.
 - **That switch is the one flag here that is not a fact about the lesson.** The room does not
   need to know — it only changes what a click does in this browser — so there is no write, no
   condition and nothing to read back, and it is a plain ref where `sync`, the board and the
