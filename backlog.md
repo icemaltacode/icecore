@@ -21,17 +21,6 @@ in a month.
   exercise rather than an event per press: the question is "how many tries before this class
   got it", not an audit log.
 
-- [ ] **A student who has stopped following does not know it.** The band says so and they
-  read past it: people work on their own for ten minutes believing they are with the class,
-  and then find the lesson somewhere else entirely. That is the fix this is waiting on, and
-  it is a bigger one than a louder band — the state itself may be the problem rather than how
-  it is announced.
-
-  It is deferred rather than open because it **blocks a decision in the highlight**, not the
-  other way round: pointing at a control on the screen of somebody who is not on that screen
-  says something the educator did not say, so Look Here draws nothing for them today. Making
-  it reach them at all only becomes a sensible question once they know where they are.
-
 # Enhancements
 
 *Nothing outstanding — the last three are built.*

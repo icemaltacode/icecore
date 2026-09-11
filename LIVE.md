@@ -800,6 +800,14 @@ be two things moving the same screen. One fact each.
   into chrome (Contents, the rail, the chat: the same anywhere) and work (Check, Run, the
   editor): one rule is worth more than the few extra arrows the second buys. Null is not a
   refusal — it is the first seconds of a lesson, before anybody has reported a position.
+- **A student who has wandered getting nothing is the feature, not the cost of it**, and that
+  was settled rather than assumed. It was carried for a while as a thing to fix once they
+  could tell they had drifted — which reads the silence as a loss. It is not: following is
+  opt-in, leaving it is a decision the student took, and being shown where the class is being
+  told to look is part of what they opted out of. An arrow arriving on the screen of somebody
+  working alone would be the lesson reaching past a boundary they set. The band says plainly
+  where they stand and `Follow again` is one press away; that is the whole of what they are
+  owed.
 - **The press is consumed.** While *Point things out* is on, a click on a named control points
   at it and does not work it — so Next does not advance, and *look at this, but don't press it
   yet* is sayable. That is also what makes the gesture free of a second step: there is nothing
