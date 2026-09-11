@@ -111,9 +111,16 @@ infra-diff:
 #
 #   just infra-deploy someone-else@icemalta.com
 #
+# `--require-approval never` because the approval happens EARLIER and better. CDK's prompt
+# fires on any IAM or security-group change and shows a diff at the moment you are least able
+# to act on it: the deploy is already running, the answer is y or n, and n leaves you with a
+# stack you then have to reason about. What the changes are is settled before this command is
+# typed - `just infra-diff` is the place to look, and it needs no credentials to be spent.
+# The prompt was also a trap for a non-interactive run, where it simply hangs.
+#
 # Create or update the stack.
 infra-deploy admin="":
-    cd infra && npx cdk deploy --require-approval any-change \
+    cd infra && npx cdk deploy --require-approval never \
       {{ if admin == "" { "" } else { "-c adminEmail=" + admin } }}
 
 # An email subscription does nothing until the recipient clicks the confirmation link AWS
