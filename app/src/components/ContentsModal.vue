@@ -15,7 +15,12 @@ import { walkTopic } from '../walk.js';
 
 const props = defineProps({
   course: Object,
-  currentId: String,
+  /* A NUMBER FOR AN EXERCISE AND A STRING FOR A SLIDES ROW, which is what the walk holds -
+   * so declaring it String warns on every exercise in the list. The comparison below is
+   * strict and stays that way: both sides come out of the same walk, so they are the same
+   * type by construction, and loosening it would be covering for a source that had stopped
+   * being one. */
+  currentId: [String, Number],
   solved: Object,      // Set of string ids - see progress.js, and never compare raw
   currentUnit: String,
 });

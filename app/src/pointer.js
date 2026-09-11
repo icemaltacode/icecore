@@ -34,6 +34,13 @@
  * different scroll position. The dot is there so the pointer does not vanish mid-gesture,
  * not to name a character.
  *
+ * AND THE OTHER HALF OF POINTING IS AT THE BOTTOM: which CONTROL the educator means, rather
+ * than which pixel. A pointer has to travel as a fraction of a region because a pixel is not
+ * a thing; a button IS one, so only its name travels and each screen finds its own copy. Both
+ * halves are here because both answer "where on this screen", and both have to be testable
+ * without a browser - see test/pointer.mjs, which builds screens that are nothing like each
+ * other precisely because that is the case a real DOM cannot produce.
+ *
  * Pure and dependency-free, like compare.js and walk.js - no `import.meta.env` - so the
  * builder and a test can import it.
  */
@@ -225,3 +232,53 @@ export function watchFrame(win, doc) {
     doc.removeEventListener('pointerleave', leave);
   };
 }
+
+/* ---------------------------------------------------------------- which control, not where
+
+   `data-show` IS A SECOND VOCABULARY AND NOT MORE NAMES IN `data-point`, deliberately. These
+   answer different questions - what surface is this pixel over, against which control do I
+   mean - and `regionAt` above takes the INNERMOST match, so marking a button `data-point`
+   would silently change what a pointer reports as a side effect of naming it. The reactive
+   half, the channel and the educator's switch are in look.js; what is here is the part that
+   has to work without a browser. */
+
+/**
+ * The visible element a name refers to on this screen, or null.
+ *
+ * A NAME MAY SIT ON MORE THAN ONE ELEMENT AND THE VISIBLE ONE WINS, because the same
+ * affordance moves when a pane collapses: Contents is a button in an open sidebar and a menu
+ * button in a rail, and a demonstration is a tab when the pane is narrow and half the tab bar
+ * when it is not. One name, whichever copy is on screen.
+ *
+ * Present and laid out are different things - a control inside a collapsed pane is still in
+ * the DOM with no box at all - so the test is the box, exactly as `regionAt` declines on the
+ * same one.
+ */
+export function showing(name, doc = document) {
+  if (!name || !NAME.test(name)) return null;
+  for (const el of doc.querySelectorAll(`[data-show="${name}"]`)) {
+    const box = el.getBoundingClientRect();
+    if (box.width && box.height) return el;
+  }
+  return null;
+}
+
+/**
+ * Whether an instruction to look at something is for this screen at all.
+ *
+ * ONLY WHERE IT MEANS THE SAME THING. `where` is the row the educator was on; a student two
+ * exercises ahead has a different Check button in front of them, and pointing at it says
+ * something the educator did not say. Same rule a shared editor already has, where every push
+ * names the exercise it belongs to and the other side applies it nowhere else.
+ *
+ * Null is not a refusal: it is an educator who has not reported a position yet, in the first
+ * seconds of a lesson when nobody knows where anybody is - and an older sender that did not
+ * carry the field. Declining there would be a guess in the other direction.
+ *
+ * AN EXERCISE ID IS A NUMBER AND ARRIVES FROM A SOCKET AS A STRING, so both sides go through
+ * `String()`. It is the trap `progressId` exists for, and the failure it causes here is the
+ * quietest one this feature has: every instruction declined, on a screen that is on exactly
+ * the right row.
+ */
+export const meantForMe = (where, here) =>
+  where == null || (here != null && String(where) === String(here));

@@ -5,7 +5,7 @@
  *   ws   $disconnect                            forget the connection
  *   ws   $default           { type, ... }       ping, active, marked, roster, history, say,
  *                                                 control, sharing, release, drive, buffer,
- *                                                 act, sync, push, timer
+ *                                                 act, sync, push, timer, look
  *
  * One function serving two HTTP routes and three WebSocket routes, told apart by the shape
  * of the event and then by path - the same way the admin function tells users from cohorts.
@@ -1427,6 +1427,63 @@ async function tallied(cohort, mark, seeded = false) {
         y: offset(msg.y) ?? null,
         at: now,
       }, { sub: c.sub, from: await connectionsCached(row.cohort) });
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* LOOK HERE: the educator points at a CONTROL, on everybody's screen at once.
+     *
+     * `point` and this one are the two halves of pointing and they are not the same
+     * mechanism. A pointer is a pixel on a surface, so it has to travel as a fraction of a
+     * named region and arrive approximately. A CONTROL IS A THING RATHER THAN A PLACE, so
+     * what travels is only its name - and the far end rings whatever box its own DOM gives
+     * for it: a different size, a different corner, or a 28px button in a collapsed rail.
+     * No coordinates at all, and it is exact everywhere rather than approximate.
+     *
+     * WHERE THE EDUCATOR IS, TAKEN FROM THE CONNECTION ROW - `say`'s rule, for `say`'s
+     * reason. The client reports its position on every move already, so asking it to say
+     * where it is a second time would be a second copy of a fact to keep in step with the
+     * first, and the copy this message carried is the one that would go stale.
+     *
+     * AND IT IS WHAT MAKES THE RULE BELOW ENFORCEABLE: a client draws nothing unless it is on
+     * the educator's own row. A student two exercises ahead has a different Check button in
+     * front of them, and pointing at it says something the educator did not say - which is
+     * the rule a shared editor already has, where every push names the exercise it belongs to
+     * and the other side applies it nowhere else. Null when the educator has not reported a
+     * position yet, in the first seconds of a lesson, and the far end then draws: nobody
+     * knows where anybody is, and refusing would be a guess in the other direction.
+     *
+     * NO LABEL TRAVELS. The word for a control is a property of the screen drawing it, not of
+     * the message: the same `contents` is a button called Contents in an open sidebar and a
+     * menu button in a collapsed one, and each side should say what its own reader can see.
+     *
+     * THE DELIVERER, not any tutor - `sync`'s gate. Reaching into every screen in the room is
+     * the lesson itself, and the lesson has one owner.
+     *
+     * Nothing is written down. A board and a timer ride the session row because somebody
+     * joining late has to arrive already knowing; this is ten seconds long, and a student who
+     * walks in a minute later must not be shown an arrow over a button that was explained
+     * before they got there.
+     */
+    case 'look': {
+      if (row.role !== 'tutor') return { statusCode: 200, body: 'not yours' };
+      const held = await sessionFor(row.cohort);
+      if (held?.by !== row.sub) return { statusCode: 200, body: 'not yours' };
+      /* The set of names is closed and short and lives in the player, so this bounds the
+       * string and leaves the reading of it to the side that knows what it is drawing -
+       * exactly what pointer.js does with a region name, and for the same reason: anything
+       * else is a message this version does not understand rather than something to render
+       * carefully. */
+      const at = String(msg.at || '').slice(0, 40);
+      if (!at) return { statusCode: 400, body: 'nothing named' };
+      await emit(event, row.cohort, {
+        type: 'looking',
+        at,
+        where: row.position?.exercise ?? null,
+        /* Changes on every press, so the other side watches the MESSAGE rather than the
+         * name: pointing twice at the same button is two instructions, and a watcher on the
+         * name alone would see the second as nothing having changed. */
+        when: now,
+      });
       return { statusCode: 200, body: 'ok' };
     }
 

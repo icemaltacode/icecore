@@ -416,10 +416,12 @@ async function doReset() {
 
       <div class="help" v-if="step.hint || step.solution || isMcqStep || tutorAvailable()">
         <div class="helpbtns">
-          <button v-if="step.hint" class="btn ghost" @click="showHint = !showHint">
+          <button v-if="step.hint" class="btn ghost" data-show="hint" data-label="Hint"
+                  @click="showHint = !showHint">
             <Icon name="hint" />{{ showHint ? 'Hide hint' : 'Take a hint' }}
           </button>
           <button v-if="tutorAvailable() && !isMcqStep" class="btn ghost"
+                  data-show="ai" data-label="Ask AI"
                   :class="{ urge: urgeHelp, soft: urgeHelp }"
                   @click="askForHelp" :disabled="tutorBusy">
             <Icon name="ai" />{{ tutorBusy ? 'Thinking…' : 'Ask AI' }}
@@ -464,10 +466,12 @@ async function doReset() {
           <!-- AND IT SAYS WHOSE CODE, once there are two buffers to run. A student looking
                at the educator's tab who pressed a button labelled "Run code" would fairly
                expect their own. -->
-          <button class="btn ghost" @click="doRun()" :disabled="busy">
+          <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
+                  :disabled="busy">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
-          <button class="btn primary" @click="doCheck"
+          <button class="btn primary" data-show="check" data-label="Check answer"
+                  @click="doCheck"
                   :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
         </div>
       </div>

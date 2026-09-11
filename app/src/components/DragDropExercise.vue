@@ -185,7 +185,8 @@ function showAnswer() {
         <span v-else class="muted">Drag items, or click one and then click where it should go.</span>
         <button class="btn ghost" @click="reset">Start over</button>
         <button class="btn ghost" @click="wantAnswer"><Icon name="answer" />Show answer</button>
-        <button class="btn primary" @click="submit">Check answer</button>
+        <button class="btn primary" data-show="check" data-label="Check answer"
+                @click="submit">Check answer</button>
       </div>
       <RevealNotice v-if="asked" :xp="exercise.xp" @confirm="doReveal" @cancel="asked = false" />
     </div>

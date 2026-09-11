@@ -131,7 +131,11 @@ function submit() {
       <div class="foot">
         <p v-if="submitted" class="feedback" :class="{ pass: correct(), fail: !correct() }"
            v-html="mdx(exercise.feedback?.[picked] || (correct() ? 'Correct.' : 'Not quite.'))"></p>
-        <button v-if="!submitted" class="btn primary" :disabled="picked === null" @click="submit">
+        <!-- `check` rather than a name of its own: it is the same instruction in four
+             exercise components, and an educator saying "press Check" does not know or care
+             which kind of question is in front of each student. -->
+        <button v-if="!submitted" class="btn primary" data-show="check" data-label="Submit answer"
+                :disabled="picked === null" @click="submit">
           Submit answer
         </button>
         <button v-else-if="!correct()" class="btn ghost" @click="submitted = false; picked = null">

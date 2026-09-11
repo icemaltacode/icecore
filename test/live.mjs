@@ -680,6 +680,42 @@ try {
     check('and the educator can', gone2?.timer === null, JSON.stringify(gone2));
   }
 
+  /* ---- pointing at a control ---------------------------------------------------
+   *
+   * ONE FIELD IS THE WHOLE FEATURE HERE and it is not the name: `where` is stamped by this
+   * function from the CONNECTION ROW, exactly as a chat message's origin is, and it is what
+   * lets the far end decline an instruction meant for a row it is not on. A client that
+   * supplied its own would be a copy of a fact to keep in step with the first, and the copy
+   * would be the stale one. A is at `101` because of the `active` messages far above, so this
+   * also proves the two are the same fact rather than two spellings of it.
+   */
+  if (chatIn) {
+    A.ws.send(JSON.stringify({ type: 'look', at: 'slides' }));
+    const seen = await heardB.next('looking');
+    check('a control the educator points at reaches the room', seen?.at === 'slides',
+          JSON.stringify(seen));
+    check('AND IT CARRIES WHERE THE EDUCATOR IS, off the connection row',
+          seen?.where === '101', JSON.stringify(seen));
+    check('and the educator hears their own back, which is the confirmation it went',
+          (await heardA.next('looking'))?.at === 'slides');
+
+    // Nothing named is nothing to point at, and must not reach anybody as an instruction.
+    A.ws.send(JSON.stringify({ type: 'look', at: '' }));
+    check('an instruction naming nothing is not sent',
+          (await heardB.next('looking', 1500)) === null);
+
+    /* THE DELIVERER, not any tutor - `sync`'s gate, and B is the only account here that is
+     * reliably not the deliverer. */
+    if (bRole === 'student') {
+      B.ws.send(JSON.stringify({ type: 'look', at: 'check' }));
+      check('a student cannot point at anything on the room\'s screens',
+            (await heardA.next('looking', 1500)) === null,
+            'the room was sent an instruction a student asked for');
+    } else {
+      skip('a student cannot point at anything on the room\'s screens', notAStudent);
+    }
+  }
+
   /* ---- remote control ---------------------------------------------------------
    *
    * Every assertion here is about a boundary rather than about a feature working: who may

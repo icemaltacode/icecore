@@ -175,14 +175,19 @@ function take() {
              screen and only one of them is what the button acts on. -->
         <button class="tab" type="button" :class="{ active: showing === 'mine' }"
                 @click="tab = 'mine'">{{ name }}</button>
+        <!-- Both spellings of the demonstration carry the same name - narrow it is a tab
+             and wide it is half the bar - because "look at what I am writing" is one thing
+             to say and the reader's pane width is not the educator's business. -->
         <button v-if="has && !split" class="tab" type="button"
+                data-show="demo" :data-label="title"
                 :class="{ active: showing === 'theirs' }" @click="tab = 'theirs'">
           {{ title }}<span v-if="live" class="dot" title="Live"></span>
         </button>
         <slot name="right"></slot>
       </div>
       <div v-if="has && split" class="side theirs">
-        <button class="tab" type="button" :class="{ active: showing === 'theirs' }"
+        <button class="tab" type="button" data-show="demo" :data-label="title"
+                :class="{ active: showing === 'theirs' }"
                 @click="tab = 'theirs'">
           {{ title }}<span v-if="live" class="dot" title="Live"></span>
         </button>

@@ -22,6 +22,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
 import WatchBanner from './components/WatchBanner.vue';
 import LiveBand from './components/LiveBand.vue';
+import LookHere from './components/LookHere.vue';
 import LivePanel from './components/LivePanel.vue';
 import LiveChat from './components/LiveChat.vue';
 import ControlBand from './components/ControlBand.vue';
@@ -1553,6 +1554,12 @@ watch(currentId, id => {
                :unsaved="boardUnsaved" :current-id="board.id"
                @pick="reopenBoard" @close="opening = false" />
     <BoardViewer v-if="viewingBoard" :entry="viewingBoard" @close="viewingBoard = null" />
+
+    <!-- What the educator is pointing at, over whatever this screen's copy of it turns out
+         to be. Out of flow, so it takes no row of this grid. Never in a control tab: that
+         screen is one student's session, and a class-wide "look at this" drawn over it would
+         be pointing at somebody else's furniture. -->
+    <LookHere v-if="delivery.cohort && !controlSub" :here="currentId" />
     <BoardSave v-if="keeping" :pages="board.pages.length" :board-title="board.title"
                :topic-title="currentTopic?.label" :topic="currentTopic?.topic"
                :cohort-title="delivery.title" :busy="keepBusy" :error="keepError"
@@ -1647,7 +1654,12 @@ watch(currentId, id => {
              first and leaving does the second, so a button for either was a control whose
              job had already been done by the time anyone could press it. -->
         <aside v-if="!pinnedNow" class="rail">
-          <button class="railbtn" title="Contents" @click="showContents = true">
+          <!-- THE SAME NAME AS the Contents button in the open sidebar. A name may sit
+               on more than one element and the visible one wins, because the affordance
+               itself moves when the pane collapses - see look.js. Its own label, because
+               this screen's reader can see a menu button and not a word. -->
+          <button class="railbtn" title="Contents" data-show="contents" data-label="the menu"
+                  @click="showContents = true">
             <Icon name="contents" :size="16" />
           </button>
         </aside>
@@ -1686,7 +1698,8 @@ watch(currentId, id => {
           <strong>{{ currentTopic.topic }} {{ currentTopic.title }}</strong>
         </div>
 
-        <button class="contents" @click="showContents = true">
+        <button class="contents" data-show="contents" data-label="Contents"
+                @click="showContents = true">
           <span>Contents</span>
           <!-- The whole walk, not just the gradable part: Contents lists slides too, and a
                button promising 376 exercises that opens a list of 526 rows is counting a
@@ -1799,6 +1812,7 @@ watch(currentId, id => {
                Hidden while the slides are themselves the step: offering to open the deck
                beside a full-pane copy of the same deck reads as a bug. -->
           <button v-if="slidesUrl && current?.kind !== 'slides'" class="btn ghost"
+                  data-show="slides" data-label="Slides"
                   :class="{ on: showSlides }" @click="showSlides = !showSlides">
             {{ showSlides ? 'Hide slides' : 'Slides' }}
           </button>
@@ -1808,7 +1822,8 @@ watch(currentId, id => {
           <BoardClip :topic="currentTopic?.topic" @open="viewingBoard = $event" />
           <!-- Urging only while there is somewhere to go: a disabled button that pulses is
                asking for something it will not accept. -->
-          <button class="btn ghost" :class="{ urge: urgeNext && index < total - 1 }"
+          <button class="btn ghost" data-show="next" data-label="Next"
+                  :class="{ urge: urgeNext && index < total - 1 }"
                   :disabled="index >= total - 1" @click="go(1)">Next</button>
         </footer>
       </main>

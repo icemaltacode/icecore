@@ -11,7 +11,7 @@
  * is all `pointer.js` ever asks for. Same reason `walk.mjs` and `csv.mjs` import their
  * modules directly: the thing under test is pure, and a DOM would be a test of the DOM.
  */
-import { pointFrom, placeAt } from '../app/src/pointer.js';
+import { pointFrom, placeAt, showing, meantForMe } from '../app/src/pointer.js';
 
 let failures = 0;
 const check = (label, ok, detail = '') => {
@@ -135,6 +135,66 @@ const roundTrip = (from, to, x, y = 450) => {
   check('and neither does a point with no region',
         placeAt({ region: null, x: 0.5, y: 0.5 }, laptop.doc) === null);
 }
+
+/* ---- and the other half: which CONTROL, not which pixel -----------------------
+ *
+ * Two rules, and both of them fail QUIETLY rather than loudly, which is why they are here
+ * rather than left to a browser.
+ *
+ * A NAME MAY SIT ON MORE THAN ONE ELEMENT, because the affordance itself moves when a pane
+ * collapses - Contents is a button in an open sidebar and a menu button in a rail - so which
+ * one is decided by which has a box. jsdom returns zeros for every box, so a test of this
+ * written against a DOM would pass without ever deciding anything.
+ *
+ * AND AN EXERCISE ID IS A NUMBER THAT ARRIVES FROM A SOCKET AS A STRING. Get that comparison
+ * wrong and every instruction is declined on a screen that is on exactly the right row: the
+ * feature never works at all, and nothing anywhere says why.
+ */
+function screenWith(boxes) {
+  const els = Object.entries(boxes).map(([key, box]) => ({
+    dataset: { show: key.replace(/#.*$/, ''), label: key },
+    getBoundingClientRect: () => box,
+  }));
+  return {
+    querySelectorAll: sel => {
+      const want = /\[data-show="([^"]+)"\]/.exec(sel)?.[1];
+      return els.filter(e => e.dataset.show === want);
+    },
+  };
+}
+
+const laidOut = { left: 10, top: 10, width: 90, height: 30, right: 100, bottom: 40 };
+const collapsed = { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0 };
+
+{
+  const doc = screenWith({ 'contents#sidebar': collapsed, 'contents#rail': laidOut });
+  check('a name on two elements resolves to the one with a box',
+        showing('contents', doc)?.dataset.label === 'contents#rail',
+        showing('contents', doc)?.dataset.label);
+  check('and a name with nothing laid out resolves to nothing',
+        showing('check', doc) === null);
+}
+{
+  /* The same guard `placeAt` has and for the same reason: the name ends up inside an
+     attribute selector, and it arrived off a socket. */
+  const doc = screenWith({ contents: laidOut });
+  check('a name that is not one of ours is not looked up at all',
+        showing('a"]:has(script)', doc) === null);
+  check('and neither is nothing at all',
+        showing('', doc) === null && showing(null, doc) === null);
+}
+
+check('an instruction for the row we are on is drawn', meantForMe(101, 101) === true);
+check('AND A NUMBER MATCHES THE STRING IT ARRIVED AS', meantForMe('101', 101) === true,
+      'a sort key is text and a socket carries text - progressId exists for this');
+check('and the other way round', meantForMe(101, '101') === true);
+check('an instruction for another row is drawn nowhere', meantForMe(101, 102) === false);
+/* Not a refusal: the first seconds of a lesson, before anybody has reported a position, and
+   an older sender that never carried the field. Declining would be a guess the other way. */
+check('an educator who has not said where they are reaches everybody',
+      meantForMe(null, 101) === true && meantForMe(undefined, 101) === true);
+check('but a reader who is nowhere yet is not reached by a placed instruction',
+      meantForMe(101, null) === false);
 
 console.log(failures ? `\n${failures} failing` : '\nall green');
 process.exit(failures ? 1 : 0);

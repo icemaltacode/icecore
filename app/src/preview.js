@@ -943,6 +943,28 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
     roomTimers.push(setTimeout(() => emit(timing(12, true, Date.now() + 12 * 1000)), 38000));
   }
 
+  /* AND THE EDUCATOR POINTS AT SOMETHING.
+   *
+   * The educator's own half needs no script - `--as admin` has the switch, and a click on a
+   * named control echoes the same `looking` message the Lambda would send. What only a
+   * student can see is an instruction ARRIVING, and in particular the one state that is not
+   * an arrow: a client on a different row draws nothing at all, because the Check button in
+   * front of THEM is a different question and ringing it says something the educator did not
+   * say. A refusal nobody can reach locally is one nobody reads before shipping.
+   *
+   * `where` is the row the scripted tutor walked to, so the first of these is for this screen
+   * and the second is not. */
+  if (!leading) {
+    const look = (at, where) => ({ type: 'looking', at, where,
+                                   when: new Date().toISOString() });
+    roomTimers.push(setTimeout(() => {
+      const row = rows()[0];
+      emit(look('next', row ? row.at : null));
+    }, 52000));
+    // Somewhere the class is not. Nothing should be drawn for this one.
+    roomTimers.push(setTimeout(() => emit(look('check', 'elsewhere')), 64000));
+  }
+
   /* AND THE CONNECTION GOES, AND COMES BACK. The yellow band is a screen with no other way
    * in: there is no socket here, so nothing can drop one, and on the stack it only appears
    * when something has already gone wrong. Played on the student's side because that is

@@ -26,6 +26,13 @@ import Icon from './Icon.vue';
  * times a second, and passing that through this component would re-render the band's whole
  * sentence with it. `mine` is the only thing it needs from here. */
 import LiveTimer from './LiveTimer.vue';
+/* AND THE POINTING SWITCH READ DIRECTLY, which is the one control on this band that is not a
+ * prop and an event. The other three are facts about the LESSON - written to the session row,
+ * refused if they are not yours, and read back rather than set - so App.vue owns them and
+ * passes them down. This one only changes what a click does in this browser: there is nothing
+ * to write, nothing to refuse and nothing to read back, so threading it through a prop would
+ * be ceremony around a boolean. See look.js. */
+import { pointing } from '../look.js';
 
 const props = defineProps({
   /** The session: cohort, course, by, name, at. */
@@ -87,6 +94,12 @@ const elapsed = computed(() => {
  * the student did or can fix, nothing they have done is lost, and the thing is already being
  * dealt with. Yellow says look; red would say act, and there is nothing to do. */
 const away = computed(() => channel.lost && channel.status !== 'open');
+
+/* Through a function rather than `pointing = !pointing` in the template. An IMPORTED binding
+ * is a maybe-ref to the compiler: it unwraps one for reading and cannot assign through one,
+ * so the template spelling compiles without complaint and throws when the button is pressed -
+ * which is only reachable on an educator's screen, in a lesson. */
+const togglePointing = () => { pointing.value = !pointing.value; };
 </script>
 
 <template>
@@ -180,6 +193,19 @@ const away = computed(() => channel.lost && channel.status !== 'open');
             @click="emit('board', !boarding)">
       <Icon name="board" :size="14" />
       {{ boarding ? 'Whiteboard on' : 'Whiteboard' }}
+    </button>
+    <!-- BESIDE the other two, because it is the third thing an educator does to the ROOM
+         rather than to one person. On, every press of a named control points at it for the
+         class INSTEAD of working it - which is what makes "look at this, but don't press it
+         yet" sayable, and why the button has to read loudly as on: an educator who had
+         forgotten would find Check doing nothing. -->
+    <button v-if="mine" class="btn ghost sync" :class="{ on: pointing }" type="button"
+            :title="pointing
+              ? 'Your clicks are pointing things out. Nothing you press does its usual job.'
+              : 'Point things out on the class\'s screens by clicking them.'"
+            @click="togglePointing()">
+      <Icon name="point" :size="14" />
+      {{ pointing ? 'Pointing' : 'Point things out' }}
     </button>
     <button v-if="mine" class="btn danger" type="button" @click="emit('end')">End session</button>
     <template v-else>

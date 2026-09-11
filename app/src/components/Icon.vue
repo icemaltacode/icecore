@@ -46,6 +46,9 @@ const PATHS = {
   run: 'M7 4.5v15l13-7.5-13-7.5Z',
   // the pair of bars beside it, so that Pause and Run read as one control in two states
   pause: 'M9 5v14M15 5v14',
+  // a cursor: the gesture of pointing at something, which is what the control does rather
+  // than what it points at - there is no icon for "the Slides button"
+  point: 'M6 3.5v14.5l4-3.8 2.4 5 2.6-1.2-2.3-4.8 5.3-.4L6 3.5Z',
   // lines of prose on a page: a note, not a document icon and not a speech bubble
   notes: 'M5 3h14a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z M8 8h8M8 12h8M8 16h5',
   // which way the divider runs - the pane arrangement, not an action

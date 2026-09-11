@@ -220,7 +220,7 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
     <!-- A TOGGLE, not an open. The rail is on screen in two states now - collapsed, and
          collapsed with the panel floating over the exercise beside it - and a button that
          only ever opens is one that does nothing at all in the second. -->
-    <button class="railbtn" type="button"
+    <button class="railbtn" type="button" data-show="room" data-label="Participants"
             :title="floating ? 'Hide the participants' : `Participants — ${hereCount} here`"
             @click="open = !open">
       <Icon name="people" :size="16" />
@@ -230,7 +230,7 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
          badge is what makes closing the panel a reasonable thing for a student to do: they
          can put the class away and still be told when they are being spoken to. Absent
          while the chat is floating, where it is on screen and counts nothing. -->
-    <button v-if="!chat.popped" class="railbtn" type="button"
+    <button v-if="!chat.popped" class="railbtn" type="button" data-show="chat" data-label="Chat"
             :title="chat.unread ? `Chat — ${chat.unread} new` : 'Chat'"
             @click="open = true">
       <Icon name="chat" :size="16" />

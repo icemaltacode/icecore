@@ -771,6 +771,75 @@ be two things moving the same screen. One fact each.
   the four control sends already do: a toggle that says on when the write was refused is
   worse than one that lags.
 
+## Look here
+
+**Built.** An educator points at a control and it is pointed out on every screen in the room:
+`app/src/look.js`, `LookHere.vue`, the two resolvers at the foot of `pointer.js`, a
+`data-show` attribute on ten controls, and one `look` message.
+
+- **A NAME, NEVER A PLACE.** Pointing is already solved for pixels and the answer is
+  expensive: a fraction of a named region, because the shell is 272px and 336px of fixed
+  columns either side of a fluid middle and a fraction of one window lands somewhere else on
+  another. A control has it easier — **it is a thing rather than a place**, so only its name
+  travels and each screen rings whatever box its own DOM gives. No coordinates at all, and
+  exact everywhere rather than approximate.
+- **`data-show` is a second vocabulary from `data-point`, deliberately.** They answer
+  different questions — what surface is this pixel over, against which control do I mean — and
+  `regionAt` takes the *innermost* match, so marking a button `data-point` would silently
+  change what the pointer reports as a side effect of naming it.
+- **A name may sit on more than one element, and the visible one wins.** The affordance itself
+  moves when a pane collapses: Contents is a button in an open sidebar and a menu button in a
+  rail, and a demonstration is a tab when the pane is narrow and half the tab bar when it is
+  not. One name, whichever copy is on screen — the property that makes the whole idea work
+  between two screens, applied within one.
+- **ONLY WHERE IT MEANS THE SAME THING.** `where` carries the educator's own row, stamped by
+  the Lambda from the connection row exactly as a chat message's origin is, and a client draws
+  nothing unless it is on that row. A student two exercises ahead has a different Check button
+  in front of them. Same rule a shared editor already has — every push names the exercise it
+  belongs to — met a third time. The **strict** reading was chosen over splitting the names
+  into chrome (Contents, the rail, the chat: the same anywhere) and work (Check, Run, the
+  editor): one rule is worth more than the few extra arrows the second buys. Null is not a
+  refusal — it is the first seconds of a lesson, before anybody has reported a position.
+- **The press is consumed.** While *Point things out* is on, a click on a named control points
+  at it and does not work it — so Next does not advance, and *look at this, but don't press it
+  yet* is sayable. That is also what makes the gesture free of a second step: there is nothing
+  to arm and nothing to aim, the ordinary click **is** the instruction. Capture phase on the
+  document, so it never reaches the control; a future named control that acted on
+  `pointerdown` would need naming there too.
+- **That switch is the one flag here that is not a fact about the lesson.** The room does not
+  need to know — it only changes what a click does in this browser — so there is no write, no
+  condition and nothing to read back, and it is a plain ref where `sync`, the board and the
+  timer are all session-row flags. **Not remembered across a reload:** it is a mode that
+  swallows presses, and coming back into it silently is how somebody concludes the player is
+  broken.
+- **Ten seconds, or until it is answered.** Pressing the thing takes the arrow away at once,
+  on that screen alone — `.btn.urge`'s rule, that whoever sets a nudge owns clearing it.
+  Nothing is broadcast when it goes; each screen answers for itself. It is **a moment written
+  down nowhere**: the board and the timer ride the session row because a latecomer has to
+  arrive already knowing, and somebody walking in a minute later must not be shown an arrow
+  over a button explained before they got there.
+- **Drawn over the control, never on it.** A class on the button would be clipped by any pane
+  that scrolls and would fight the control's own `:hover` and `.urge` — the same accent saying
+  a different thing. The cost is a reposition on scroll, which is also what lets it **scroll a
+  control into view first**: `block: 'nearest'` moves the view by the least that makes it
+  visible and never moves the lesson.
+- **The arrow points at the thing**, and it is the one mistake this drawing can make. Above
+  the control it points down, below it points up, each nodding towards what it names; the side
+  is decided by which has room. Two glyphs rather than one rotated, so the head is always the
+  end nearest the target.
+- **Orange, and the drive one.** `--ice-drive` already means somebody else is in your session
+  — the caret while you are driven, the band that says so — and an educator reaching into your
+  screen is that same fact. Not the accent: primary is the colour of every button on the page,
+  so a ring in it disappears into the furniture on the one screen where it must not.
+  `--ice-drive-halo` is new, and is the one weight of it a pulse needs.
+- **It is said in words as well.** A ring is invisible to a screen reader, and the name is what
+  the educator actually said out loud. The word is the reading screen's own — no label travels
+  — so the same `contents` is *Contents* in an open sidebar and *the menu* in a collapsed one.
+- **Where it is tested, and why there.** The two resolvers live in `pointer.js` and are covered
+  by `test/pointer.mjs` against hand-built screens, because **jsdom returns zeros from
+  `getBoundingClientRect`** and "is this control visible" answered against a DOM is answered by
+  accident. `test/player.mjs` proves the wiring end to end and lends its one control a box.
+
 ## The clock on the wall
 
 **Built.** An educator gives the room five minutes; every screen counts them down together.

@@ -612,6 +612,73 @@ check('a drive that moves them to another exercise carries its code with it',
         !!document.querySelector('.livechat.float'));
 }
 
+// ------------------------------------------ the educator points at a control
+/* LOOK HERE, from the side that receives one.
+ *
+ * WHAT IS ASSERTED HERE IS THE WIRING, and the arithmetic that decides whether to draw is
+ * asserted in test/pointer.mjs instead - deliberately, because jsdom does no layout and
+ * `getBoundingClientRect` returns zeros, so "is this control visible" answered against a DOM
+ * would be answered by accident. That is also why the one element under test is lent a box
+ * below: this file can prove the message reaches a screen and takes an arrow with it, and
+ * cannot prove anything about where the arrow lands.
+ *
+ * THE ASSERTION THAT MATTERS IS THE LAST BUT ONE. An instruction for a row this client is not
+ * on must draw NOTHING - a student two exercises ahead has a different Check button in front
+ * of them, and ringing it says something the educator did not say.
+ */
+{
+  const arrow = () => document.querySelector('.lookhere');
+  const ring = () => document.querySelector('.lookhere .lookring');
+  const look = (at, where) => player.emitLocal({
+    type: 'looking', at, where, when: new Date().toISOString(),
+  });
+
+  /* Contents, because it is the one named control on screen whose press is inert - it opens
+   * a list. Pressing Check here would reach for a database that is stubbed out. */
+  const contents = document.querySelector('[data-show="contents"]');
+  check('the sidebar\'s Contents button carries a name to be pointed at', !!contents);
+  if (contents) {
+    contents.getBoundingClientRect = () => ({ left: 24, top: 180, width: 180, height: 34,
+                                              right: 204, bottom: 214, x: 24, y: 180 });
+  }
+
+  /* `where` unset is an educator who has not reported a position - the first seconds of a
+   * lesson, and an older sender - and both mean draw. */
+  look('contents', null);
+  await settle(200);
+  check('a control the educator points at is drawn on the class\'s screen', !!arrow());
+  check('and it is a ring round a box, not a decoration in a corner',
+        /width: 188px/.test(ring()?.getAttribute('style') || ''), ring()?.getAttribute('style'));
+  /* Said in words as well, because a ring is invisible to a screen reader - and the word is
+   * THIS screen's own, not one that travelled: the same name is Contents in an open sidebar
+   * and the menu in a collapsed one. */
+  check('and it is said in words for anyone who cannot see a ring',
+        /pointing at Contents/i.test(arrow()?.textContent || ''), arrow()?.textContent);
+
+  /* ANSWERED BY DOING THE THING. Cleared on this screen alone - `.btn.urge`'s rule, that
+   * whoever sets a nudge owns clearing it, and a student who has already done it is being
+   * nagged. */
+  contents?.click();
+  await settle(200);
+  check('pressing the thing being pointed at takes the arrow away', !arrow());
+  document.querySelector('.scrim .btn')?.click();
+  await settle(150);
+
+  look('nosuchthing', null);
+  await settle(200);
+  check('a name this screen has nothing for draws nothing', !arrow(),
+        'it declines rather than guessing where a control that is not here would have been');
+
+  look('contents', null);
+  await settle(200);
+  check('and an ordinary instruction is drawn again', !!arrow());
+
+  look('contents', 'somewhere-else');
+  await settle(200);
+  check('AN INSTRUCTION FOR ANOTHER ROW IS DRAWN NOWHERE', !arrow(),
+        'a student who has gone ahead has a different screen in front of them');
+}
+
 // ------------------------------------- the educator's annotations, arriving
 /* THE PLAYER'S OWN WIRING, which is the half a browser harness cannot reach: `decked` off
  * the channel -> delivery.js -> decksync.js -> a postMessage into whatever deck is on screen.

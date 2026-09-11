@@ -77,6 +77,12 @@
   --ice-drive-line: #ea580c;
   --ice-drive-fill: rgba(234, 88, 12, .12);
   --ice-on-drive: #ffffff;
+  /* And one weight of it for a pulse. `fill` is a ground for a band and far too faint to
+     read as a halo expanding off an edge; this is the same orange at the strength
+     `--ice-primary-soft` has against the accent. Its own token because the pointing arrow is
+     the only thing that needs it and a literal would be the one colour in that file the
+     dark theme could not reach. */
+  --ice-drive-halo: rgba(234, 88, 12, .34);
 
   --ice-syn-keyword: #1d4ed8;
   --ice-syn-string: #15803d;
@@ -121,6 +127,7 @@
   --ice-drive: #fdba74;
   --ice-drive-line: #fb923c;
   --ice-drive-fill: rgba(251, 146, 60, .14);
+  --ice-drive-halo: rgba(251, 146, 60, .30);
   --ice-on-drive: #431407;
 
   --ice-syn-keyword: #93c5fd;

@@ -38,6 +38,16 @@ export function installDom({ hash = '', search = '', url = 'https://icecore.test
     addListener() {}, removeListener() {},
   });
 
+  /* jsdom HAS NO SCROLLING, so `scrollIntoView` is missing from every element rather than
+   * being a no-op. Two places in the player call it - the contents list, which brings the row
+   * you are on into view when it opens, and the pointing arrow, which brings a control below
+   * the fold into view before ringing it - and both throw where the method is absent, which
+   * arrives as a failure blaming a watcher rather than the platform.
+   *
+   * A no-op is the honest stand-in: there is no layout here, so there is nothing to scroll,
+   * and what a test can assert either side of it is unchanged. */
+  window.Element.prototype.scrollIntoView = function () {};
+
   /* No channel. `live.js` opens one only when `socketUrl()` is set, which needs an
    * auth.json - so under preview nothing ever constructs this. It exists so that a module
    * comparing `readyState` to `WebSocket.OPEN` at import time does not throw. */
