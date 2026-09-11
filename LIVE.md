@@ -329,6 +329,17 @@ out whether anything changed. The choice is remembered per browser and **remembe
 separately from the default**, so a student who opens it once is not collapsed again next
 lesson.
 
+**The split between the roster and the chat is the reader's, not the layout's.** It was
+`1fr` against `1.35fr` in the panel's own CSS, which is a ratio that is right for one moment
+of a lesson: a tutor watching twelve names wants the roster, and the same tutor two minutes
+later is answering a question. It is the Playground's `SplitPane` rather than a fourth
+drag handler — which is what that component exists for, and what brings the parts that are
+easy to leave out: a pixel floor under both panes, a keyboard, double-click to restore the
+authored ratio, and a size remembered as a **percentage** so that plugging a laptop into a
+monitor does not leave the chat a sliver. Popping the chat out folds the divider away rather
+than rendering a second tree, because a handle with nothing on the other side of it is a
+control that does nothing.
+
 Four states, and only three are in the brief: **with you**, **somewhere else** (connected,
 attentive, and not where the tutor is), **idle**, **not here**. Somebody who has stopped
 following is not absent, and drawing them as offline is how a tutor concludes half the room

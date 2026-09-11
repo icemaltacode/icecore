@@ -575,6 +575,43 @@ check('a drive that moves them to another exercise carries its code with it',
         at() === before, `${at()} was ${before}`);
 }
 
+// -------------------------------- the room and the chat, and who gets the room
+/* THE PANEL HOLDS TWO THINGS AND THE READER DECIDES THE RATIO. What is worth asserting
+ * here is not the number - jsdom does no layout and cannot tell you a pixel - but that both
+ * halves are still mounted inside one divider, and that the divider folds away rather than
+ * leaving a handle with nothing on the other side of it. Two panes that collapse to nothing
+ * is exactly the failure this kind of change makes, and it is invisible to reading.
+ */
+{
+  // Collapsed by default for a student, which is the panel's own rule. The rail is the way in.
+  document.querySelector('.roomrail .railbtn')?.click();
+  await settle(150);
+  const panel = () => document.querySelector('.roompanel');
+  const handle = () => panel()?.querySelector('.splitpane.column > .handle');
+  check('the panel opens from the rail', !!panel());
+  check('and holds the roster and the chat in one divider',
+        !!panel()?.querySelector('.people') && !!panel()?.querySelector('.livechat'));
+  check('which is a divider somebody can actually take hold of',
+        handle()?.getAttribute('role') === 'separator'
+        && handle()?.getAttribute('aria-orientation') === 'horizontal',
+        handle()?.outerHTML?.slice(0, 120));
+  /* A PERCENTAGE, NOT PIXELS - it has to survive a laptop being plugged into a monitor. This
+   * also proves the pane is being apportioned at all rather than sized by its own content,
+   * which is what a collapsed pane looks like from here. */
+  check('and it apportions the panel rather than letting each half size itself',
+        /%/.test(panel()?.querySelector('.pane.a')?.style?.flex || ''),
+        panel()?.querySelector('.pane.a')?.style?.flex);
+
+  // Popped out, there is one pane and nothing to drag: a handle with nothing beyond it is a
+  // control that does nothing.
+  panel()?.querySelector('.livechat .shut')?.click();
+  await settle(150);
+  check('popping the chat out takes the divider with it', !handle());
+  check('and the roster keeps the whole panel', !!panel()?.querySelector('.people'));
+  check('while the chat is still on screen, floating',
+        !!document.querySelector('.livechat.float'));
+}
+
 // ------------------------------------- the educator's annotations, arriving
 /* THE PLAYER'S OWN WIRING, which is the half a browser harness cannot reach: `decked` off
  * the channel -> delivery.js -> decksync.js -> a postMessage into whatever deck is on screen.

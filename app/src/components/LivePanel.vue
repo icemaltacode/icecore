@@ -40,6 +40,12 @@ import { room, presenceOf } from '../delivery.js';
 import { chat } from '../chat.js';
 import Icon from './Icon.vue';
 import LiveChat from './LiveChat.vue';
+/* THE SAME DIVIDER THE PLAYGROUND HAS, for the reason that component exists at all: a fourth
+ * ad-hoc drag handler is how four dividers end up behaving differently from each other. It
+ * already carries the parts that are easy to leave out - a pixel floor under both panes,
+ * keyboard, double-click to restore, and a size remembered as a PERCENTAGE so that plugging
+ * a laptop into a monitor does not leave the chat a sliver. */
+import SplitPane from './SplitPane.vue';
 
 const props = defineProps({
   /** Where the tutor is, so "somewhere else" has something to be else from. */
@@ -232,7 +238,7 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
     </button>
   </aside>
 
-  <aside v-if="roomy || floating" class="roompanel" :class="{ split: !chat.popped, floating }">
+  <aside v-if="roomy || floating" class="roompanel" :class="{ floating }">
     <header>
       <Icon name="people" :size="15" />
       <h4>{{ grading ? 'This exercise' : 'Participants' }}</h4>
@@ -246,51 +252,63 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
       </button>
     </header>
 
-    <div class="people">
-      <div v-if="leader" class="group"><span class="dot on"></span>Leading</div>
-      <div v-if="leader" class="person">
-        <span class="avatar lead">{{ initials(leader.name) }}</span>
-        <span class="nm">{{ leader.name }}<em>Educator</em></span>
-      </div>
+    <!-- HOW MUCH ROOM EACH GETS IS THE READER'S, and it changes during a lesson rather
+         than between lessons: a tutor watching twelve names wants the roster, and the same
+         tutor two minutes later is answering a question. A ratio fixed here is right for one
+         of those. `single` folds the divider away when the chat is popped out, rather than
+         this rendering two different trees for the two cases - see SplitPane. -->
+    <SplitPane direction="column" :single="chat.popped" storage-key="live-room"
+               :initial="43" :min="12" :max="88" :min-px="120">
+      <template #a>
+        <div class="people">
+          <div v-if="leader" class="group"><span class="dot on"></span>Leading</div>
+          <div v-if="leader" class="person">
+            <span class="avatar lead">{{ initials(leader.name) }}</span>
+            <span class="nm">{{ leader.name }}<em>Educator</em></span>
+          </div>
 
-      <template v-for="g in grouped" :key="g.id">
-        <div class="group">
-          <span class="dot" :class="g.dot"></span>{{ g.title }}<span class="n">{{ g.people.length }}</span>
-        </div>
-        <div v-for="p in g.people" :key="p.sub" class="person" :class="{ away: p.away }">
-          <span class="avatar">{{ initials(p.name) }}</span>
-          <span class="nm">{{ p.name || '—' }}
-            <!-- Only where it says something. "Somewhere else" without saying where is a
-                 label that makes a tutor go and ask. -->
-            <em v-if="grading && note(p)">{{ note(p) }}</em>
-            <em v-else-if="p.state === 'elsewhere' && p.position?.title">{{ p.position.title }}</em>
-            <em v-else-if="p.state === 'idle'">Nothing for a while</em>
-          </span>
+          <template v-for="g in grouped" :key="g.id">
+            <div class="group">
+              <span class="dot" :class="g.dot"></span>{{ g.title }}<span class="n">{{ g.people.length }}</span>
+            </div>
+            <div v-for="p in g.people" :key="p.sub" class="person" :class="{ away: p.away }">
+              <span class="avatar">{{ initials(p.name) }}</span>
+              <span class="nm">{{ p.name || '—' }}
+                <!-- Only where it says something. "Somewhere else" without saying where is a
+                     label that makes a tutor go and ask. -->
+                <em v-if="grading && note(p)">{{ note(p) }}</em>
+                <em v-else-if="p.state === 'elsewhere' && p.position?.title">{{ p.position.title }}</em>
+                <em v-else-if="p.state === 'idle'">Nothing for a while</em>
+              </span>
 
-          <!-- ONLY FOR SOMEBODY WHO IS ACTUALLY THERE. Their browser is what applies a
-               drive, so offering this against an empty chair is offering to control nothing
-               - the server refuses it and says so, and a button that always explains itself
-               is a button that should not have been enabled.
-               Hidden until the row is hovered or focused, because a column of twelve names
-               each carrying a live control is a screen you read carefully before touching. -->
-          <button v-if="canControl && !p.away && p.sub !== controlled" class="take" type="button"
-                  :title="`Control ${p.name || 'this student'}'s screen`"
-                  @click="emit('control', { sub: p.sub, name: p.name })">
-            <Icon name="remote" :size="14" />
-          </button>
-          <span v-else-if="p.sub === controlled" class="driving" title="You are controlling this screen">
-            <Icon name="remote" :size="13" />
-          </span>
+              <!-- ONLY FOR SOMEBODY WHO IS ACTUALLY THERE. Their browser is what applies a
+                   drive, so offering this against an empty chair is offering to control nothing
+                   - the server refuses it and says so, and a button that always explains itself
+                   is a button that should not have been enabled.
+                   Hidden until the row is hovered or focused, because a column of twelve names
+                   each carrying a live control is a screen you read carefully before touching. -->
+              <button v-if="canControl && !p.away && p.sub !== controlled" class="take" type="button"
+                      :title="`Control ${p.name || 'this student'}'s screen`"
+                      @click="emit('control', { sub: p.sub, name: p.name })">
+                <Icon name="remote" :size="14" />
+              </button>
+              <span v-else-if="p.sub === controlled" class="driving" title="You are controlling this screen">
+                <Icon name="remote" :size="13" />
+              </span>
+            </div>
+          </template>
+
+          <p v-if="!people.length && !leader" class="none">Nobody is in this cohort yet.</p>
         </div>
       </template>
 
-      <p v-if="!people.length && !leader" class="none">Nobody is in this cohort yet.</p>
-    </div>
-
-    <!-- Under the room rather than beside it: they are two views of the same twelve people,
-         and a tab strip would make reading one cost seeing the other. Gone from here the
-         moment it is popped out, so there is exactly one of it on screen. -->
-    <LiveChat v-if="!chat.popped" :here-at="hereAt" @goto="id => emit('goto', id)" />
+      <!-- Under the room rather than beside it: they are two views of the same twelve people,
+           and a tab strip would make reading one cost seeing the other. Gone from here the
+           moment it is popped out, so there is exactly one of it on screen. -->
+      <template #b>
+        <LiveChat :here-at="hereAt" @goto="id => emit('goto', id)" />
+      </template>
+    </SplitPane>
   </aside>
 </template>
 
@@ -335,11 +353,17 @@ const initials = n => (n || '?').split(/\s+/).slice(0, 2).map(w => w[0] || '').j
 .roompanel { background: var(--ice-bg-soft); border-left: 1px solid var(--ice-border);
              display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0;
              overflow: hidden; }
-/* The room gets what it needs and the conversation gets the rest. Not an even split: a
-   roster is a fixed number of short rows and stops being more useful with more space, where
-   a chat log is the opposite. Both are `minmax(0, ...)` or a long list of either pushes the
-   other off the bottom of the panel instead of scrolling inside itself. */
-.roompanel.split { grid-template-rows: auto minmax(64px, 1fr) minmax(190px, 1.35fr); }
+/* TWO ROWS, NOT THREE. The header is fixed and everything below it is the divider's to
+   apportion - which is the whole change: the ratio used to be `1fr` against `1.35fr` stated
+   here, where nobody could reach it. 43% is that same ratio, kept as where the divider
+   starts and as what a double-click on it restores.
+
+   Both panes still have to SCROLL rather than push each other off the bottom, and in a flex
+   column that takes `min-height: 0` as well as `flex: 1`: the default `auto` minimum makes a
+   long list refuse to shrink, which is what the `minmax(0, ...)` above said in the grid's
+   words. The chat's own root is reached for the same reason the rest of this file documents
+   at length - it is a child component, and its root is where its height has to be set. */
+.people, .roompanel :deep(.livechat) { flex: 1 1 0; min-height: 0; }
 header { display: flex; align-items: center; gap: 8px; padding: 12px 14px 10px;
          border-bottom: 1px solid var(--ice-border); color: var(--ice-fg-muted); }
 h4 { margin: 0; font-size: 13px; font-weight: 600; flex: 1; color: var(--ice-fg); }

@@ -22,6 +22,4 @@ in a month.
   got it", not an audit log.
 
 # Enhancements
-- Split between chat and participants should be resizable.
-
 - Highlight UI: Can we add an option so the Educator can highlight a part of the UI for the students? For example, the educator clicks on the 'Slides' button, and it is highlighted prominently for the students... ideally with a flashing arrow, which then disappears after a few seconds. Tell me what this involves and whether we can do it.
