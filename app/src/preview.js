@@ -910,6 +910,39 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
     play(24000, { type: 'boarding', on: false, page: 0 });
   }
 
+  /* AND THE CLASS IS GIVEN A FEW MINUTES.
+   *
+   * The educator's own half of this needs no script - `--as admin` has the buttons, and they
+   * echo locally through the same `timing` message the Lambda would send. What only a student
+   * can see is a countdown ARRIVING: a deadline measured against somebody else's clock, the
+   * moment it is made prominent, and what a screen looks like when the time runs out.
+   *
+   * Three of them rather than one, because the interesting states are at opposite ends of a
+   * timer's life and waiting three minutes for the second is not a preview. A long one to see
+   * the ordinary chip, the switch to the large panel, and then a short one that actually
+   * reaches nought while somebody is looking at it.
+   *
+   * `now` is this browser's clock here, which is the one case where it cannot be wrong. The
+   * correction it exercises is the arithmetic, not the skew - for that there is a test. */
+  if (!leading) {
+    const timing = (secs, prominent, endsAt) => ({
+      type: 'timing',
+      timer: { seconds: secs, ends: new Date(endsAt).toISOString(),
+               running: true, prominent, now: new Date().toISOString() },
+    });
+    /* THE SAME DEADLINE, SHOWN DIFFERENTLY. Made prominent is `show` on the wire and must not
+     * move the instant the time runs out - recomputing one here would be a preview that
+     * proved the opposite of the rule. */
+    let ends = 0;
+    roomTimers.push(setTimeout(() => {
+      ends = Date.now() + 180 * 1000;
+      emit(timing(180, false, ends));
+    }, 26000));
+    roomTimers.push(setTimeout(() => emit(timing(180, true, ends)), 32000));
+    // Twelve seconds is long enough to read and short enough to sit through.
+    roomTimers.push(setTimeout(() => emit(timing(12, true, Date.now() + 12 * 1000)), 38000));
+  }
+
   /* AND THE CONNECTION GOES, AND COMES BACK. The yellow band is a screen with no other way
    * in: there is no socket here, so nothing can drop one, and on the stack it only appears
    * when something has already gone wrong. Played on the student's side because that is

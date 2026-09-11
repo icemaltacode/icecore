@@ -20,6 +20,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { live as channel } from '../live.js';
 import Icon from './Icon.vue';
+/* THE COUNTDOWN GOES HERE and not through App.vue, because the band is the one thing on
+ * screen for the whole of a lesson and the timer has to be too - see LiveTimer.vue. It reads
+ * `timer.js` for itself rather than taking the reading as a prop: the clock changes four
+ * times a second, and passing that through this component would re-render the band's whole
+ * sentence with it. `mine` is the only thing it needs from here. */
+import LiveTimer from './LiveTimer.vue';
 
 const props = defineProps({
   /** The session: cohort, course, by, name, at. */
@@ -143,7 +149,13 @@ const away = computed(() => channel.lost && channel.status !== 'open');
       </template>
     </span>
 
-    <span class="clock">{{ elapsed }}</span>
+    <LiveTimer :mine="mine" />
+
+    <!-- HOW LONG THE LESSON HAS BEEN RUNNING, which is a different question from how long is
+         left and sits beside it rather than instead of it. `aria-live="off"` because this
+         band is a polite live region and a clock inside one is a number read aloud over the
+         lesson, once a second, forever. -->
+    <span class="clock" aria-live="off">{{ elapsed }}</span>
 
     <!-- THE SWITCH SITS BESIDE End session, because those are the two things an educator
          does to the room rather than to one person - and the panel, where taking control of

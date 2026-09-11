@@ -22,8 +22,6 @@ in a month.
   got it", not an audit log.
 
 # Enhancements
-- Add a timer button, visible only to the Educator. Educator can set a time to count down, and start/pause/resume/reset. Student see the timer counting down, either in a small timer top-right of the editor, or, if the educator ticks 'prominent', as a panel at the bottom, large.
-
 - Split between chat and participants should be resizable.
 
 - Highlight UI: Can we add an option so the Educator can highlight a part of the UI for the students? For example, the educator clicks on the 'Slides' button, and it is highlighted prominently for the students... ideally with a flashing arrow, which then disappears after a few seconds. Tell me what this involves and whether we can do it.

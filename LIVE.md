@@ -760,6 +760,58 @@ be two things moving the same screen. One fact each.
   the four control sends already do: a toggle that says on when the write was refused is
   worse than one that lags.
 
+## The clock on the wall
+
+**Built.** An educator gives the room five minutes; every screen counts them down together.
+`app/src/timer.js`, `LiveTimer.vue`, and one `timer` message with five gestures on it.
+
+- **A DEADLINE, NEVER A TICK.** What is stored and what travels is the *instant* the time
+  runs out, and each client subtracts its own now from it. So nothing counts down on the
+  wire, nothing is pushed once a second to a dozen sockets, there is no timer Lambda, and
+  zero arrives on every screen by arithmetic rather than by a message — which matters most
+  at exactly the moment a dropped message would be most visible. Presence already works this
+  way for the same reason: the server holds the fact and the client computes the reading.
+- **So the server's clock travels with the deadline, on every message and on the roster.**
+  An instant is worth nothing beside the wrong clock, and a laptop in a classroom can be
+  minutes out — a countdown reading 4:37 at the front of the room and 1:12 on one desk is
+  worse than no countdown, because both look equally true. `timerFor()` is the one place the
+  pair is assembled; `applyTimer()` is the one place it is corrected, so nothing downstream
+  ever learns this was a problem. The player test's clock is deliberately ninety seconds
+  wrong, because a preview and a real lesson both run on one machine where every clock agrees
+  by construction.
+- **Running holds an instant, paused holds a duration**, and that is not two spellings of one
+  field: a paused timer *has* no deadline, and a running one cannot be a duration without
+  something to decrement it. The arithmetic between the two is in the Lambda and nowhere
+  else, so two clients cannot disagree about what Pause did.
+- **Setting a time starts it, and Reset is therefore not a verb.** The gesture in a room is
+  "you have five minutes — go", and a timer that must be set and then started is two presses
+  for the only thing anybody does with one. Reset sends `set` again with the duration it
+  already had: the same sentence said twice, rather than a fifth rule about what "back to the
+  top" does to a timer that was paused.
+- **The DELIVERER, not any tutor** — `sync`'s gate, for `sync`'s reason. A second admin may
+  take control of one student; putting a deadline on every screen in the room is the lesson
+  itself, and the lesson has one owner. The educator's own buttons read the timer back rather
+  than setting it optimistically, which is that rule again.
+- **A lost educator leaves it running**, unlike the editor switch and the board — both of
+  which `$disconnect` clears, because both leave the room *stuck* with nobody to unstick it.
+  A countdown that nobody is there to stop simply reaches nought and says so, which is what
+  it would have done anyway.
+- **It lives in the band and not at the top right of the editor**, which is where the brief
+  put it. The band is the one element on screen for the whole of a lesson: a timer anchored to
+  the editor is missing from a slides topic, a multiple-choice question and a whiteboard, and
+  "five minutes to read this" is said about all four. It also cannot collide with the
+  participants panel, the chat window or a toast, which own the corners. It follows that a
+  control tab and a driven screen carry no clock — those two show `ControlBand` instead, and
+  being driven is not a moment when a deadline is the thing to look at.
+- **Prominent is a property of the TIMER, not of each screen.** It is the educator deciding
+  how loudly the room is being asked to look at the clock, so it rides the same fact and a
+  latecomer arrives already looking at it. The large panel takes no clicks — it floats over
+  the bottom of the player, which is where the Check button is.
+- **Nothing in either clock announces itself.** The band is a `role="status"` with
+  `aria-live="polite"`, and a live region holding a number that changes four times a second
+  is a screen reader talking over the lesson forever. Both clocks carry `aria-live="off"`,
+  which also fixed the elapsed one, which had the bug first.
+
 ## Ending a session
 
 Ending writes the bookmark — the step *after* the one the session finished on, per cohort

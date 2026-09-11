@@ -513,6 +513,68 @@ check('a drive that moves them to another exercise carries its code with it',
         at() === before, `${at()} was ${before}`);
 }
 
+// ------------------------------------------ the class is given five minutes
+/* THE COUNTDOWN, from the side that receives one.
+ *
+ * THE ASSERTION THAT MATTERS IS THE SECOND. Every message carries the SERVER'S clock beside
+ * the deadline, and this client's clock is deliberately wrong by ninety seconds - which is an
+ * ordinary laptop in an ordinary classroom. Uncorrected, the room would be told it had 3:30
+ * while the educator was looking at 5:00, and both screens would look equally right. There is
+ * no other instrument for this: a preview and a real lesson both run on one machine, where
+ * every clock agrees by construction.
+ */
+{
+  const chip = () => document.querySelector('.ltchip .ltnum')?.textContent?.trim() || '';
+  const big = () => document.querySelector('.ltbig');
+  /* Ninety seconds BEHIND the server, so an uncorrected reading is too long rather than too
+   * short - a timer that ran out early could be mistaken for one that simply did. */
+  const wrong = ms => new Date(Date.now() + ms).toISOString();
+  const timing = t => player.emitLocal({ type: 'timing', timer: t });
+
+  timing({ seconds: 300, ends: wrong(90 * 1000 + 300 * 1000), running: true,
+           prominent: false, now: wrong(90 * 1000) });
+  await settle(150);
+  check('a countdown set for the room reaches the class', !!chip(), chip());
+  check('AND A BROWSER WITH A WRONG CLOCK STILL SHOWS THE RIGHT TIME',
+        /^(5:00|4:59)$/.test(chip()), chip());
+  check('and small is small - nothing over the player until it is asked for', !big());
+
+  /* Made prominent is a different way of showing the same deadline. If this moved it, the
+   * panel would open on a number that had nothing to do with the one beside it. */
+  timing({ seconds: 300, ends: wrong(90 * 1000 + 300 * 1000), running: true,
+           prominent: true, now: wrong(90 * 1000) });
+  await settle(150);
+  check('made prominent, it is drawn over the player as well', !!big());
+  check('and it is the same deadline, not a new one',
+        /^(5:00|4:59)$/.test(big()?.querySelector('strong')?.textContent?.trim() || ''),
+        big()?.textContent);
+  /* It floats over the bottom of the player, which is where the Check button is. */
+  check('and it takes no clicks', big()?.className.includes('ltbig'));
+
+  // Paused carries what is LEFT rather than a deadline: a paused timer has no deadline.
+  timing({ seconds: 300, left: 154, running: false, prominent: true, now: wrong(90 * 1000) });
+  await settle(150);
+  check('pausing stops the clock where it stood', chip() === '2:34', chip());
+  check('and says so, because a stopped clock is also what a broken one looks like',
+        /paused/i.test(document.querySelector('.ltchip')?.textContent || ''));
+
+  // And out. Zero is arithmetic on every screen at once; nothing is sent when it happens.
+  timing({ seconds: 300, ends: wrong(90 * 1000 - 1000), running: true, prominent: true,
+           now: wrong(90 * 1000) });
+  await settle(150);
+  check('a countdown that has run out says nought rather than counting past it',
+        chip() === '0:00', chip());
+  check('and the room is told in words', /Time.s up/i.test(big()?.textContent || ''),
+        big()?.textContent);
+
+  const before = at();
+  timing(null);
+  await settle(150);
+  check('taking it away takes it off every screen', !chip() && !big());
+  check('and none of it ever moved anybody - a clock is not a place',
+        at() === before, `${at()} was ${before}`);
+}
+
 // ------------------------------------- the educator's annotations, arriving
 /* THE PLAYER'S OWN WIRING, which is the half a browser harness cannot reach: `decked` off
  * the channel -> delivery.js -> decksync.js -> a postMessage into whatever deck is on screen.

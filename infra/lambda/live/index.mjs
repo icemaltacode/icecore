@@ -5,7 +5,7 @@
  *   ws   $disconnect                            forget the connection
  *   ws   $default           { type, ... }       ping, active, marked, roster, history, say,
  *                                                 control, sharing, release, drive, buffer,
- *                                                 act, sync, push
+ *                                                 act, sync, push, timer
  *
  * One function serving two HTTP routes and three WebSocket routes, told apart by the shape
  * of the event and then by path - the same way the admin function tells users from cohorts.
@@ -131,6 +131,12 @@ const CHAT_CHARS = EDITOR_LIMIT;
  * Measured on the stored message, not on its text: the id, the sender, the moment and the
  * origin ride along with every one of them. */
 const CHAT_BYTES = 140 * 1024;
+
+/* The longest countdown anybody may set: two hours, which is longer than a lesson. It is a
+ * bound on a number a client sends rather than a policy - an educator who wants forty-five
+ * minutes gets forty-five minutes - and it exists so that a typo cannot put a deadline on
+ * every screen in the room some time next year. */
+const TIMER_MAX = 2 * 60 * 60;
 
 /* THE BOARD LIVES ON THE SESSION ROW, for the reason `sync` does: a student joining ten
  * minutes into a lesson has to arrive already knowing there is one, and a fact held only in
@@ -337,6 +343,19 @@ const shape = row => row && ({
   course: row.course, by: row.by, name: row.name,
   at: row.at, sharing: !!row.sharing, position: row.position || null,
 });
+
+/* THE TIMER, ON THE WIRE - and the server's own clock beside it, which is the only reason
+ * this is a function rather than the stored object passed straight through.
+ *
+ * A countdown is an INSTANT, and an instant means nothing except beside the clock it was
+ * measured against. Half the browsers in a classroom are a few seconds out and some are
+ * minutes; corrected against this, every one of them counts the same seconds down, and
+ * uncorrected they each count their own. So the two travel together, always, and nothing
+ * downstream is left to wonder which clock it is holding.
+ *
+ * Null is a fact and not an omission: it is how the room is told a timer has been taken
+ * away, and how a joiner is told there is none. */
+const timerFor = t => (t ? { ...t, now: new Date().toISOString() } : null);
 
 const sessionFor = async cohort => {
   const r = await ddb.send(new GetCommand({ TableName: TABLE, Key: sessionKey(cohort) }));
@@ -1471,6 +1490,105 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
     }
 
+    /* THE CLOCK ON THE WALL. An educator gives the room five minutes; every screen counts
+     * them down together.
+     *
+     * A DEADLINE, NEVER A TICK. What is stored and what travels is the INSTANT the time runs
+     * out, and each client subtracts its own now from it - so nothing counts down on the wire,
+     * nothing has to be pushed once a second to a dozen sockets, and there is no timer Lambda.
+     * Presence already works this way for the same reason: the label is computed by the
+     * client, and the server holds the fact rather than the reading.
+     *
+     * SO THE SERVER'S CLOCK TRAVELS WITH THE DEADLINE, which is the whole of why `timerFor`
+     * exists. An instant is only worth anything beside the clock it was measured against, and
+     * a student's laptop can be minutes out - a countdown that reads 4:37 in front of the
+     * class and 1:12 on one desk is worse than no countdown, because the two look equally
+     * true. The pair is sent together and the far end corrects once, on arrival.
+     *
+     * RUNNING HOLDS AN INSTANT, PAUSED HOLDS A DURATION, and that is not two spellings of one
+     * field: a paused timer HAS no deadline - that is what pausing means - and a running one
+     * cannot be a duration without something to decrement it. The arithmetic between them is
+     * here and nowhere else, so two clients cannot disagree about what Pause did.
+     *
+     * SETTING A TIME STARTS IT. The gesture in a room is "you have five minutes - go", and a
+     * timer that has to be set and then started is two presses for the only thing anybody
+     * does with one. It also means Reset is not a verb: pressing it sends `set` again with
+     * the duration it already had, which is the same sentence said twice rather than a fifth
+     * rule about what "back to the top" does to a timer that was paused.
+     *
+     * THE DELIVERER, not any tutor - `sync`'s gate and for `sync`'s reason. A second admin in
+     * the room may take control of one student, which is a claim on one browser; putting a
+     * deadline on every screen in the room is the lesson itself, and the lesson has one owner.
+     */
+    case 'timer': {
+      if (row.role !== 'tutor') return { statusCode: 200, body: 'not yours' };
+      /* Read first, because pause and resume are arithmetic ON the timer that is there. The
+       * conditional write below is still what decides whether it may be changed - this read
+       * informs the sum, it does not grant anything. */
+      const held = await sessionFor(row.cohort);
+      if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not yours' };
+      const t = held.timer || null;
+      const ms = Date.now();
+      let next;
+      switch (msg.do) {
+        case 'set': {
+          const seconds = Math.round(Number(msg.seconds));
+          if (!Number.isFinite(seconds) || seconds < 1) {
+            return { statusCode: 400, body: 'no duration' };
+          }
+          next = {
+            seconds: Math.min(seconds, TIMER_MAX),
+            ends: new Date(ms + Math.min(seconds, TIMER_MAX) * 1000).toISOString(),
+            running: true,
+            /* Carried over when the message says nothing about it, so that Reset - which is
+             * this same verb - does not quietly un-tick a box the educator set. */
+            prominent: msg.prominent === undefined ? !!t?.prominent : !!msg.prominent,
+          };
+          break;
+        }
+        case 'pause':
+          if (!t?.running) return { statusCode: 200, body: 'nothing to pause' };
+          next = { seconds: t.seconds, running: false, prominent: !!t.prominent,
+                   left: Math.max(0, Math.round((Date.parse(t.ends) - ms) / 1000)) };
+          break;
+        case 'resume':
+          if (!t || t.running) return { statusCode: 200, body: 'nothing to resume' };
+          next = { seconds: t.seconds, running: true, prominent: !!t.prominent,
+                   ends: new Date(ms + Math.max(0, Number(t.left) || 0) * 1000).toISOString() };
+          break;
+        /* Large or small, on a timer that is already running. A separate verb from `set`
+         * because it must not restart the countdown: an educator who decides halfway through
+         * that the room is not looking at it has changed how it is shown, not how long is
+         * left. */
+        case 'show':
+          if (!t) return { statusCode: 200, body: 'no timer' };
+          next = { ...t, prominent: !!msg.prominent };
+          break;
+        case 'clear':
+          next = null;
+          break;
+        default:
+          return { statusCode: 400, body: 'no such gesture' };
+      }
+      try {
+        await ddb.send(new UpdateCommand({
+          TableName: TABLE, Key: sessionKey(row.cohort),
+          UpdateExpression: next ? 'SET #t = :t' : 'REMOVE #t',
+          ConditionExpression: 'attribute_exists(sk) AND #by = :me',
+          ExpressionAttributeNames: { '#t': 'timer', '#by': 'by' },
+          ExpressionAttributeValues: next ? { ':t': next, ':me': row.sub } : { ':me': row.sub },
+        }));
+      } catch (e) {
+        if (e.name !== 'ConditionalCheckFailedException') throw e;
+        return { statusCode: 200, body: 'not yours' };
+      }
+      /* To everybody, the sender included - `sync`'s rule again: the educator's own controls
+       * read the timer back rather than setting it optimistically, so a press that was
+       * refused leaves a clock that is right rather than one that lies for a second. */
+      await emit(event, row.cohort, { type: 'timing', timer: timerFor(next) });
+      return { statusCode: 200, body: 'ok' };
+    }
+
     /* THE WHITEBOARD. A blank surface over everyone's player, drawn on by the educator.
      *
      * A WRITE, LIKE `sync`, AND FOR THE SAME REASON - and gated the same way: the DELIVERER,
@@ -1746,6 +1864,12 @@ async function tallied(cohort, mark, seeded = false) {
          * otherwise sit with a writable editor in the middle of a demonstration until the
          * educator happened to switch it off. */
         sync: !!held?.sync,
+        /* And the countdown, for the third time the same reason: a student who joins eight
+         * minutes into a ten-minute exercise has to arrive already knowing, and a client back
+         * from a tunnel would otherwise sit under a clock that stopped when its socket did.
+         * Absent from an older deployment, null from a lesson that has no timer in it - and
+         * the far end must not read the first as the second. */
+        timer: timerFor(held?.timer || null),
         /* And the board, in full. Same reason again, and the one case where the answer is
          * not a flag: a student arriving mid-lesson has to see what is ALREADY drawn, not
          * only be told that a board is up. `nodes` joins back into the page it came from. */

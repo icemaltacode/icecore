@@ -603,6 +603,83 @@ try {
         over?.text?.length === PASTE.length && !over.text.includes('NOT SURVIVE'),
         `${over?.text?.length ?? 'nothing'} arrived`);
 
+  /* ---- the clock on the wall ---------------------------------------------------
+   *
+   * THE ONLY ARITHMETIC ON THIS SOCKET, which is why it is checked here rather than left to
+   * the player's own tests: a countdown is stored as the INSTANT it runs out, and pausing
+   * turns that into a duration and resuming turns it back. Both sums are the server's, so
+   * that two browsers cannot disagree about what Pause did - and neither is observable from
+   * a client that is only ever handed the answer.
+   *
+   * It needs a session and it needs A to be the one delivering, which the start above made
+   * true. Every `timing` is a broadcast, the sender included, so both queues are drained at
+   * every step - see the note under remote control for what happens when they are not.
+   */
+  if (chatIn) {
+    const bothTiming = async () => {
+      const mine = await heardA.next('timing');
+      await heardB.next('timing');
+      return mine;
+    };
+
+    A.ws.send(JSON.stringify({ type: 'timer', do: 'set', seconds: 300, prominent: false }));
+    const set = await bothTiming();
+    check('a countdown reaches the room', set?.timer?.running === true, JSON.stringify(set));
+    check('it is a deadline rather than a reading',
+          !!set?.timer?.ends && set?.timer?.left === undefined, JSON.stringify(set?.timer));
+    /* THE SERVER'S OWN CLOCK, beside it. Without this the instant is measured against a
+     * clock nobody else has, and a student minutes out reads a different number off the
+     * same message. */
+    check('and the clock it was measured against travels with it',
+          Math.abs(Date.parse(set?.timer?.ends) - Date.parse(set?.timer?.now) - 300_000) < 2_000,
+          JSON.stringify(set?.timer));
+
+    A.ws.send(JSON.stringify({ type: 'timer', do: 'pause' }));
+    const held = await bothTiming();
+    check('pausing leaves what is LEFT and no deadline',
+          held?.timer?.running === false && held?.timer?.ends === undefined
+          && held?.timer?.left > 290 && held?.timer?.left <= 300,
+          JSON.stringify(held?.timer));
+
+    A.ws.send(JSON.stringify({ type: 'timer', do: 'resume' }));
+    const back2 = await bothTiming();
+    check('and resuming turns it back into one, from where it stopped',
+          back2?.timer?.running === true
+          && Math.abs(Date.parse(back2.timer.ends) - Date.parse(back2.timer.now)
+                      - held.timer.left * 1000) < 2_000,
+          JSON.stringify(back2?.timer));
+
+    /* Made prominent is a different way of showing the SAME deadline. A `set` here would
+     * restart the countdown, which is the one thing this gesture must never do. */
+    A.ws.send(JSON.stringify({ type: 'timer', do: 'show', prominent: true }));
+    const big = await bothTiming();
+    check('showing it large does not move the deadline',
+          big?.timer?.prominent === true && big?.timer?.ends === back2?.timer?.ends,
+          JSON.stringify(big?.timer));
+
+    // A joiner has to arrive already knowing, so the roster carries it.
+    B.ws.send(JSON.stringify({ type: 'roster' }));
+    const withTimer = await heardB.next('roster');
+    check('and a roster carries the timer to somebody who has just walked in',
+          withTimer?.timer?.ends === big?.timer?.ends, JSON.stringify(withTimer?.timer));
+
+    /* THE DELIVERER, NOT ANY TUTOR - and the only account that is reliably NOT the deliverer
+     * here is B, which is a student in the ordinary run. `sync` and the board are gated the
+     * same way and have never been checked from the other side. */
+    if (bRole === 'student') {
+      B.ws.send(JSON.stringify({ type: 'timer', do: 'clear' }));
+      check('a student cannot take the room\'s clock away',
+            (await heardB.next('timing', 1500)) === null,
+            'the room was told a student had cleared the timer');
+    } else {
+      skip('a student cannot take the room\'s clock away', notAStudent);
+    }
+
+    A.ws.send(JSON.stringify({ type: 'timer', do: 'clear' }));
+    const gone2 = await bothTiming();
+    check('and the educator can', gone2?.timer === null, JSON.stringify(gone2));
+  }
+
   /* ---- remote control ---------------------------------------------------------
    *
    * Every assertion here is about a boundary rather than about a feature working: who may
