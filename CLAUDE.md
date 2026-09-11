@@ -474,6 +474,13 @@ against data that exists and cannot be built at all against data nobody recorded
 - **The per-exercise counter is not about a student**, which is why it is the one row here
   that is *not* deleted with a person. It is the difficulty signal the platform otherwise
   lacks entirely, because a `PROG#` row is only ever written when somebody succeeds.
+- **`TRIED#<course>`/`<exercise>` is its sibling**, written by the LIVE function from every
+  `marked` message: `tried`/`right`/`wrong`/`err` per exercise, accumulating across every
+  lesson. Two rows rather than four more numbers on the hint counter, because they are two
+  facts written by two functions — one counts requests for help and the other counts presses
+  of Check. Aggregate and anonymous like its sibling, so `forget()` deletes neither. Nothing
+  reads it yet either; see ADMIN.md for why recording attempts this way was chosen over a
+  write on the student's own Check press.
 - Both writes are awaited and their failure is logged and swallowed: the hint is already
   paid for and already good by the time they run. Neither needed a client change —
   `hint.js` has always sent `course` and `exercise.id`, and the Lambda had always ignored

@@ -153,6 +153,10 @@ export const sync = reactive({ on: false, at: null, code: null, cursor: null, an
                                step: 0, when: null });
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
+/* Whether this client has asked for its editor to be on the room's screens. Module scope,
+ * because it has to outlive the socket - which is the whole of what it is for. */
+let demonstrating = false;
+
 export const live = reactive({ running: {}, loading: false });
 
 /**
@@ -228,6 +232,8 @@ export function forget() {
   pointer.region = null;
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
   sync.step = 0; sync.when = null;
+  // The intention goes with the session it was about, or the next lesson starts demonstrating.
+  demonstrating = false;
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -376,6 +382,24 @@ const HANDLERS = {
     // Same rule for the same reason: absent from an older deployment, false from a room
     // where nothing is being shown, and the two must not be one thing here.
     if ('sync' in m) sync.on = !!m.sync;
+
+    /* AND A DEMONSTRATION IS PUT BACK, which `control` has always done and this never did.
+     *
+     * API GATEWAY CLOSES EVERY SOCKET AFTER TWO HOURS whatever is happening on it, and most
+     * lessons here run longer than that - so the whole room reconnects at once, and
+     * `$disconnect` runs the two "somebody has left" cleanups for everybody. Control heals
+     * itself: the tab re-claims on open, and App.vue's watcher names this cap as the reason.
+     * A shared editor did not. It switched itself off mid-demonstration, every editor in the
+     * room unfroze, and the educator had to notice and press the button again.
+     *
+     * THE TWO CASES ARE TOLD APART BY WHETHER THE CLIENT COMES BACK, which is exactly the
+     * right test: a closed laptop re-asserts nothing and the room is correctly unfrozen; a
+     * socket that was cut re-asserts and the lesson carries on. So `unsynced` in the Lambda
+     * stays as it is - this is the other half of it rather than a softening.
+     *
+     * AFTER THE ROSTER RATHER THAN ON OPEN, because the roster is the authoritative read of
+     * the flag: sending on open would race its own answer and could be overwritten by it. */
+    if (delivery.mine && demonstrating && !sync.on) send('sync', { on: true });
   },
   joined(m) { add(m.who); },
   /* MERGED, never replaced. A roster answers "what is everybody doing now" and carries one
@@ -562,6 +586,10 @@ export function releaseControl() {
  * rule the four control sends follow, and the echo is the same preview door.
  */
 export function setSync(on) {
+  /* WHAT THIS CLIENT ASKED FOR, held because the flag on the session row is about to stop
+   * being the only copy of it - see the roster handler. A decision, not a state: it changes
+   * when the educator throws the switch and at no other time. */
+  demonstrating = !!on;
   if (send('sync', { on: !!on })) return;
   if (previewRole()) emitLocal({ type: 'syncing', on: !!on });
 }

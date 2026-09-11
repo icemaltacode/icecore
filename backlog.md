@@ -1,25 +1,11 @@
 # Deferred
 
-Steps 8 and 9 of [ADMIN.md](ADMIN.md). Both are waiting on **data rather than on work** —
-neither is blocked, and building either today would produce a worse answer than building it
-in a month.
-
-- [ ] **The platform page** — publication state, hint spend overall / by cohort / by course
-  / by student, and the account ceiling said out loud before it is reached rather than
-  after. The publication half could be built now. The spend half would draw a day of data:
-  the ledger began recording on 2026-09-02, so a chart today is three points and a shape
-  nobody can read. Waiting costs nothing, because the rows accumulate whether or not
-  anything reads them — which is exactly why they were written before any screen for them
-  existed.
-
-- [ ] **Decide whether attempts need recording.** Nothing records a failed attempt, so
-  "hard exercise" and "exercise nobody has reached yet" are the same shape in the table. The
-  stall view is the instrument for deciding: if solve-drop plus hint volume is enough signal
-  on real cohorts, this is a write on every Check press that never has to be added — one on
-  the student's critical path, and impossible to remove once a screen depends on it. Decide
-  it against the screen rather than in advance. If it is added, add a counter on the
-  exercise rather than an event per press: the question is "how many tries before this class
-  got it", not an audit log.
+*Empty.* Steps 8 and 9 of [ADMIN.md](ADMIN.md) were the two entries here, both waiting on
+data rather than on work — and on 2026-09-11 the rows answered both. See **Two decisions
+taken against the rows** in that document: attempts need no new write because the live
+session tally already records them, and the spend view is not worth building because the
+spend is about a penny. Neither is a decision to stop recording anything; both are
+re-openable against the same measurements.
 
 # Enhancements
 

@@ -767,6 +767,18 @@ be two things moving the same screen. One fact each.
   flag when the deliverer's last socket goes, counted per person and conditional on the flag
   still being theirs — `orphaned` for one student, this for the whole class. Without it the
   flag stands until the session's `ttl` a day later, with nobody left to switch it off.
+- **AND IT HAS TO SURVIVE THE TWO-HOUR CAP, which it did not.** API Gateway closes every
+  socket after two hours whatever is happening on it, and the sockets in a room all open
+  within a minute of each other at the start of a lesson — so the whole class reconnects at
+  once and that cleanup fires for everybody. Control had always re-claimed itself on open, and
+  App.vue's watcher names this cap as the reason; a demonstration switched itself off, every
+  editor in the room unfroze mid-explanation, and the educator had to notice and press the
+  button again. Most lessons here run past two hours, so this was the common case rather than
+  an edge one. **The two cases are told apart by whether the client comes back** — a closed
+  laptop re-asserts nothing and the room is correctly unfrozen, a socket that was cut
+  re-asserts and the lesson carries on — so the Lambda's half is unchanged and the client
+  grew the other half. It goes **after the roster** rather than on open, because the roster is
+  the authoritative read of the flag and sending on open would race its own answer.
 - **The switch reads the flag back rather than setting it optimistically**, which is what
   the four control sends already do: a toggle that says on when the write was refused is
   worse than one that lags.
@@ -940,7 +952,21 @@ session row is deleted, in that order and not the other, for the same reason.
 
 - **Attendance cannot be derived at the end.** Connection rows are deleted on `$disconnect`,
   so by the time a lesson finishes the only people left to count are the ones who stayed —
-  which is the opposite of the question being asked. It accumulates on the session row, as a
+  which is the opposite of the question being asked.
+
+  **But accruing it only on `$disconnect` lost the common case entirely, and it took real
+  lessons to see.** A student who joins at the start and is still there when the educator
+  presses End never disconnects while the session row exists — it is deleted by `end()`, and
+  the `$disconnect` a moment later finds no session and contributes nothing. So the person who
+  attended the whole lesson recorded **nought minutes**, and a register reading zero against
+  seven names is not a register. The rows said so plainly: of three real lessons, only the
+  156-minute one recorded any time at all — because it is the only one that outran API
+  Gateway's two-hour socket cap, so every socket was closed and reopened mid-lesson and the
+  close accrued. `end()` now adds everybody still connected before it builds the digest, which
+  is the last moment anything knows it, and in memory because the row is deleted four lines
+  later. **And `digest` clamps a person to the length of the lesson**, because time accrues per
+  SOCKET and a person is not a socket: two tabs open for an hour is one person for an hour and
+  two hours of accrual. It accumulates on the session row, as a
   whole value per person rather than a counter, because "when they first appeared" and "how
   long they were here" are not both counters. `SET people.#sub` touches one path, so twelve
   students arriving together do not contend; two tabs of the *same* person can lose a write,
@@ -959,6 +985,14 @@ session row is deleted, in that order and not the other, for the same reason.
   class must not appear in it as the class having struggled.
 - **`worst` is ordered by what went wrong, not by attempts.** An exercise everybody tried once
   and got is not the one to look at; one six people could not run is.
+- **AND THE SAME PRESS NOW GOES SOMEWHERE THAT OUTLIVES THE LESSON.** `worst` keeps the top
+  five of one session, so an exercise that is mildly hard in *every* lesson makes no list in
+  any of them — 42 sessions produced tallies for five exercises, which is the direction that
+  hides the steady problem and shows the dramatic one. `counted()` adds the same four numbers
+  to `TRIED#<course>`/`<exercise>`, a row with no sub and no name on it that accumulates for
+  as long as the course is taught. It settles [backlog.md](backlog.md)'s question about
+  recording attempts without a write on the student's own critical path: the client has graded
+  and moved on before the message is sent.
 
 **The tallies are seeded empty when the session starts** rather than created on first use, and
 that is not tidiness: every one of these writes is to a document *path*, and a path whose

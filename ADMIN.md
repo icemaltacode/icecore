@@ -320,12 +320,19 @@ The denominator — how many exercises a course has — never reaches the Lambda
 catalogue. The Lambda continues not to know which courses exist, which is what keeps the
 content bucket the one place the catalogue lives.
 
-### Difficulty needs a fact nobody records
+### Difficulty needs a fact nobody records — *and by the time it was asked, something did*
 
 **Nothing records a failed attempt.** A `PROG#` row is written when an exercise is solved
 and never before it, so from the table "hard exercise" and "exercise nobody has reached
 yet" are the same shape. Any chart labelled difficulty would be inferring one from the
 other.
+
+> **Settled on 2026-09-11, and not the way this section expected.** That paragraph was true
+> when it was written and stopped being true when live delivery shipped: the per-exercise
+> session tally counts `tried` / `right` / `wrong` / `err` from every `marked` message, so
+> attempts *are* recorded — during live lessons, on a row the session was writing anyway, at
+> no cost on the student's critical path. Read the decision under step 9 before acting on the
+> paragraphs below; what they propose is still the right shape, and the premise moved.
 
 What is honestly derivable today:
 
@@ -445,8 +452,10 @@ without them is a day of students untagged and hints uncounted.
 5. ~~**The course page: roster, position, completion.**~~ — done, see below.
 6. ~~**Where the class stalls.**~~ — done, see below.
 7. ~~**View-as**, read-only.~~ — done, see below.
-8. **The platform page**: publication state, spend four ways, the ceiling.
-9. **Only then** decide whether attempts need recording.
+8. **The platform page**: publication state and the ceiling. ~~Spend four ways~~ — **decided
+   against on 2026-09-11, against the rows rather than in advance.** See below.
+9. ~~**Only then** decide whether attempts need recording.~~ — **decided on 2026-09-11: no new
+   write.** See below.
 
 Remote control sits after all of it and behind a channel that does not exist yet.
 
@@ -607,6 +616,72 @@ to `getPerson`.
   line saying exactly that.
 - **`icecore-stack.js` said `PROG#<course>#<unit>`** in the comment documenting the table's
   keys; the Lambda writes `PROG#<course>#<exercise>`. Drift in a comment, now fixed.
+
+## Two decisions taken against the rows
+
+Both of these were deferred on **data rather than on work**, and on 2026-09-11 — nine days of
+the ledger, 12 accounts, 42 session rows of which 3 were real lessons, 78 solves across 9
+students — there was enough to answer them. The numbers are quoted because a decision taken
+against a measurement should be re-openable when the measurement changes.
+
+### Attempts: no new write, because the fact already exists
+
+**The premise had expired.** `worst` on every `LIVEPAST#` row carries `tried` / `right` /
+`wrong` / `err` per exercise, accumulated from the `marked` messages a live lesson already
+sends. Nothing needs adding to the Check press, and nothing should be: that write would be on
+the student's critical path and impossible to remove once a screen depended on it.
+
+The signal is good where it exists — `Ticks` ran 33% right over 15 tries, `Labels` 60% over
+23 — and it is **much stronger than hint volume**, which this document called "the strongest
+of the three". Hint volume across everything named five exercises at n = 1, 1, 1, 2 and 3.
+Eight hints, ever.
+
+**What is actually missing is durability and scope, not the fact.** `worst` is a per-session
+**top-five digest** on a row keyed by cohort and end time with a one-year ttl. Across 42
+sessions only five exercises have any tally at all, and an exercise that is mildly hard in
+*every* lesson makes no list in any of them — biased by construction, in the direction that
+hides the steady problem and shows the dramatic one.
+
+**So widen the aggregate rather than instrumenting Check** — written from the same `marked`
+handler, which already runs server-side, already fires on every press in a lesson, and is
+nowhere near the student's path: the client has graded and moved on before the message is
+sent.
+
+**Built, and one detail moved in the building.** This said the counters belonged beside the
+`n` on `HINTS#<course>` / `<exercise>`. They get a **sibling row** instead —
+`TRIED#<course>` / `<exercise>`, holding `tried` / `right` / `wrong` / `err` — for the reason
+`RATE#` and `SPEND#` are two rows rather than one: two facts written by two different
+functions, one counting requests for help and the other counting presses of Check. A row
+called `HINTS#` carrying three numbers that are not about hints is the kind of quiet wrongness
+that is read wrongly a year later, and a second single-partition query costs a page that does
+not exist yet precisely nothing. Both rows are aggregate and anonymous, so `forget()` deletes
+neither — which is right for a difficulty signal and must not be "fixed".
+
+The course had to reach the handler, and it is **stamped on the connection row at `$connect`**
+rather than read per press: a session's course cannot change while it runs, so a value read
+once is as true at the end as at the start, and the alternative is a `GetCommand` for every
+Check in a room of twelve.
+
+**The limit to state out loud:** this covers live lessons only. Somebody practising alone
+still records nothing. For the question being asked — *how many tries before this class got
+it* — the class is the lesson, and that is the right scope rather than a gap.
+
+### Spend: build the page without it
+
+The ledger holds **5 rows over 2 distinct days: 8 hints, ~5.0k input and 0.4k output tokens,
+in total, ever.** At any plausible rate that is about a penny. This is not "too few points to
+chart yet" — the quantity is not a business fact and will not become one at this rate, so a
+spend view would be a screen answering a question nobody has.
+
+**The rows keep accruing and cost nothing**, so this is a decision not to build a view, never
+a decision to stop recording. Re-open it if hint volume moves by an order of magnitude.
+
+**The data points at a better question.** `Ticks` ran at 33% right over 15 tries and produced
+**one** hint. People are struggling and not pressing Ask AI. *Is the hint being found* is
+worth a screen; *what the hints cost* is not.
+
+**The other two halves stand and are cheap.** Publication state as described above, and the
+ceiling — 12 accounts against 1500 — which is one line and true today.
 
 ## Open questions
 

@@ -661,11 +661,43 @@ async function end(event, claims) {
     }));
   }
 
+  /* EVERYBODY STILL IN THE ROOM HAS BEEN HERE SINCE THEY CONNECTED, and this is the last
+   * moment anything knows it.
+   *
+   * ATTENDANCE ACCRUED ONLY ON `$disconnect` AND THAT LOST THE COMMON CASE ENTIRELY. A
+   * student who joins at the start and is still there when the educator presses End never
+   * disconnects while the session row exists - it is deleted below, and the `$disconnect`
+   * that follows a moment later finds no session and contributes nothing. So the one person
+   * who attended the whole lesson recorded nought minutes, and a register that reads zero
+   * against seven names is not a register.
+   *
+   * The live rows said so plainly: of three real lessons, only the 156-minute one recorded
+   * any time at all - because it is the only one that ran past API Gateway's two-hour socket
+   * cap, so every socket was closed and reopened mid-lesson and the close accrued. The two
+   * shorter ones, where nobody dropped, recorded a median of zero.
+   *
+   * In memory rather than through `attended()`: the row is deleted four lines below, so a
+   * write to it would be work thrown away, and the digest is built from this object anyway. */
+  const endedAt = new Date().toISOString();
+  const closing = Date.now();
+  const people = { ...(held.people || {}) };
+  for (const c of await connectionsIn(cohort)) {
+    /* Educators are left out of the register, as they are everywhere else here: the person
+     * reading the summary is not somebody whose attendance is in question. */
+    if (c.role === 'tutor' || !c.sub) continue;
+    const was = people[c.sub];
+    people[c.sub] = {
+      name: c.name || was?.name || '',
+      first: was?.first || c.at || endedAt,
+      last: endedAt,
+      ms: (was?.ms || 0) + Math.max(0, closing - Date.parse(c.at || endedAt)),
+    };
+  }
+
   /* THE HISTORY ROW IS WRITTEN BEFORE THE SESSION ROW IS DELETED, in that order and not the
    * other, because the tallies live on the row being deleted. The reverse order loses an hour
    * of a class's work to a Lambda that timed out between two writes. */
-  const endedAt = new Date().toISOString();
-  const summary = digest(held, endedAt, where ? { exercise: String(where), title:
+  const summary = digest({ ...held, people }, endedAt, where ? { exercise: String(where), title:
     String(event.queryStringParameters?.title || held.position?.title || '') } : null);
   await ddb.send(new PutCommand({
     TableName: TABLE,
@@ -706,11 +738,17 @@ async function end(event, claims) {
  * question `CoursePage`'s stall view already asks, narrowed to an hour.
  */
 function digest(held, endedAt, mark) {
+  /* NOBODY ATTENDED FOR LONGER THAN THE LESSON LASTED, which needs saying because time
+   * accrues PER SOCKET and a person is not a socket: two tabs open for an hour is one person
+   * for an hour and two hours of accrual. The same clamp covers a reconnection that overlaps
+   * the connection it replaced. Rounded up to a minute at the bottom, so somebody who looked
+   * in for forty seconds is not recorded as absent. */
+  const ran = Math.max(0, Date.parse(endedAt) - Date.parse(held.at));
   const people = Object.entries(held.people || {})
     .map(([sub, p]) => ({
       sub, name: p.name || '',
       first: p.first, last: p.last,
-      minutes: Math.round((Number(p.ms) || 0) / 60000),
+      minutes: Math.round(Math.min(ran, Number(p.ms) || 0) / 60000),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -801,12 +839,23 @@ async function connect(event) {
     return { statusCode: 401, body: 'that ticket has expired' };
 
   const now = new Date().toISOString();
+  /* THE COURSE, STAMPED ON THE CONNECTION at the moment it opens.
+   *
+   * A press of Check counts towards a per-EXERCISE row keyed by course, and an exercise id is
+   * a path inside one - so the counter needs a course on every mark. Read once here rather
+   * than on every press: a session's course cannot change while it runs, so a value read at
+   * connect is as true at the end of the lesson as at the start, and the alternative is a
+   * `GetCommand` per Check in a room of twelve.
+   *
+   * Absent on a connection from an older deployment, and `counted` then skips rather than
+   * guessing a key. Reconnection is constant enough that it heals within minutes. */
+  const running = await sessionFor(spent.cohort);
   await ddb.send(new PutCommand({
     TableName: TABLE,
     Item: {
       pk: `CONN#${id}`, sk: `LIVECONN#${spent.cohort}`,
       sub: spent.sub, name: spent.name, email: spent.email, role: spent.role,
-      cohort: spent.cohort,
+      cohort: spent.cohort, course: running?.course || '',
       at: now,
       seen: now,
       ttl: epoch(CONNECTION_HOURS * 3600),
@@ -1106,7 +1155,14 @@ async function message(event) {
       })).catch(() => {});
       await emit(event, row.cohort, { type: 'marked', sub: row.sub, mark },
                  { except: id, only: 'tutor' });
-      if (row.role !== 'tutor') await tallied(row.cohort, mark);
+      /* TWO TALLIES, TWO CALLS, because they are two facts with different lifetimes - this
+       * hour's, and the exercise's for as long as it is taught. Educators are left out of
+       * both: somebody demonstrating an exercise wrongly in front of a class must not appear
+       * in the record as the class having struggled. */
+      if (row.role !== 'tutor') {
+        await tallied(row.cohort, mark);
+        await counted(row.course, mark);
+      }
       return { statusCode: 200, body: 'ok' };
     }
 
@@ -1122,6 +1178,53 @@ async function message(event) {
  * ordinary for somebody reading ahead - DynamoDB refuses the path and the seed happens here
  * instead. One extra write, on the uncommon branch, rather than two on every one.
  */
+/**
+ * THE SAME PRESS, ON A ROW THAT OUTLIVES THE LESSON.
+ *
+ * `tallied` below counts an exercise for THIS session; this counts it for good. The two are
+ * deliberately separate rows written by one call site rather than four numbers on one row,
+ * for the reason `RATE#` and `SPEND#` are separate: the facts have different lifetimes. A
+ * session tally dies with its history row a year later and is a record of one hour; this is
+ * the difficulty signal for an exercise and wants to accumulate for as long as the course is
+ * taught.
+ *
+ * WHAT IT REPLACES IS A BIASED SAMPLE. The tally reaches a summary only through `worst`,
+ * which keeps the top FIVE of a session - so an exercise that is mildly hard in every lesson
+ * makes no list in any of them, and 42 sessions produced tallies for five exercises. That is
+ * the direction that hides the steady problem and shows the dramatic one.
+ *
+ * IT IS NOT A FACT ABOUT A STUDENT, which is what makes it safe to keep: no sub, no name, no
+ * answer - a count of presses against an exercise. Same property as the `HINTS#` counter it
+ * sits beside, and the same consequence, which is that `forget()` does not delete it and must
+ * not be "fixed" to.
+ *
+ * `ADD` with no condition, so the row is created by the first press against an exercise and
+ * there is no path to seed - which is why this is a top-level attribute where the session's
+ * is a document path. Failures are logged and swallowed: the lesson matters and the counter
+ * does not, and nothing reads it yet.
+ *
+ * NOT ON THE STUDENT'S CRITICAL PATH, and that was the whole objection to recording attempts
+ * at all. The client has already graded and already moved on by the time this message is
+ * sent; nothing waits for this.
+ */
+async function counted(course, mark) {
+  if (!course || mark?.exercise == null) return;
+  await ddb.send(new UpdateCommand({
+    TableName: TABLE,
+    Key: { pk: `TRIED#${course}`, sk: String(mark.exercise) },
+    UpdateExpression: 'ADD #t :one, #r :r, #w :w, #e :e',
+    ExpressionAttributeNames: {
+      '#t': 'tried', '#r': 'right', '#w': 'wrong', '#e': 'err',
+    },
+    ExpressionAttributeValues: {
+      ':one': 1,
+      ':r': mark.pass ? 1 : 0,
+      ':w': !mark.pass && !mark.error ? 1 : 0,
+      ':e': mark.error ? 1 : 0,
+    },
+  })).catch(e => console.error('attempt not counted', e.name, e.message));
+}
+
 async function tallied(cohort, mark, seeded = false) {
   const bump = {
     TableName: TABLE, Key: sessionKey(cohort),

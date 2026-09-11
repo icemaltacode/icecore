@@ -129,6 +129,23 @@ check('and being let go puts me back with the class', d.delivery.following === t
 // ------------------------------------------------------ the educator's editor
 emitLocal({ type: 'syncing', on: true });
 check('sharing an editor is a fact about the session', d.sync.on === true);
+
+/* AND IT SURVIVES API GATEWAY CLOSING THE SOCKET, which it does to every socket in the room
+ * after two hours whatever is happening on it - so the whole room reconnects at once and the
+ * Lambda's "the deliverer has gone" cleanup fires for everybody. Control has always re-claimed
+ * itself on open; a demonstration used to switch off and stay off, and the educator had to
+ * notice. A roster is what a reconnection always asks for, so it is where the correction goes.
+ *
+ * Only for the client that ASKED for it: a student hearing the same roster must not tell the
+ * room to start demonstrating. `send` drops silently with no socket here, so what is asserted
+ * is the state the handler leaves behind rather than the message - see the header. */
+{
+  emitLocal({ type: 'syncing', on: false });
+  check('a disconnect switches the demonstration off', d.sync.on === false);
+  emitLocal({ type: 'roster', members: [], here: [], sync: false });
+  check('but a roster after it does not leave the educator demonstrating to nobody',
+        d.sync.on === false, 'nothing local should have flipped it back');
+}
 emitLocal({ type: 'synced', at: '102', code: 'SELECT 1', cursor: 8, when: 'now' });
 check('and the buffer names the exercise it belongs to',
       d.sync.at === '102' && d.sync.code === 'SELECT 1' && d.sync.cursor === 8,
