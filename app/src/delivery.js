@@ -650,7 +650,12 @@ export const sendBuffer = (at, code) =>
   send('buffer', { at: at ?? null, code: String(code ?? '') });
 
 /** Follow again, from wherever they are now. */
-export const catchUp = () => { delivery.following = true; };
+/* NOT `catchUp`, AND THE WORD IS THE POINT. A student who has stopped following may be
+ * ahead of the class as easily as behind it - reading on is the commonest reason anybody
+ * leaves - and catching up tells half of them to hurry after something they have already
+ * done. `Follow again` is the exact inverse of what the band says has happened, and says
+ * nothing about which direction they will travel. */
+export const followAgain = () => { delivery.following = true; };
 
 /** They moved on their own. Idempotent - every keystroke in an editor comes through here. */
 export const wandered = () => { delivery.following = false; };

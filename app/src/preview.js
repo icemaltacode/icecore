@@ -833,7 +833,7 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
   /* Is the preview user the tutor here, or a student following one? Both are reachable -
    * starting a session from the cohort screen makes you the tutor, and opening
    * `#/live/data-team` by hand joins the seeded one somebody else is running. The second is
-   * the only way to see the student's half of the band, the Catch up nudge and the
+   * the only way to see the student's half of the band, the Follow again nudge and the
    * following itself without a second browser. */
   const leading = (session.by || 'preview-1') === 'preview-1';
 
@@ -862,7 +862,7 @@ export function previewRoom(session, emit, rows = () => [], whereAmI = () => nul
          here: [tutor, conn('preview-2', 'Grace Hopper'), ...(self ? [self] : [])] });
 
   /* THE TUTOR WALKS THE COURSE, when somebody else is the tutor. This is the whole of the
-   * student side: the screen moves on its own, navigating stops it, and Catch up comes
+   * student side: the screen moves on its own, navigating stops it, and Follow again comes
    * back. Every three seconds, through real rows of the real course - a made-up id would
    * resolve to nothing and the screen would sit still, which is what "following is broken"
    * looks like. */

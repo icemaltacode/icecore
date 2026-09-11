@@ -50,7 +50,7 @@ const props = defineProps({
   /** What the tutor is on, so leaving says what you would be going back to. */
   leaderAt: String,
   /** Whether the room has said where the tutor is yet. */
-  canCatchUp: Boolean,
+  canFollow: Boolean,
   /* Whose screen the room is on, when it is not the educator's. Set for a CLASSMATE while a
    * student's screen is shared - the two people it is actually happening to get ControlBand
    * instead. From where a classmate sits nothing has changed except the name, which is why
@@ -62,7 +62,7 @@ const props = defineProps({
    * the switch to say one thing and the class to be doing another. */
   syncing: Boolean,
 });
-const emit = defineEmits(['end', 'leave', 'catch-up', 'sync', 'board']);
+const emit = defineEmits(['end', 'leave', 'follow-again', 'sync', 'board']);
 
 const now = ref(Date.now());
 let tick;
@@ -95,6 +95,17 @@ const elapsed = computed(() => {
  * dealt with. Yellow says look; red would say act, and there is nothing to do. */
 const away = computed(() => channel.lost && channel.status !== 'open');
 
+/* WORKING ON YOUR OWN HAS TO LOOK DIFFERENT FROM BEING WITH THE CLASS, and until now it did
+ * not: the same blue band with a different sentence in it, which is exactly how somebody
+ * works alone for ten minutes believing they are with everybody else. See backlog.md - the
+ * band being read past is the problem, and one sentence out of two on the same ground is a
+ * lot to ask of a reader who is mid-exercise.
+ *
+ * A DROPPED CONNECTION OUTRANKS IT, decided here rather than left to the order of two CSS
+ * rules: one of these is something they did and the other is something that happened to
+ * them, and the second is the one they can do nothing about. */
+const alone = computed(() => !props.mine && !props.following && !away.value);
+
 /* Through a function rather than `pointing = !pointing` in the template. An IMPORTED binding
  * is a maybe-ref to the compiler: it unwraps one for reading and cannot assign through one,
  * so the template spelling compiles without complaint and throws when the button is pressed -
@@ -103,7 +114,7 @@ const togglePointing = () => { pointing.value = !pointing.value; };
 </script>
 
 <template>
-  <div class="band" :class="{ away }" role="status" aria-live="polite">
+  <div class="band" :class="{ away, alone }" role="status" aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
 
     <!-- IT REPLACES THE SENTENCE RATHER THAN APPENDING TO IT. This was an aside on the end of
@@ -211,10 +222,10 @@ const togglePointing = () => { pointing.value = !pointing.value; };
     <template v-else>
       <!-- The one nudge gesture, as `.btn.urge` already defines it in styles.css: there is
            a thing to do here, and it loops until it is answered. Only offered once the room
-           has said where the tutor actually is - a Catch up that cannot go anywhere is a
+           has said where the tutor actually is - a Follow again that cannot go anywhere is a
            button that does nothing. -->
-      <button v-if="!following && canCatchUp" class="btn primary urge" type="button"
-              @click="emit('catch-up')">Catch up</button>
+      <button v-if="!following && canFollow" class="btn primary urge" type="button"
+              @click="emit('follow-again')">Follow again</button>
       <button class="btn" type="button" @click="emit('leave')">Leave</button>
     </template>
   </div>
@@ -236,6 +247,26 @@ const togglePointing = () => { pointing.value = !pointing.value; };
 .what { flex: 1; min-width: 0; }
 .what strong { font-weight: 600; }
 .sub { color: var(--ice-fg-muted); }
+/* THE OTHER BAND THAT IS NOT THE ORDINARY ONE, and it wears the drive orange - which is
+   the colour of somebody else being in your session and is the only weight in this palette
+   that means LOOK AT THIS without meaning something is wrong. Nothing has gone wrong here:
+   working alone is allowed, and half the people who do it are reading ahead rather than
+   stuck. Yellow was not available anyway - a dropped connection already has it, and the two
+   states must be told apart at a glance across a room.
+
+   THE DOT GOES ON PULSING, which is the one thing this does not copy from `away`. A pulse
+   means the room is live: it is, and that is precisely the fact being pointed out. */
+.band.alone { background: var(--ice-drive-fill); border-bottom-color: var(--ice-drive-line);
+              color: var(--ice-drive); }
+.band.alone .dot { background: var(--ice-drive-line); }
+.band.alone .sub { color: var(--ice-drive); opacity: .85; }
+/* The nudge keeps its ONE definition and changes colour, rather than growing a second
+   keyframe beside it: `btn-urge` pulses `--ice-primary-soft`, so rebinding that token on this
+   button alone re-tints the animation that already exists. A blue button on an orange band
+   would read as belonging to some other screen. */
+.band.alone .btn.primary { background: var(--ice-drive-line); border-color: var(--ice-drive-line);
+                           color: var(--ice-on-drive); --ice-primary-soft: var(--ice-drive-halo); }
+
 /* The whole band, not a word in it: at a glance from the back of a room the colour is the
    message and the sentence is the detail. The dot stops pulsing and holds - a pulse means
    the room is live, and the point of this state is that it is not. */

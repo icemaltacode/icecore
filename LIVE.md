@@ -379,8 +379,8 @@ The mocks are the specification. What each one needs behind it:
    over a *different* course on purpose: that is the case the rule exists for.
 8. **Following** — participants and chat collapsed to a rail, matching how the sidebar
    already collapses.
-9. **Working on her own** — the same band restated, `Catch up` carrying the existing
-   `.btn.urge` halo, and the sidebar marking where the tutor is.
+9. **Working on her own** — the band restated and re-coloured, `Follow again` carrying the
+   existing `.btn.urge` halo, and the sidebar marking where the tutor is.
 10. **Being controlled** — the student's side of screen 5, with the admin's caret named in
     her editor.
 11. **Session ended** — the bookmark first and accented, because it is the only thing on the
@@ -407,7 +407,7 @@ in a student's history and makes Back a slow walk backwards through the lesson.
 Leaving is not an action a student takes but one they cause: **any navigation of their own
 stops the follow.** Not a button they have to find — a student who navigates has already
 decided to go somewhere, and a screen that dragged them back would be the feature fighting
-them. The band restates itself, `Catch up` returns them, and nothing they did in between is
+them. The band restates itself, `Follow again` returns them, and nothing they did in between is
 lost. A student who wanders is still in the session, still counted present, still able to
 chat.
 
@@ -417,7 +417,7 @@ guard the first followed move would immediately end the following. It is a count
 than a flag: the row and the slide arrive together, and a boolean cleared by the first would
 leave the second looking like a student's own move.
 
-`Catch up` is offered only once the room has said where the tutor is. A session starts
+`Follow again` is offered only once the room has said where the tutor is. A session starts
 before anybody has reported a position, and a nudge that cannot go anywhere is worse than
 no nudge.
 

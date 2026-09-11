@@ -198,12 +198,12 @@ moved('101', 'First');
 await settle();
 check('the educator moving no longer drags them', at() === '2 / 4', at());
 
-// ------------------------------------------------------------------- catch up
-const catchUp = [...document.querySelectorAll('button')].find(b => /Catch up/.test(b.textContent));
-check('and there is a way back, offered because the room said where to go', !!catchUp);
-catchUp?.click();
+// -------------------------------------------------------------- following again
+const rejoin = [...document.querySelectorAll('button')].find(b => /Follow again/.test(b.textContent));
+check('and there is a way back, offered because the room said where to go', !!rejoin);
+rejoin?.click();
 await settle();
-/* Catching up does NOT move them on its own - the band's Catch up sets the flag and the next
+/* Following again does NOT move them on its own here - the band sets the flag and the next
  * thing the educator does carries them. So the assertion is on the move after it. */
 moved('102', 'Second');
 await settle();
@@ -319,7 +319,7 @@ check('a drive that moves them to another exercise carries its code with it',
 {
   player.emitLocal({ type: 'controlling', control: null });
   await settle(150);
-  [...document.querySelectorAll('button')].find(b => /Catch up/.test(b.textContent))?.click();
+  [...document.querySelectorAll('button')].find(b => /Follow again/.test(b.textContent))?.click();
   await settle(120);
   /* The first row, and only it: the fixture puts a dataset there so that a run reaching for
    * the database says so. A row without one fails earlier and for another reason, which

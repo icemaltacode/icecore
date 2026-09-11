@@ -14,7 +14,7 @@ import * as store from './progress-store.js';
 import { route as appRoute, go as goAdmin, account as goAccount, watch as goWatch, control as controlUrl, live as goLiveArea, leave as leaveArea } from './route.js';
 import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as forgetLive,
          reportActivity, reportPosition, reportMark, followedPosition, followedName,
-         catchUp, wandered, marksAt, previewRows,
+         followAgain, wandered, marksAt, previewRows,
          control, driven, drive, takeControl, setSharing, releaseControl,
          pressed, press, point, sendDeck,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
@@ -1282,8 +1282,8 @@ async function keepBoardHere(title) {
 }
 
 /** Back to where the tutor is, and following again from there. */
-function catchUpHere() {
-  catchUp();
+function followAgainHere() {
+  followAgain();
   const at = followedPosition()?.exercise;
   if (at == null) return;
   const row = flat.value.find(e => progressId(e.id) === progressId(at));
@@ -1295,7 +1295,7 @@ function catchUpHere() {
  *
  * DELIBERATELY NOT THROUGH `applied()`. Opening somebody's question is a decision to go and
  * look at it, so it should stop the follow exactly as any other navigation does - the band
- * then says so and Catch up brings them back. Wrapping it would make this the one move in
+ * then says so and Follow again brings them back. Wrapping it would make this the one move in
  * the app that silently takes a student off the tutor's page while still claiming to be on
  * it.
  */
@@ -1483,7 +1483,7 @@ watch(currentId, () => {
     /* AND ONLY WHEN WE KNOW WHERE THE CLASS IS. Not knowing is not evidence of having left
      * it: a client that has just joined has no roster yet, so `followedPosition()` is null
      * for the first second of every session - and treating that as wandering told students
-     * they had stopped following a lesson they had that moment joined, with a Catch up button
+     * they had stopped following a lesson they had that moment joined, with a Follow again button
      * for a position nobody had reported.
      *
      * The cost is a second in which a student who navigates deliberately is still counted as
@@ -1537,12 +1537,12 @@ watch(currentId, id => {
               :course-title="allCourses.find(c => c.id === delivery.course)?.title"
               :here="Object.keys(room.here).length"
               :following="delivery.following"
-              :can-catch-up="!!followedPosition()"
+              :can-follow="!!followedPosition()"
               :leader-at="followedPosition()?.title"
               :shared-name="control.sharing ? control.name : ''"
               :syncing="sync.on"
               :boarding="board.on"
-              @end="endLiveHere" @leave="leaving = true" @catch-up="catchUpHere"
+              @end="endLiveHere" @leave="leaving = true" @follow-again="followAgainHere"
               @sync="setSync" @board="setBoard" />
 
     <!-- Last of the live overlays, and over all of them: while a board is up it IS the
