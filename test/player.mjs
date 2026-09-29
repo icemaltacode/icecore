@@ -371,6 +371,39 @@ await settle(300);
 check('a drive that moves them to another exercise carries its code with it',
       at() === '4 / 4' && /driven_across_a_move/.test(editorText()), `${at()} ${editorText()}`);
 
+/* A CARET PAST THE END OF THE TEXT MUST NOT FREEZE THE EDITOR. The educator typed two lines
+ * at the bottom, then copied the shorter answer in: the student's editor kept the caret at
+ * character 333 of a 286-character document, and every change after that threw inside
+ * CodeMirror's `mapPos` - "Position 333 is out of range for changeset of length 286" - so
+ * the screen stayed on the old text for the rest of the session while every drive arrived.
+ * Found on the live rig. */
+{
+  const driveTo = (code, cursor) => player.emitLocal({
+    type: 'driven', position: { exercise: '103', title: 'Third', slide: null },
+    code, cursor, at: new Date().toISOString() });
+  const LONG = 'SELECT the_educator_typed_two_more_lines_at_the_bottom;';
+  driveTo(LONG, LONG.length);
+  await settle(200);
+  driveTo('SELECT copied;', LONG.length);   // the caret still where the long text ended
+  await settle(200);
+  driveTo('SELECT the_next_drive_arrives;', 5);
+  await settle(250);
+  check('a caret left past the end of the text does not freeze the editor',
+        /the_next_drive_arrives/.test(editorText()), editorText());
+
+  // And the newest drive wins over the last to arrive, as a pushed demonstration does.
+  const numbered = (code, seq) => player.emitLocal({
+    type: 'driven', position: { exercise: '103', title: 'Third', slide: null },
+    code, cursor: null, origin: 'control-tab', seq, at: new Date().toISOString() });
+  numbered('SELECT the_newer_drive;', 7);
+  await settle(200);
+  numbered('SELECT the_older_drive;', 6);
+  await settle(200);
+  check('an older drive arriving late does not replace a newer one on the driven screen',
+        /the_newer_drive/.test(editorText()) && !/the_older_drive/.test(editorText()),
+        editorText());
+}
+
 // -------------------------------- and the same button, to the whole room at once
 /* SHARING AN EDITOR HAD CONTROL'S OLD HOLE, one audience further out. The educator's code
  * appeared on every screen in the room and then stopped: Run and Check ran in their own tab

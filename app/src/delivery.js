@@ -192,6 +192,8 @@ let intent = null;
 let heardPush = { origin: null, seq: -1 };
 /* And the newest drive seen through a shared screen, for the same reason - see `shown`. */
 let heardShown = { origin: null, seq: -1 };
+/* And the newest drive of this screen, by the control tab that sent it - see `driven`. */
+let heardDrive = { origin: null, seq: -1 };
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
 export const live = reactive({ running: {}, loading: false });
@@ -276,6 +278,7 @@ export function forget() {
   heardPush = { origin: null, seq: -1 };
   dropShown();
   heardShown = { origin: null, seq: -1 };
+  heardDrive = { origin: null, seq: -1 };
   clearInterval(catching); catching = null;
   stopPreviewRoom();
   stopReporting();
@@ -606,7 +609,13 @@ const HANDLERS = {
     sync.step = Number.isInteger(m.step) ? m.step : 0;
     sync.when = m.when || new Date().toISOString();
   },
+  /* THE NEWEST DRIVE WINS, NOT THE LAST TO ARRIVE - `synced`'s rule, and for its reason. An
+   * unnumbered drive, from a control tab older than this, is applied as it always was. */
   driven(m) {
+    if (typeof m.origin === 'string' && m.origin && Number.isInteger(m.seq)) {
+      if (m.origin === heardDrive.origin && m.seq <= heardDrive.seq) return;
+      heardDrive = { origin: m.origin, seq: m.seq };
+    }
     driven.position = m.position;
     /* Undefined means "not sent", which is not the same as an empty editor - see `drive`. */
     if (m.code !== undefined) driven.code = m.code;

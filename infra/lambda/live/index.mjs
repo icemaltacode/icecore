@@ -1510,6 +1510,11 @@ async function tallied(cohort, mark, seeded = false) {
          * document, and either one arriving against a different version of the text points
          * at words nobody chose. Undefined is "not sent"; null is a bare caret. */
         anchor: msg.anchor === null ? null : offset(msg.anchor),
+        /* Numbered by the control tab, and carried through for `push`'s reason: drives are
+         * concurrent invocations too, and each carries the whole buffer, so one arriving late
+         * puts older text on the student's screen. They keep the newest per tab. */
+        origin: typeof msg.origin === 'string' && msg.origin ? msg.origin.slice(0, 40) : null,
+        seq: Number.isInteger(msg.seq) && msg.seq >= 0 ? msg.seq : null,
         at: now,
       }, { sub: c.sub, from: conns });
 

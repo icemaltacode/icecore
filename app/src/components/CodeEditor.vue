@@ -67,19 +67,34 @@ class Caret extends WidgetType {
  *
  * `anchor` is null for a plain caret, which is the ordinary case and the only one that
  * existed before. Where an educator has selected nothing there is nothing to shade. */
+/* NEVER PAST THE END OF THE TEXT, on the way in or through a change. `mapPos` THROWS for a
+ * position beyond the document it maps from, and a position that arrives from another
+ * browser is only as current as that browser's text: an educator typing at the bottom and
+ * then copying a shorter answer in left the caret at 333 in a 286-character document. From
+ * then on every change threw inside this field, so the student's editor froze on the old
+ * text for the rest of the session while every drive arrived. Drawing already declined a
+ * stale position; storing and mapping one did not. The true position is re-applied after
+ * each replacement anyway - see `applyPeer` - so clamping loses nothing. */
+const within = (p, len) => (p == null ? null : Math.min(Math.max(0, p), len));
 const setPeer = StateEffect.define();
 const peer = StateField.define({
   create: () => ({ pos: null, anchor: null, name: '' }),
   update(value, tr) {
-    for (const e of tr.effects) if (e.is(setPeer)) return e.value;
+    for (const e of tr.effects) {
+      if (e.is(setPeer)) {
+        const len = tr.newDoc.length;
+        return { ...e.value, pos: within(e.value.pos, len), anchor: within(e.value.anchor, len) };
+      }
+    }
     if (!tr.docChanged || (value.pos == null && value.anchor == null)) return value;
+    const len = tr.changes.length;
     return {
       ...value,
-      pos: value.pos == null ? null : tr.changes.mapPos(value.pos, 1),
+      pos: value.pos == null ? null : tr.changes.mapPos(within(value.pos, len), 1),
       /* Mapped with the opposite bias to the head. An insertion AT the boundary of a
        * selection belongs outside it, not inside: the anchor holds its ground and the head
        * moves on, which is what the driver's own editor does. */
-      anchor: value.anchor == null ? null : tr.changes.mapPos(value.anchor, -1),
+      anchor: value.anchor == null ? null : tr.changes.mapPos(within(value.anchor, len), -1),
     };
   },
   provide: f => EditorView.decorations.compute([f], state => {
