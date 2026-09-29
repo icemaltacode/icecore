@@ -330,6 +330,70 @@ check('and a roster that changes nothing leaves it on screen',
         keywords.includes('WHERE'), keywords.join(', '));
 }
 
+/* ---- the whiteboard, from the pen's side ------------------------------------------
+ *
+ * THE EDUCATOR'S TAB IS THE SOURCE OF THE DRAWING and the server only relays it. A page has no
+ * ceiling on the wire: a stroke goes on its own however big the page, a whole page too big for
+ * one frame goes in parts, and a student who asks is answered alone. It used to gate every
+ * stroke on the size of the whole page, and stop at 24KB - a few handwritten words.
+ */
+{
+  const sent = type => player.outbox.sent.filter(m => m.type === type);
+  const pageParts = () => player.outbox.sent.filter(m => m.type === 'part' && m.of === 'page');
+  const whole = parts => JSON.parse([...parts].sort((a, b) => a.n - b.n).map(p => p.chunk).join(''));
+  const stroke = '<path d="M 5 5 L 9 9"/>';
+  // Twice the old ceiling, and several times one frame.
+  const heavy = '<path d="M 100 100 Q 101 101 102 102 Z"/>'.repeat(2000);
+
+  player.outbox.on = true;
+  player.outbox.sent.length = 0;
+  player.emitLocal({ type: 'boarding', on: true, page: 0 });
+  await settle(250);
+  const opened = sent('page').at(-1);
+  check('putting a board up sends its page, numbered',
+        Number.isInteger(opened?.v) && typeof opened?.epoch === 'string', JSON.stringify(opened));
+
+  player.outbox.sent.length = 0;
+  player.commitStroke(stroke, heavy + stroke);
+  const s1 = sent('stroke').at(-1);
+  check('a stroke on a page far past the old 24KB still goes, on its own',
+        s1?.node === stroke && s1.after === opened.v && s1.v > opened.v, JSON.stringify(s1));
+  await settle(50);
+  check('and nothing says the page is too big', !/too big/.test(text()), text().slice(-160));
+
+  player.outbox.sent.length = 0;
+  player.commitPage(heavy);
+  const parts = pageParts();
+  check('a whole page too big for one frame goes in parts', parts.length > 1
+        && whole(parts).svg === heavy && whole(parts).v > s1.v, `${parts.length} parts`);
+
+  const undone = whole(parts).v;
+  player.outbox.sent.length = 0;
+  player.emitLocal({ type: 'pagewanted', sub: 'late-student' });
+  await settle(80);
+  const answer = pageParts();
+  check('a student asking for the page is answered, and alone',
+        answer.length > 1 && answer.every(p => p.to === 'late-student'), JSON.stringify(answer[0]));
+  check('at the version it is already at, because asking changes nothing',
+        whole(answer).v === undone, JSON.stringify({ v: whole(answer).v, undone }));
+
+  player.outbox.sent.length = 0;
+  const tooBig = '<path d="M 100 100 Q 101 101 102 102 Z"/>'.repeat(Math.ceil(player.KEEP_LIMIT / 30));
+  player.commitPage(tooBig);
+  await settle(80);
+  check('a page too big to KEEP says so', /too big to keep/.test(text()), text().slice(-160));
+  check('and still reaches the class', pageParts().length > 1);
+
+  await settle(900);
+  const stored = JSON.parse(sessionStorage.getItem(`ice-board:${COHORT}`) || 'null');
+  check('the drawing is kept in the tab, so a reload does not lose it',
+        stored?.pages?.[0] === tooBig, `${stored?.pages?.[0]?.length ?? 'nothing'} chars kept`);
+
+  player.emitLocal({ type: 'boarding', on: false, page: 0 });
+  await settle(120);
+  check('and forgotten when the board is put away', !sessionStorage.getItem(`ice-board:${COHORT}`));
+}
+
 player.outbox.on = false;
 player.outbox.sent.length = 0;
 app.unmount();

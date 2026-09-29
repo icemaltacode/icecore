@@ -111,7 +111,9 @@ export const outbox = { on: false, sent: [] };
  * Everything else is trimmed, validated and stamped on the way through, which cannot be done
  * to a message the Lambda only ever sees in pieces - so those are capped where they are made
  * instead, and refused here if one still slips past. */
-const SPLITTABLE = new Set(['deck']);
+/* Snapshots, which a sender repeats and a receiver can reassemble: a slide's annotations, and a
+ * whiteboard page - which has no ceiling of its own, see board.js. */
+const SPLITTABLE = new Set(['deck', 'page']);
 let partId = 0;
 
 /**
@@ -121,9 +123,9 @@ let partId = 0;
  *
  * NOTHING OVER 28KB REACHES THE SOCKET IN ONE PIECE. The Lambda drops a deck patch over 32KB
  * without a word, and API Gateway cuts the sender's connection over its own limits - see
- * parts.js for the three, measured. So a deck patch that big goes as parts, and any other
- * message that big is refused here, with a warning: one message not arriving is better than
- * one that is silently dropped, or that takes the connection down with it.
+ * parts.js for the three, measured. So a deck patch or a board page that big goes as parts,
+ * and any other message that big is refused here, with a warning: one message not arriving is
+ * better than one that is silently dropped, or that takes the connection down with it.
  */
 export function send(type, data = {}) {
   const text = JSON.stringify({ type, ...data });

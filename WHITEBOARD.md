@@ -140,13 +140,16 @@ claiming to be on when the write was refused is worse than one that lags. For `s
 echo would load their page back underneath the pen and double every stroke they drew. The
 Lambda passes `except: id` on exactly those two.
 
-So, three messages and one rule:
+So, four messages and one rule:
 
 - `board` — tutor only, `{ on }`. Writes the session flag. Server emits `boarding`.
 - `stroke` — one committed node's `outerHTML`, streamed as it is drawn. drauu's `committed`
   event hands over the element. Small, and the common case.
-- `page` — `{ page, svg }`, a full dump. Sent on a page turn, and on join as part of the
-  roster.
+- `page` — `{ page, svg }`, a full dump. Sent on a page turn and on every change that is not
+  an append, to the room; and to one student (`to`) when they ask for it. In parts when it is
+  bigger than a frame.
+- `wantpage` — from anyone in the room. The server carries it to the educator delivering, as
+  `pagewanted { sub }`, and their tab answers that student alone.
 
 **The rule: an append streams, anything else re-dumps.** Undo, redo, `clear()` and `eraseLine`
 all remove or reorder nodes, so a stream of appends cannot express them and the page is sent
@@ -161,16 +164,35 @@ messages a stroke. What makes the split clean is that `commit()` emits `committe
 undo, a redo, a clear or an erase. An eraser stroke commits with an *undefined* node, which
 falls into the same branch and re-dumps, correctly and by accident of the same test.
 
-**The row stores the page as a list of node strings, not a string.** DynamoDB can
-`list_append` and cannot concatenate a string, so this is what lets a stroke be one small
-write with no read in front of it. A full page resets the list to a single entry; a joiner is
-handed `nodes.join('')`, which is the same markup either way.
+**Revised after it hit a wall: the server does not keep the drawing.** It did, as a list of
+node strings on the session row, and a joiner was handed `nodes.join('')` in the roster. The
+row is a 400KB item shared with 200 chat messages, so the page was capped at 24KB - and the
+client gated *every stroke* on the size of the whole page, so a few handwritten words in the
+board stopped reaching the class although each stroke was a few hundred bytes. Now:
 
-**A page has a ceiling, and it is said out loud to the educator.** If a page's dump exceeds the
-cap it cannot be sent, and the honest response is to tell the educator the page is full and
-offer a new one. `decksync` drops an oversized slide and says so; here the equivalent silence
-would be a board that stops syncing while it still looks fine on the one screen that does not
-matter — a lesson taught to nobody.
+- **The educator's tab is the source.** The row holds only that a board is up; the roster
+  says so and carries no drawing. A student who joins, or who finds a gap, sends `wantpage`
+  and is answered alone. The cost, accepted: while the educator's connection is down, a
+  student joining sees the board when it comes back rather than at once.
+- **There is no ceiling on a page on the wire.** A stroke goes on its own while it fits one
+  frame (and as the whole page if it does not); a whole page goes in parts, exactly as a
+  slide's annotations do. The one limit left is API Gateway's, on a single frame.
+- **Every change is numbered.** A stroke carries the version it makes (`v`) and the one it
+  follows (`after`); a page carries its version; `epoch` names one run of the educator's tab,
+  because a reload counts from one again. Messages are concurrent invocations and overtake
+  one another, so a stroke that arrives early is held until the gap closes, and one that never
+  closes is repaired by asking for the page.
+- **The source keeps its own copy in `sessionStorage`**, so a reload of that tab does not lose
+  the drawing - it used to be answered by the row. A control tab is not a source: it watches
+  the board as the class does, so exactly one tab answers a student.
+- **Pen strokes are rounded to whole board units** at commit, in the educator's own DOM. On a
+  1600x900 board a hundredth of a unit is invisible, and it was half of every stroke.
+- **A student's surface appends a stroke** rather than re-rendering the page, and pages are
+  filtered once rather than on every render - both were free at 24KB and are not now.
+
+**What is left of a ceiling is a KEPT page.** Each kept page is a row of its own in the boards
+function, so a page past 350KB is still drawn and still reaches the class, and the educator is
+told it cannot be kept - now, rather than when Keep refuses at the end of the lesson.
 
 ### Every string that becomes DOM is filtered first
 

@@ -37,21 +37,28 @@ import { on, send, emitLocal } from './live.js';
 import { previewRole } from './preview.js';
 import { api } from './auth.js';
 import { delivery, FRESHER } from './delivery.js';
+import { bytes } from './parts.js';
+import { TAB } from './tab.js';
 
 /** The stage. 16:9 because that is what a slide is and what most screens are. */
 export const STAGE = { w: 1600, h: 900 };
 
-/* WHAT ONE PAGE MAY WEIGH, and it is a ceiling rather than a target.
+/* A PAGE HAS NO CEILING ON THE WIRE. It used to be 24KB, and it gated every STROKE on the
+ * size of the whole page: a few handwritten words in and the board stopped reaching the class,
+ * although each stroke was a few hundred bytes. The real limit is on one MESSAGE - API Gateway
+ * closes the sender's connection over it (see parts.js) - so that is what is measured now:
  *
- * Mirrors CAP in decksync.js, and for the identical reason: API Gateway does not truncate or
- * reject an oversized frame, it CLOSES THE CONNECTION - which reads as the room going quiet
- * rather than as a message being too big. A dedicated full-screen board reaches this faster
- * than a slide annotation does, because `stylus` mode emits a filled outline with a point
- * every few pixels.
+ *   - a stroke goes on its own while it fits one frame, and as a whole page if it does not;
+ *   - a whole page goes in parts when it needs to, like a slide's annotations.
  *
- * A page over it is not sent, and the educator is TOLD. Dropping it quietly would leave a
- * board that still looks right on the one screen that does not matter. */
-export const PAGE_LIMIT = 24 * 1024;
+ * What is left is the size of a KEPT page, which is a DynamoDB row of its own (the boards
+ * function) - 400KB, less its keys. Past this the page is still drawn and still reaches the
+ * class; what the educator is told is that it cannot be kept. */
+export const STROKE_BYTES = 24 * 1024;
+export const KEEP_LIMIT = 350 * 1024;
+/* AND A WHOLE BOARD GOES IN ONE REQUEST, which Lambda caps at 6MB - as JSON, where every quote
+ * in the SVG doubles. Well past any lesson; said plainly rather than failing as a 413. */
+const KEEP_TOTAL = 5 * 1024 * 1024;
 
 export const board = reactive({
   /** Is a board up in this lesson at all. */
@@ -78,24 +85,73 @@ export const board = reactive({
    * it rather than with the topic label - otherwise carrying on from "The one Ryan asked
    * about" and pressing Keep quietly renames it to "1.1.2 - 2D NumPy Arrays". */
   title: '',
-  /* The last page that could not be sent, so the surface can say so. Cleared by anything
-   * that makes it untrue - a new page, a fresh board, an undo that brings it back under. */
+  /* The page showing is too big to KEEP - see KEEP_LIMIT. It still reaches the class; this is
+   * said so that it is not found out at the end of the lesson, when Keep refuses. */
   full: false,
 });
 
 /** The page showing, which is a string even when nothing has been drawn on it. */
 export const current = () => board.pages[board.page] || '';
 
-/* ------------------------------------------------------------------ applied from the wire
+/* ------------------------------------------------------------------ the transport
 
-   NOTHING BELOW DECIDES ANYTHING. The board is a fact about the LESSON, not about this
-   browser, so every state change here arrives as a message - including the educator's own.
-   Their button sends and their overlay opens off what comes back, which is `sync`'s rule: a
-   board that said it was up when the write had been refused is worse than one that lags. */
+   THE EDUCATOR'S BROWSER IS THE SOURCE OF THE DRAWING, and the server only relays it.
+
+   It used to keep the page on the session row, which is a 400KB DynamoDB item shared with the
+   chat - so the page had to stay small, and a 24KB ceiling on it stopped a board reaching the
+   class a few handwritten words in. Now the row holds only that a board is up. A student who
+   joins, or who finds they have missed something, asks (`wantpage`) and the educator's tab
+   answers with the page, to them alone. What that costs: while the educator's connection is
+   down, a student joining sees the board when it comes back rather than at once.
+
+   EVERY CHANGE IS NUMBERED. A stroke says which version it follows (`after`) and which it
+   makes (`v`); a whole page says which version it is. Messages are concurrent invocations and
+   overtake one another - the same fault a demonstration's pushes and a drive's buffers had -
+   so a stroke that arrives before the one it follows is HELD, applied when the gap closes, and
+   if it does not close a whole page is asked for. `epoch` names one run of the educator's tab:
+   a reload starts again from one, and that must not read as old.
+
+   NOTHING BELOW DECIDES WHETHER A BOARD IS UP. That is a fact about the LESSON and arrives as
+   `boarding`, including for the educator's own button - `sync`'s rule: a board that said it
+   was up when the write had been refused is worse than one that lags. */
+
+/* WHICH OF THE EDUCATOR'S TABS HOLDS THE PEN. A control tab also belongs to whoever is
+ * delivering, and with two surfaces two different drawings would each answer a student asking
+ * for the page. So App.vue says which tab this is, and a control tab watches the board the way
+ * the class does. */
+let source = true;
+export function boardSource(on) {
+  source = !!on;
+  if (board.on) board.mine = !!delivery.mine && source;
+}
+
+// The source's own count. `version` is the one the page on screen is at.
+let epoch = `${TAB}-${Date.now().toString(36)}`;
+let counter = 0;
+let version = 0;
+
+// What a watching client has applied, and what arrived too early to apply.
+let heard = { epoch: null, v: 0, page: -1 };
+let early = [];
+let repairing = null;
+let askedAt = 0;
+const EARLY_MAX = 400;
+const REPAIR_AFTER = 1500;
+const ASK_EVERY = 2000;
+
+/* A STUDENT'S SURFACE APPENDS A STROKE rather than re-rendering the page, so it is told. A
+ * page redrawn in full on every stroke is fine at a few KB and is not at a few hundred. */
+const strokeWatchers = new Set();
+export function onStroke(fn) { strokeWatchers.add(fn); return () => strokeWatchers.delete(fn); }
 
 /** A board opened or closed. `mine` is not in the message: this client already knows. */
 function applyBoarding(on, page = 0) {
-  if (!on) { board.on = false; board.mine = false; return; }
+  if (!on) {
+    if (board.mine) forgetStored(delivery.cohort);
+    board.on = false; board.mine = false;
+    heard = { epoch: null, v: 0, page: -1 }; early = [];
+    return;
+  }
   board.pages = [''];
   board.page = Math.max(0, page | 0);
   /* A board with a page index and no pages before it is a board that cannot draw its
@@ -104,9 +160,23 @@ function applyBoarding(on, page = 0) {
   board.full = false;
   board.id = null;
   board.title = '';
+  heard = { epoch: null, v: 0, page: -1 }; early = [];
+  board.mine = !!delivery.mine && source;
+  /* A RELOADED SOURCE PICKS UP WHERE IT WAS. With nothing on the server, the educator's own
+   * tab is the only copy of the drawing, and a reload used to be answered by the row. */
+  if (board.mine) {
+    const kept = restored();
+    if (kept?.pages?.length) {
+      board.pages = kept.pages.map(p => String(p ?? ''));
+      board.page = Math.min(Math.max(0, kept.page | 0), board.pages.length - 1);
+      board.id = kept.id || null;
+      board.title = kept.title || '';
+    }
+  }
   board.rev += 1;
-  board.mine = !!delivery.mine;
   board.on = true;
+  if (board.mine) sendPage();
+  else askForPage();
   /* AND THEN CARRY ON FROM THIS TOPIC'S BOARD, if the class has one. Asked for by whoever
    * pressed the button and acted on HERE rather than there, because a resume has to happen
    * after the flag has come back and been applied - `applyBoarding` resets the pages, so a
@@ -116,47 +186,95 @@ function applyBoarding(on, page = 0) {
    * reconnection, somebody else's lesson - must not act on it again. */
   wanted = null;
   if (!resume) return;
-  const at = boardsAt(resume.topic);
+  const found = boardsAt(resume.topic);
   /* The latest, because the server returns a topic's boards oldest first and the one you want
    * to carry on from is the one you were last drawing on. A failure leaves the blank board
    * that is already up, which is the right thing to be left with. */
-  const last = at[at.length - 1];
+  const last = found[found.length - 1];
   if (last) reopen(last).catch(() => {});
 }
 
-/** A page in full: a turn, an undo, a clear, or what a joiner walked in on. */
-function applyPage(page, svg) {
+/** A page in full, drawn: a turn, an undo, a clear, or what a joiner walked in on. */
+function replacePage(page, svg) {
   const i = Math.max(0, page | 0);
   const pages = [...board.pages];
   while (pages.length <= i) pages.push('');
   pages[i] = typeof svg === 'string' ? svg : '';
   board.pages = pages;
   board.page = i;
-  board.full = false;
   board.rev += 1;
 }
 
 /* One stroke, appended. FOR THE PAGE IT WAS DRAWN ON, never for whichever page happens to be
- * showing: a page turn and a finished stroke can cross on the wire, and the Lambda drops a
- * stroke for a page nobody is on for the same reason this does not guess. */
-function applyStroke(page, node) {
+ * showing: a page turn and a finished stroke can cross on the wire. */
+function appendStroke(page, node) {
   const i = Math.max(0, page | 0);
   if (typeof node !== 'string' || !node) return;
   const pages = [...board.pages];
   while (pages.length <= i) pages.push('');
   pages[i] = (pages[i] || '') + node;
   board.pages = pages;
+  for (const fn of strokeWatchers) fn(i, node);
+}
+
+/* A WHOLE PAGE ARRIVING. Taken if it is from a run of the educator's tab this client has not
+ * heard from, or newer than what it has - so a reload's first page always lands, and the same
+ * page answered twice (two requests, one reply each) is drawn once.
+ *
+ * Unnumbered is an educator's tab from before this was deployed, applied as it always was. */
+function pageIn(m) {
+  if (board.mine) return;
+  if (!Number.isInteger(m.v) || typeof m.epoch !== 'string') { replacePage(m.page, m.svg); return; }
+  if (m.epoch === heard.epoch && m.v <= heard.v) return;
+  replacePage(m.page, m.svg);
+  heard = { epoch: m.epoch, v: m.v, page: Math.max(0, m.page | 0) };
+  drain();
+}
+
+function strokeIn(m) {
+  if (board.mine) return;
+  if (!Number.isInteger(m.v) || typeof m.epoch !== 'string') { appendStroke(m.page, m.node); return; }
+  if (m.epoch === heard.epoch && m.v <= heard.v) return;   // had it
+  if (follows(m)) { take(m); drain(); return; }
+  early.push(m);
+  if (early.length > EARLY_MAX) early.shift();
+  if (!repairing) {
+    repairing = setTimeout(() => { repairing = null; if (early.length) askForPage(); }, REPAIR_AFTER);
+  }
+}
+
+const follows = m => m.epoch === heard.epoch && (m.page | 0) === heard.page && m.after === heard.v;
+function take(m) { appendStroke(m.page, m.node); heard = { ...heard, v: m.v }; }
+
+/* Apply whatever was waiting on what just arrived, and forget whatever it made stale. */
+function drain() {
+  for (let moved = true; moved;) {
+    moved = false;
+    early = early.filter(m => !(m.epoch === heard.epoch && m.v <= heard.v));
+    const next = early.find(follows);
+    if (next) { early = early.filter(m => m !== next); take(next); moved = true; }
+  }
+  if (!early.length && repairing) { clearTimeout(repairing); repairing = null; }
+}
+
+/* ASK THE EDUCATOR'S TAB FOR THE PAGE, no more than once every two seconds: a class that
+ * reconnects together, or a burst of strokes arriving out of order, is one question each. */
+function askForPage() {
+  if (board.mine || !board.on) return;
+  const now = Date.now();
+  if (now - askedAt < ASK_EVERY) return;
+  askedAt = now;
+  send('wantpage');
 }
 
 /* When a `boarding` was last heard - see the light roster below, and FRESHER in delivery.js. */
 let boardingAt = 0;
 on('boarding', m => { boardingAt = Date.now(); applyBoarding(m.on, m.page); });
-on('paged', m => applyPage(m.page, m.svg));
-on('stroked', m => applyStroke(m.page, m.node));
-/* The row cannot take another stroke on this page. Told to the educator rather than
- * swallowed: their own screen looks perfect, and the thing that has stopped is the class
- * seeing it. Same sentence the local ceiling produces, from the other end. */
-on('boardfull', () => { board.full = true; });
+on('paged', pageIn);
+on('stroked', strokeIn);
+/* SOMEBODY ASKED FOR THE PAGE, and only the source answers - to them alone, at the version it
+ * is at, which is not a change. */
+on('pagewanted', m => { if (board.on && board.mine && m.sub) sendPage(m.sub); });
 
 /* THE CLASS'S KEPT BOARDS HAVE CHANGED. The list is read when a course opens and when the
  * lesson changes, which is what keeps a paperclip off the navigation path - and leaves one
@@ -169,15 +287,11 @@ on('kept', m => { if (saved.course && saved.course === m.course) loadSaved(saved
 
 /* Off the roster, like control and the editor switch - a client that has just connected, or
  * come back from a tunnel, would otherwise sit under no board at all in the middle of one.
- * This is also the only message that carries what is ALREADY DRAWN, because a joiner needs
- * the page rather than the news that there is one. */
+ * THE ROSTER CARRIES NO DRAWING any more; a board being up is answered by asking for it. */
 on('roster', m => {
-  /* THE LIGHT ONE, every thirty seconds, says only whether a board is up - see the Lambda. It
-   * must not carry the drawing: applying the roster's page on a timer would put the server's
-   * copy back under an educator's pen, a stroke behind. So a board that should be gone is
-   * closed here, and one that should be up is asked for in full - the one place the drawing
-   * comes from. Nothing at all when the two agree, which is every tick but the one after a
-   * missed `boarding`. */
+  /* THE LIGHT ONE, every thirty seconds, says only whether a board is up. A board that should
+   * be gone is closed here, and one that should be up is asked for in full. Nothing at all
+   * when the two agree, which is every tick but the one after a missed `boarding`. */
   if (m.light) {
     if (!('boardOn' in m) || Date.now() - boardingAt < FRESHER) return;
     if (m.boardOn && !board.on) send('roster');
@@ -185,14 +299,21 @@ on('roster', m => {
     return;
   }
   if (!m.board?.on) { if (board.on) applyBoarding(false); return; }
-  applyBoarding(true, m.board.page);
-  applyPage(m.board.page, m.board.svg);
+  /* ALREADY UP IS NOT A NEW BOARD. A full roster arrives on every reconnection, and resetting
+   * the pages then would throw away the source's only copy of the drawing. So a source that
+   * has come back sends the page - it may have drawn while its socket was down - and a watcher
+   * asks for it. */
+  if (!board.on) { applyBoarding(true, m.board.page); return; }
+  if (board.mine) sendPage();
+  else askForPage();
 });
 
 /* A different session is a different board. Watched rather than being told, so that
  * delivery.js goes on having no idea this file exists - chat.js's rule. */
-watch(() => delivery.cohort, () => {
+watch(() => delivery.cohort, (now, was) => {
+  if (was) forgetStored(was);
   board.on = false; board.mine = false; board.pages = ['']; board.page = 0;
+  heard = { epoch: null, v: 0, page: -1 }; early = [];
   /* WHOSE BOARDS ARE VISIBLE CHANGES WITH THE LESSON, in both directions: starting one is how
    * an educator comes to see the room's, and ending it is how they stop. Re-read rather than
    * left as it was, or the paperclip goes on offering a class's boards to somebody who is no
@@ -200,11 +321,40 @@ watch(() => delivery.cohort, () => {
   if (saved.course) loadSaved(saved.course);
 });
 
+/* ------------------------------------------------------------------ the source's own copy
+
+   KEPT IN THE TAB, so a reload is not the end of the drawing. sessionStorage rather than
+   localStorage: it is this tab's board, it has a quota of its own - progress-store's keys are
+   in localStorage - and it goes when the tab does. Written a moment after the drawing stops
+   rather than on every stroke. A write that fails (a full quota) is only a reload that would
+   start blank. */
+const storeKey = cohort => `ice-board:${cohort}`;
+let storing = null;
+function store() {
+  if (!board.mine || !delivery.cohort) return;
+  clearTimeout(storing);
+  const cohort = delivery.cohort;
+  storing = setTimeout(() => {
+    try {
+      sessionStorage.setItem(storeKey(cohort), JSON.stringify({
+        pages: board.pages, page: board.page, id: board.id, title: board.title,
+      }));
+    } catch { /* see above */ }
+  }, 800);
+}
+function restored() {
+  try { return JSON.parse(sessionStorage.getItem(storeKey(delivery.cohort)) || 'null'); }
+  catch { return null; }
+}
+function forgetStored(cohort) {
+  clearTimeout(storing);
+  try { if (cohort) sessionStorage.removeItem(storeKey(cohort)); } catch { /* nothing kept */ }
+}
+
 /* ------------------------------------------------------------------ the educator's gestures
 
-   Each one is a send. The local state moves when the answer arrives, except for a stroke and
-   a page, which are the educator's own DOM and are already on their screen - see the Lambda,
-   which deliberately does not echo those two back. */
+   Each one is a send. A stroke and a page are the educator's own DOM and are already on their
+   screen, so the Lambda does not echo them back. */
 
 /* What the next `boarding` should resume, or null. Held here rather than passed through the
  * message: it is this browser's intention, not a fact about the room - a student receiving
@@ -228,44 +378,56 @@ export function startBoard(on = true, resume = null) {
   return false;
 }
 
+/* THE PAGE ON SCREEN, WHOLE. To the room when it has CHANGED - a turn, an undo, a clear, a
+ * reopened board - which makes a new version; to one student when they asked, at the version
+ * it is already at. Split into parts by live.js when it will not fit one frame. */
+function sendPage(to = null) {
+  if (!to) version = ++counter;
+  send('page', { page: board.page, v: version, epoch, svg: current(), ...(to ? { to } : {}) });
+  store();
+}
+
 /** Turn to a page that already exists, and take the room with you. */
 export function turnTo(i) {
   if (!goPage(i)) return false;
-  send('page', { page: board.page, svg: current() });
+  sendPage();
   return true;
 }
 
 /** A fresh page at the end, which is where a new one always goes. */
 export function addPage() {
   newPage();
-  send('page', { page: board.page, svg: '' });
+  sendPage();
 }
 
 /**
  * A finished stroke, on its way to the room.
  *
- * THE APPEND IS THE COMMON CASE and the reason the whole page is not sent on every change: a
- * page accumulates for the length of a lesson and `stylus` mode emits a filled outline with a
- * point every few pixels. `svg` is the page as it now stands, kept locally so the thumbnails
- * and the ceiling are about what is actually on the board.
+ * THE APPEND IS THE COMMON CASE and the reason the whole page is not sent on every change.
+ * `svg` is the page as it now stands, kept locally so the thumbnails are about what is
+ * actually on the board. A stroke too big for one frame - a scribble across the whole board -
+ * goes as the page instead, which is split into parts. There is no ceiling on either.
  */
 export function commitStroke(node, svg) {
-  const room = setPage(svg);
-  if (room && node) send('stroke', { page: board.page, node });
-  return room;
+  setPage(svg);
+  if (!node || bytes(JSON.stringify(node)) > STROKE_BYTES) { sendPage(); return true; }
+  const after = version;
+  version = ++counter;
+  send('stroke', { page: board.page, v: version, after, epoch, node });
+  store();
+  return true;
 }
 
 /**
  * The page in full, for a change that is not an append.
  *
  * Undo, redo, clear and an erased stroke all remove or reorder nodes, so a stream of appends
- * cannot express them. Refused when the page is over its ceiling - `setPage` says so - which
- * is the one place the educator finds out that the class has stopped seeing this page.
+ * cannot express them.
  */
 export function commitPage(svg) {
-  const room = setPage(svg);
-  if (room) send('page', { page: board.page, svg: current() });
-  return room;
+  setPage(svg);
+  sendPage();
+  return true;
 }
 
 /* ------------------------------------------------------------------ the local half */
@@ -282,26 +444,17 @@ function goPage(n) {
   const i = Number(n);
   if (!Number.isInteger(i) || i < 0 || i >= board.pages.length) return false;
   board.page = i;
-  board.full = false;
+  board.full = bytes(current()) > KEEP_LIMIT;
   return true;
 }
 
-/**
- * Record what is on the page now.
- *
- * OVER THE LIMIT IS STILL RECORDED LOCALLY, and only flagged. The educator's own board is
- * their DOM and refusing to remember what is on it would be undoing their stroke for them;
- * what the ceiling governs is what may be SENT. So this keeps it and says it is full, and the
- * transport declines - which is the difference between "you cannot draw that" and "the class
- * has stopped seeing this page", and only the second one is true.
- */
+/** Record what is on the page now, and whether it has grown past what can be kept. */
 function setPage(svg) {
   const text = typeof svg === 'string' ? svg : '';
   const pages = [...board.pages];
   pages[board.page] = text;
   board.pages = pages;
-  board.full = text.length > PAGE_LIMIT;
-  return !board.full;
+  board.full = bytes(text) > KEEP_LIMIT;
 }
 
 /* ------------------------------------------------------------------ keeping one
@@ -313,6 +466,12 @@ function setPage(svg) {
    session row that the caller is the one delivering to it.
 */
 export async function keepBoard({ course, topic, title }) {
+  if (board.pages.some(p => bytes(p) > KEEP_LIMIT)) {
+    throw new Error('A page is too big to keep. Move some of it onto a new page and try again.');
+  }
+  if (bytes(JSON.stringify(board.pages)) > KEEP_TOTAL) {
+    throw new Error('This board is too big to keep in one go. Remove a page or two and try again.');
+  }
   const answer = await api('boards', {
     method: 'POST',
     body: {
@@ -416,10 +575,10 @@ export async function reopen(entry) {
   const pages = (answer?.pages || []).map(p => String(p ?? ''));
   board.pages = pages.length ? pages : [''];
   board.page = 0;
-  board.full = false;
+  board.full = bytes(current()) > KEEP_LIMIT;
   board.id = entry.board;
   board.rev += 1;
-  send('page', { page: 0, svg: current() });
+  sendPage();
   return answer;
 }
 
@@ -441,9 +600,9 @@ export function dropPage(i = board.page) {
   const pages = board.pages.filter((_, n) => n !== at);
   board.pages = pages;
   board.page = Math.min(board.page > at ? board.page - 1 : board.page, pages.length - 1);
-  board.full = false;
+  board.full = bytes(current()) > KEEP_LIMIT;
   board.rev += 1;
-  send('page', { page: board.page, svg: current() });
+  sendPage();
   return true;
 }
 
@@ -461,7 +620,7 @@ export function freshBoard() {
   board.title = '';
   board.full = false;
   board.rev += 1;
-  send('page', { page: 0, svg: '' });
+  sendPage();
 }
 
 /** Remove a kept board. Gated on delivering, server-side - see infra/lambda/boards. */

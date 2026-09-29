@@ -53,6 +53,13 @@ export function installDom({ hash = '', search = '', url = 'https://icecore.test
    * comparing `readyState` to `WebSocket.OPEN` at import time does not throw. */
   window.WebSocket = class { static OPEN = 1; constructor() { this.readyState = 3; } close() {} };
 
+  /* THE WHITEBOARD'S SURFACE MOUNTS drauu, which refuses an <svg> without `createSVGPoint` -
+   * its test for "made with createElementNS" - and jsdom does no SVG geometry at all. drauu
+   * only USES the point while a pointer is drawing, which nothing here does: a test draws by
+   * calling the two functions drauu would call (see stubs/player-entry.js). So this is the
+   * method existing, not the geometry working. */
+  window.SVGSVGElement.prototype.createSVGPoint ??= () => ({ x: 0, y: 0, matrixTransform() { return this; } });
+
   /* EVERY GLOBAL THE WINDOW HAS, rather than a list of the ones somebody remembered.
    *
    * The list was the first version and it does not work: Vue's own runtime reaches for

@@ -19,7 +19,8 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { createDrauu } from 'drauu';
 import Icon from './Icon.vue';
-import { board, STAGE, current, turnTo, addPage, dropPage, commitStroke, commitPage, freshBoard }
+import { board, STAGE, current, turnTo, addPage, dropPage, commitStroke, commitPage, freshBoard,
+         onStroke }
   from '../board.js';
 import { clean } from '../svgclean.js';
 
@@ -57,9 +58,41 @@ let pending = null;
 let loading = false;
 
 const viewBox = `0 0 ${STAGE.w} ${STAGE.h}`;
-/* A student's page, filtered. The educator's own is never passed through here: it is their
- * DOM, and filtering what somebody is drawing as they draw it would delete their stroke. */
-const shown = computed(() => clean(current()));
+
+/* FILTERED ONCE PER PAGE, not once per render. `clean` parses the page it is given, and the
+ * thumbnail strip re-renders on every stroke - so without this every page on the board was
+ * parsed again each time anybody drew, which was nothing at a few KB a page and is not now
+ * that a page has no ceiling. A page that has not changed is the same string, and is found. */
+const cleaned = new Map();
+function cleanOnce(svg) {
+  let out = cleaned.get(svg);
+  if (out === undefined) {
+    out = clean(svg);
+    cleaned.set(svg, out);
+    if (cleaned.size > 64) cleaned.delete(cleaned.keys().next().value);
+  }
+  return out;
+}
+
+/* A STUDENT'S SURFACE, KEPT BY HAND. A whole page is painted when one arrives; a stroke is
+ * APPENDED, filtered on its own. It was `v-html` of the whole page, re-parsed and re-laid on
+ * every stroke - fine while a page was capped at 24KB. The educator's own surface is never
+ * filtered: it is their DOM, and filtering what somebody is drawing as they draw it would
+ * delete their stroke. */
+const viewer = ref(null);
+function paint() { if (viewer.value) viewer.value.innerHTML = cleanOnce(current()); }
+let unwatchStrokes = null;
+
+/* WHOLE BOARD UNITS. drauu writes every point of a pen stroke's outline to two decimal places,
+ * four numbers a point - on a 1600x900 board a hundredth of a unit is nothing anybody can see,
+ * and it was half of every stroke. Rounded in the educator's own DOM, so what is drawn, what is
+ * kept and what is sent are one drawing. */
+const WHOLE = /-?\d+\.\d+/g;
+function compact(node) {
+  if (node?.tagName !== 'path') return;
+  const d = node.getAttribute('d');
+  if (d) node.setAttribute('d', d.replace(WHOLE, n => String(Math.round(Number(n)) || 0)));
+}
 
 function apply() {
   if (!drauu) return;
@@ -86,7 +119,7 @@ onMounted(async () => {
   await nextTick();
   drauu = createDrauu({ el: stage.value, brush: { mode: 'stylus', color: ink.value, size: size.value } });
   brush();
-  drauu.on('committed', node => { pending = node || null; });
+  drauu.on('committed', node => { compact(node); pending = node || null; });
   /* `changed` also fires on pointer-down and on every move, so a page would otherwise be
    * recorded - and sent - a hundred times a stroke. `drawing` is already false by the time
    * the one that matters arrives: drauu sets it before emitting `end`. */
@@ -100,14 +133,23 @@ onMounted(async () => {
   apply();
 });
 
-onBeforeUnmount(() => { drauu?.unmount(); drauu = null; });
+onMounted(() => {
+  if (board.mine) return;
+  paint();
+  unwatchStrokes = onStroke((page, node) => {
+    if (board.mine || page !== board.page || !viewer.value) return;
+    viewer.value.insertAdjacentHTML('beforeend', clean(node));
+  });
+});
+
+onBeforeUnmount(() => { drauu?.unmount(); drauu = null; unwatchStrokes?.(); });
 
 watch([tool, ink, size], brush);
 /* The page the room is on, whoever turned it - and `rev`, which is how a wholesale
  * replacement announces itself. Reopening a kept board onto the page you are already on
  * changes no index, so watching the page alone would leave the surface showing the board it
  * had a moment ago. */
-watch([() => board.page, () => board.rev], apply);
+watch([() => board.page, () => board.rev], () => { apply(); paint(); });
 
 /* Both of these only touch drauu. What is recorded and what is sent is decided in one place
  * - the `changed` handler above - because two paths to the wire is how a board comes to
@@ -151,8 +193,8 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
            which is what makes one dump the same picture on both. -->
       <svg v-if="board.mine" ref="stage" class="wbsurface" :viewBox="viewBox"
            preserveAspectRatio="xMidYMid meet"></svg>
-      <svg v-else class="wbsurface" :viewBox="viewBox" preserveAspectRatio="xMidYMid meet"
-           v-html="shown"></svg>
+      <svg v-else ref="viewer" class="wbsurface" :viewBox="viewBox"
+           preserveAspectRatio="xMidYMid meet"></svg>
     </div>
 
     <!-- The chrome is the educator's alone. A student is watching a board, not using one. -->
@@ -213,7 +255,7 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
         <button v-for="(p, i) in board.pages" :key="i" class="wbpage" type="button"
                 :class="{ on: i === board.page }" :title="`Page ${i + 1}`"
                 :aria-label="`Page ${i + 1}`" @click="turnTo(i)">
-          <svg :viewBox="viewBox" preserveAspectRatio="xMidYMid meet" v-html="clean(p)"></svg>
+          <svg :viewBox="viewBox" preserveAspectRatio="xMidYMid meet" v-html="cleanOnce(p)"></svg>
           <em>{{ i + 1 }}</em>
         </button>
         <button class="wbbtn" type="button" title="New page" aria-label="New page"
@@ -222,11 +264,11 @@ onBeforeUnmount(() => removeEventListener('keydown', onKey));
 
       <span class="wbspace"></span>
 
-      <!-- SAID RATHER THAN SHOWN BY A DEAD BOARD. The page is still drawable and still theirs;
-           what has stopped is the class seeing it, and that is not something they could work
-           out from their own screen, which looks perfect. -->
+      <!-- THE PAGE STILL REACHES THE CLASS; what it cannot do is be KEPT, because a kept page
+           is a database row of its own - see KEEP_LIMIT in board.js. Said now rather than
+           found out at the end of the lesson, when Keep refuses. -->
       <span v-if="board.full" class="wbfull" role="status">
-        This page is too big to send — start a new one.
+        This page is too big to keep. Start a new page for the rest.
       </span>
 
       <button class="btn ghost" type="button" @click="emit('save')">Save</button>

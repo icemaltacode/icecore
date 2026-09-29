@@ -46,7 +46,7 @@ import SlidesPanel from './components/SlidesPanel.vue';
 import SplitPane from './components/SplitPane.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
-import { board, startBoard, keepBoard, loadSaved, reopen } from './board.js';
+import { board, startBoard, keepBoard, loadSaved, reopen, boardSource } from './board.js';
 import SignIn from './components/SignIn.vue';
 import Playground from './components/Playground.vue';
 import Whiteboard from './components/Whiteboard.vue';
@@ -1311,6 +1311,10 @@ async function endLiveHere() {
  * because this is the screen that knows where the lesson is; board.js acts on it once the
  * flag has come back. */
 const setBoard = on => startBoard(on, on ? { topic: currentTopic.value?.topic } : null);
+/* ONE TAB HOLDS THE PEN. A control tab belongs to whoever is delivering too, but it is there
+ * to drive one student - it watches the board as the class does, so the educator's live tab is
+ * the only copy that answers when a student asks for the page. See `boardSource`. */
+watch(controlSub, sub => boardSource(!sub), { immediate: true });
 
 /* KEEPING THE BOARD. The dialog asks for a title and says where it lands; this hands over
  * the two facts the educator's screen knows and the Lambda cannot - which course is open and

@@ -1022,6 +1022,80 @@ try {
             'an editor reached the room after the switch was thrown back');
     }
 
+    /* ---- the whiteboard: relayed, not stored ------------------------------------
+     *
+     * The drawing is the educator's tab's to keep, and this function only relays it: strokes
+     * and pages to the room, a student's request for the page to the educator, the answer to
+     * that student alone. It used to keep the page on the session row, which is what put a
+     * 24KB ceiling on it. What matters here is the relaying and the gate - a student must
+     * never draw on the room's board - and that a page bigger than a frame arrives whole.
+     */
+    {
+      const { split } = await import('../app/src/parts.js');
+      const LINE = '<path d="M 1 1 L 2 2"/>';
+
+      A.ws.send(JSON.stringify({ type: 'board', on: true }));
+      const up = await heardB.next('boarding');
+      await heardA.next('boarding');
+      check('a board goes up for the room', up?.on === true, JSON.stringify(up));
+
+      A.ws.send(JSON.stringify({ type: 'stroke', page: 0, v: 2, after: 1, epoch: 'test-run',
+                                 node: LINE }));
+      const drawn = await heardB.next('stroked');
+      check('a stroke reaches the class with its numbers intact',
+            drawn?.node === LINE && drawn.v === 2 && drawn.after === 1 && drawn.epoch === 'test-run',
+            JSON.stringify(drawn));
+
+      if (distinct) {
+        B.ws.send(JSON.stringify({ type: 'wantpage' }));
+        const asked = await heardA.next('pagewanted');
+        check("a student asking for the page reaches the educator, naming them",
+              asked?.sub === bSub, JSON.stringify(asked));
+        A.ws.send(JSON.stringify({ type: 'page', page: 0, v: 2, epoch: 'test-run', svg: LINE,
+                                   to: bSub }));
+        const answer = await heardB.next('paged');
+        check('and the answer reaches them', answer?.svg === LINE && answer.v === 2,
+              JSON.stringify(answer));
+
+        B.ws.send(JSON.stringify({ type: 'stroke', page: 0, v: 9, after: 2, epoch: 'forged',
+                                   node: '<path d="M 0 0"/>' }));
+        check("a student cannot draw on the room's board",
+              (await heardA.next('stroked', 1500)) === null, "a student's stroke was relayed");
+      } else {
+        for (const label of ['a student asking for the page reaches the educator, naming them',
+                             'and the answer reaches them',
+                             "a student cannot draw on the room's board"]) {
+          skip(label, 'one account was used for both sockets');
+        }
+      }
+
+      // Past one frame, so it can only arrive in parts - and has to arrive whole.
+      const big = '<path d="M 100 100 Q 101 101 102 102 Z"/>'.repeat(2000);
+      const out = split(JSON.stringify({ type: 'page', page: 0, v: 3, epoch: 'test-run', svg: big }),
+                        { type: 'part', of: 'page', to: null }, `test-page-${Date.now()}`);
+      for (const p of out) A.ws.send(JSON.stringify(p));
+      const got = [];
+      for (let i = 0; i < out.length; i++) {
+        const p = await heardB.next('part');
+        if (p) got.push(p);
+      }
+      let whole = null;
+      try { whole = JSON.parse(got.sort((a, b) => a.n - b.n).map(p => p.chunk).join('')); }
+      catch { /* reported by the check below */ }
+      check('a page bigger than a frame arrives whole, in parts',
+            got.length === out.length && got.every(p => p.of === 'paged') && whole?.svg === big,
+            `${got.length} of ${out.length} parts, ${whole?.svg?.length ?? 'nothing'} chars`);
+
+      B.ws.send(JSON.stringify({ type: 'roster' }));
+      const said = await heardB.next('roster');
+      check('a roster says a board is up and carries no drawing',
+            said?.board?.on === true && !('svg' in said.board), JSON.stringify(said?.board));
+
+      A.ws.send(JSON.stringify({ type: 'board', on: false }));
+      await heardB.next('boarding');
+      await heardA.next('boarding');
+    }
+
     /* And the gate closes with the control. The capability lasts exactly as long as the
      * driving does - which is what makes it a smaller thing than "an admin may write
      * anyone's rows", and what makes the student's Stop button mean something. */

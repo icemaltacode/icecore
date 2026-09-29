@@ -74,10 +74,11 @@ const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
 });
 
-/* Mirrors PAGE_LIMIT in board.js, which is itself decksync.js's CAP: what a page may weigh
- * is one number and the client is where it is enforced usefully - it can say so to the
- * person drawing. This is the row's backstop. */
-const PAGE_CHARS = 24 * 1024;
+/* Mirrors KEEP_LIMIT in board.js: each page is a row of its own, and a row is 400KB with its
+ * keys. The client is where it is enforced usefully - it can say so to the person drawing -
+ * and this is the row's backstop. It was 24KB, copied from the live channel's frame, which
+ * an HTTP request has never had. */
+const PAGE_CHARS = 350 * 1024;
 /* A lesson, not an archive. Forty pages is already a long morning at a board. */
 const PAGES = 40;
 const TITLE_CHARS = 120;

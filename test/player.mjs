@@ -750,6 +750,61 @@ check('a drive that moves them to another exercise carries its code with it',
   check('what arrives is filtered before it becomes DOM',
         /x="1"/.test(ink()) && !/onmouseover|alert/.test(ink()), ink().slice(0, 200));
 
+  /* ---- NUMBERED, because messages overtake one another ------------------------
+   *
+   * Every change the educator makes carries the version it makes (`v`) and, for a stroke, the
+   * one it follows (`after`). A stroke that arrives before the one it follows is held and
+   * applied when the gap closes; one that never closes is repaired by asking for the page.
+   * `epoch` is one run of the educator's tab - a reload counts from one again. */
+  {
+    const page = (v, svg, epoch = 'run-1') => player.emitLocal({ type: 'paged', page: 0, v, epoch, svg });
+    const stroke = (v, after, x, epoch = 'run-1') => player.emitLocal(
+      { type: 'stroked', page: 0, v, after, epoch, node: `<ellipse cx="${x}" cy="1" rx="1" ry="1"/>` });
+    const count = x => (ink().match(new RegExp(`cx="${x}"`, 'g')) || []).length;
+
+    page(10, '<rect x="100"/>');
+    await settle(120);
+    check('a numbered page is drawn', /x="100"/.test(ink()), ink().slice(0, 120));
+
+    stroke(11, 10, 11);
+    await settle(80);
+    check('a stroke that follows it is appended', count(11) === 1, ink().slice(0, 200));
+
+    stroke(13, 12, 13);
+    await settle(80);
+    check('one that arrives before the stroke it follows is held, not drawn', count(13) === 0,
+          ink().slice(0, 200));
+    stroke(12, 11, 12);
+    await settle(80);
+    check('and both are drawn, in order, once the gap closes',
+          count(12) === 1 && count(13) === 1 && ink().indexOf('cx="12"') < ink().indexOf('cx="13"'),
+          ink().slice(0, 300));
+
+    stroke(12, 11, 12);
+    await settle(80);
+    check('a stroke heard twice is drawn once', count(12) === 1, ink().slice(0, 300));
+
+    page(9, '<rect x="999"/>');
+    await settle(120);
+    check('an older page arriving late does not replace a newer drawing',
+          !/x="999"/.test(ink()) && count(13) === 1, ink().slice(0, 200));
+
+    page(1, '<rect x="222"/>', 'run-2');
+    await settle(120);
+    check("a reloaded educator's first page is taken, though it counts from one again",
+          /x="222"/.test(ink()) && count(13) === 0, ink().slice(0, 200));
+
+    player.outbox.on = true;
+    player.outbox.sent.length = 0;
+    stroke(5, 4, 55, 'run-2');
+    await settle(1700);
+    check('a gap that never closes is repaired by asking for the page',
+          player.outbox.sent.some(m => m.type === 'wantpage') && count(55) === 0,
+          JSON.stringify(player.outbox.sent));
+    player.outbox.on = false;
+    player.outbox.sent.length = 0;
+  }
+
   player.emitLocal({ type: 'boarding', on: false, page: 0 });
   await settle(150);
   check('the board goes away when the educator puts it away', !wb());
@@ -791,12 +846,22 @@ check('a drive that moves them to another exercise carries its code with it',
   check('and leaves the member list as it was', player.delivery.room.members.length === 1,
         JSON.stringify(player.delivery.room.members));
 
+  /* THE ROSTER SAYS A BOARD IS UP AND NOTHING ABOUT WHAT IS ON IT: the drawing is not kept on
+   * the server any more. The student asks the educator's tab, which answers them alone. */
+  player.outbox.on = true;
+  player.outbox.sent.length = 0;
   player.emitLocal({ type: 'roster', members: [{ sub: 'member-1', name: 'Member One' }],
                      here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }],
-                     board: { on: true, page: 0, svg: '<path d="M1,1 L2,2"/>' } });
+                     board: { on: true, page: 0 } });
   await settle(200);
-  check('a full roster puts up the board a student arrived under', !!wb() && /M1,1/.test(ink()),
-        ink().slice(0, 80));
+  check('a full roster puts up the board a student arrived under', !!wb());
+  check('and the student asks for what is already drawn on it',
+        player.outbox.sent.some(m => m.type === 'wantpage'), JSON.stringify(player.outbox.sent));
+  player.outbox.on = false;
+  player.outbox.sent.length = 0;
+  player.emitLocal({ type: 'paged', page: 0, v: 3, epoch: 'roster-run', svg: '<path d="M1,1 L2,2"/>' });
+  await settle(150);
+  check('which arrives, and is drawn', /M1,1/.test(ink()), ink().slice(0, 80));
   player.emitLocal({ type: 'roster', light: true, boardOn: true,
                      here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
   await settle(200);
