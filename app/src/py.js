@@ -21,6 +21,7 @@
  * vendored wheel under `app/py/`, installed through micropip's `emfs:` scheme. So the whole
  * of Python now comes from one host, which is the property that was actually wanted.
  */
+import { ref } from 'vue';
 import { loadPyodide } from 'pyodide';
 import { createGrader, seedFor, packageKey } from './python.js';
 import { dataBase } from './content.js';
@@ -50,12 +51,27 @@ let grader = null;
 let graderKey = null;
 let building = null;
 
+/* WHETHER PYTHON IS STARTING RIGHT NOW, for the badge beside the editor's tabs. On while an
+ * interpreter is being built, and while a freshly built one runs its first setup - which is
+ * where pandas is imported, and the part that holds the page. Not on for the setup of every
+ * later exercise: in an interpreter that already has its imports that takes a few
+ * milliseconds, and a badge flashing on every Next is a badge nobody reads. */
+export const pythonStarting = ref(false);
+let startingFor = 0;
+const starting = async fn => {
+  startingFor++;
+  pythonStarting.value = true;
+  try { return await fn(); } finally { if (--startingFor === 0) pythonStarting.value = false; }
+};
+/* An interpreter built but not yet warmed: its first setup is the expensive one. */
+let cold = null;
+
 async function graderFor(exercise) {
   const key = packageKey(exercise);
   if (grader && graderKey === key) return grader;
   // Serialised: two exercises starting at once must not build two interpreters.
   if (building) { await building; return graderFor(exercise); }
-  building = (async () => {
+  building = starting(async () => {
     const pyodide = await loadPyodide(pyodideOptions());
     const g = await createGrader({
       pyodide,
@@ -64,8 +80,9 @@ async function graderFor(exercise) {
       readWheel,
     });
     grader = g; graderKey = key; mounts.clear();   // a new interpreter has an empty filesystem
+    cold = g;
     return g;
-  })();
+  });
   try { return await building; } finally { building = null; }
 }
 
@@ -127,6 +144,7 @@ export async function gradePython(course, exercise, step, submission) {
   // The grader first, then the mount: the data goes into THAT interpreter's filesystem, and
   // building a new one wipes what the last had mounted.
   const g = await graderFor(exercise);
+  if (cold === g) cold = null;   // this grade does the importing; the warm-up will be quick
   const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
   return g.grade({ pec: exercise.setup, solution: step.solution, submission,
                    sct: step.sct, cwd, seed: seedFor(exercise), capture: true });
@@ -148,6 +166,7 @@ export async function gradePython(course, exercise, step, submission) {
 export async function runPython(course, exercise, step, submission) {
   const mod = moduleDataDir(exercise.topicId || exercise.topic);
   const g = await graderFor(exercise);
+  if (cold === g) cold = null;   // this run does the importing; the warm-up will be quick
   const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
   const r = await g.run({ pec: exercise.setup, submission, cwd, seed: seedFor(exercise) });
   /* READ FROM WHERE THE RUN ACTUALLY HAPPENED, which is not always the directory handed to
@@ -190,7 +209,18 @@ export async function warmPython(course, exercise) {
   const mod = moduleDataDir(exercise.topicId || exercise.topic);
   const g = await graderFor(exercise);
   const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
-  g.hints({ pec: exercise.setup || '', cwd });
+  const hint = () => g.hints({ pec: exercise.setup || '', cwd });
+  if (cold === g) {
+    cold = null;
+    /* A FRAME FIRST, so the badge is drawn before the page is held: the setup runs
+     * synchronously, and a badge switched on in the same task is never painted at all. */
+    await starting(async () => {
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+      hint();
+    });
+  } else {
+    hint();
+  }
   hinted = { grader: g, id: exercise.id };
 }
 

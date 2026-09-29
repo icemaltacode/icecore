@@ -14,7 +14,8 @@
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
-import { gradePython, runPython, pythonReady, warmPython, completePython } from '../py.js';
+import { gradePython, runPython, pythonReady, warmPython, completePython, pythonStarting }
+  from '../py.js';
 import { syntaxTree } from '@codemirror/language';
 import { askFor } from '../pycomplete.js';
 import { md } from '../md.js';
@@ -159,6 +160,9 @@ onBeforeUnmount(() => sendSoon.cancel());
  * importing pandas holds the page for a second or two - scheduled for idle time it usually
  * lands while the instructions are being read. The timeout makes it happen on a page that is
  * never idle. A worker is the real fix, and a larger one. */
+/* Said beside the tabs while it happens, because the page may hold still for a moment and a
+ * student typing into it deserves to know why. */
+const startingPython = computed(() => pythonStarting.value);
 const IDLE_WAIT = 4000;
 const idle = typeof requestIdleCallback === 'function'
   ? { at: fn => requestIdleCallback(fn, { timeout: IDLE_WAIT }), off: id => cancelIdleCallback(id) }
@@ -519,7 +523,13 @@ const ranQuietly = computed(() =>
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
-                    @cursor="onCursor" @active="active = $event" @run="doRun()" />
+                    @cursor="onCursor" @active="active = $event" @run="doRun()">
+          <template #right>
+            <span v-if="startingPython" class="pyboot" role="status">
+              <span class="pyspin" aria-hidden="true"></span>Starting Python…
+            </span>
+          </template>
+        </EditorPane>
         <div class="actions">
           <span v-if="booting" class="muted kbd">Starting Python…</span>
           <span v-else-if="verdict" class="verdict prose inline"
@@ -636,6 +646,17 @@ const ranQuietly = computed(() =>
 .actions .btn { margin-left: 0; }
 .actions .btn.ghost { margin-left: auto; }
 .kbd { font-family: var(--ice-font-mono); font-size: 11px; }
+/* THE SPINNER TURNS WHILE THE PAGE IS HELD. Importing pandas runs on the main thread, and an
+   animation of `transform` alone is run by the compositor, which is not - so this keeps
+   moving through exactly the second it exists to explain. `will-change` gives it the layer
+   that makes that true rather than likely. */
+.pyboot { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+          font-size: 11.5px; color: var(--ice-fg-muted); white-space: nowrap; }
+.pyspin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--ice-border);
+          border-top-color: var(--ice-primary); animation: pyspin .8s linear infinite;
+          will-change: transform; }
+@keyframes pyspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pyspin { animation-duration: 2.4s; } }
 .verdict { font-size: 12.5px; }
 .verdict.pass { color: var(--ice-good); }
 .verdict.fail { color: var(--ice-bad); }
