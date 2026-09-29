@@ -4,6 +4,7 @@ import { EditorState, Compartment, StateField, StateEffect } from '@codemirror/s
 import { EditorView, WidgetType, Decoration, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { autocompletion } from '@codemirror/autocomplete';
+import { linter, forceLinting } from '@codemirror/lint';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
@@ -227,6 +228,12 @@ const props = defineProps({
    * from the live interpreter. Added as language data rather than as an override, so the
    * keywords and the names already typed stay offered too. */
   completions: { type: Function, default: null },
+  /* What is wrong with the code: text -> [{ from, to, message, severity? }], or a promise of
+   * it. The caller asks the engine that would run it - Python's compiler, Postgres's planner -
+   * so a red line here means Run would fail. Null draws nothing. */
+  lint: { type: Function, default: null },
+  /** Bumped to check again without an edit: the engine that answers has just arrived. */
+  lintAgain: { type: Number, default: 0 },
 });
 const emit = defineEmits(['update:modelValue', 'run', 'cursor']);
 const host = ref(null);
@@ -237,6 +244,22 @@ const editable = new Compartment();
 const preambled = new Compartment();
 const language = new Compartment();
 const completing = new Compartment();
+const linting = new Compartment();
+/* A SECOND AFTER THEY STOP TYPING, not on every key: a line half written is not wrong yet,
+ * and a beginner shown red mid-word learns to distrust the red. Offsets are clamped, because
+ * what comes back was computed against text that may since have changed length. */
+const lintFor = () => (props.lint
+  ? linter(async view => {
+    const text = view.state.doc.toString();
+    const found = (await props.lint(text)) || [];
+    const len = view.state.doc.length;
+    return found.map(d => {
+      const from = Math.min(Math.max(0, d.from), len);
+      return { from, to: Math.min(Math.max(from, d.to), len),
+               severity: d.severity || 'error', message: d.message };
+    });
+  }, { delay: 1000 })
+  : []);
 const extraCompletions = () => (props.completions
   ? EditorState.languageData.of(() => [{ autocomplete: props.completions }])
   : []);
@@ -258,6 +281,7 @@ onMounted(() => {
          * while the list is open and is a new line otherwise; Cmd/Ctrl+Enter still runs. */
         autocompletion(),
         completing.of(extraCompletions()),
+        linting.of(lintFor()),
         keymap.of([
           { key: 'Mod-Enter', run: () => (emit('run'), true) },
           indentWithTab, ...defaultKeymap, ...historyKeymap,
@@ -379,6 +403,21 @@ onMounted(() => {
           },
           '.cm-completionDetail': { color: 'var(--ice-fg-muted)', fontStyle: 'normal' },
           '.cm-completionMatchedText': { textDecoration: 'none', fontWeight: '700' },
+          /* The app's own red and amber rather than CodeMirror's, which are drawn into an
+             SVG and cannot follow the theme. A wavy underline is still what everyone reads
+             as "this is wrong". */
+          '.cm-lintRange-error, .cm-lintRange-warning': {
+            backgroundImage: 'none', textDecorationLine: 'underline',
+            textDecorationStyle: 'wavy', textDecorationSkipInk: 'none',
+            textUnderlineOffset: '3px',
+          },
+          '.cm-lintRange-error': { textDecorationColor: 'var(--ice-bad)' },
+          '.cm-lintRange-warning': { textDecorationColor: 'var(--ice-warn)' },
+          '.cm-diagnostic': {
+            padding: '6px 10px', fontFamily: 'var(--ice-font-sans, inherit)', fontSize: '12.5px',
+          },
+          '.cm-diagnostic-error': { borderLeft: '3px solid var(--ice-bad)' },
+          '.cm-diagnostic-warning': { borderLeft: '3px solid var(--ice-warn)' },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
           '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
             background: 'var(--ice-primary-soft)',
@@ -409,6 +448,11 @@ const applyPeer = () => view?.dispatch({
   }),
 });
 watch(() => [props.peerAt, props.peerAnchor, props.peerName], applyPeer);
+
+watch(() => props.lint, () => {
+  view?.dispatch({ effects: linting.reconfigure(lintFor()) });
+});
+watch(() => props.lintAgain, () => { if (view && props.lint) forceLinting(view); });
 
 watch(() => props.completions, () => {
   view?.dispatch({ effects: completing.reconfigure(extraCompletions()) });

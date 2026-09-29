@@ -14,8 +14,9 @@
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
-import { gradePython, runPython, pythonReady, warmPython, completePython, pythonStarting }
-  from '../py.js';
+import { gradePython, runPython, pythonReady, warmPython, completePython, pythonStarting,
+         checkPython } from '../py.js';
+import { whenIdle } from '../idle.js';
 import { syntaxTree } from '@codemirror/language';
 import { askFor } from '../pycomplete.js';
 import { md } from '../md.js';
@@ -163,16 +164,42 @@ onBeforeUnmount(() => sendSoon.cancel());
 /* Said beside the tabs while it happens, because the page may hold still for a moment and a
  * student typing into it deserves to know why. */
 const startingPython = computed(() => pythonStarting.value);
-const IDLE_WAIT = 4000;
-const idle = typeof requestIdleCallback === 'function'
-  ? { at: fn => requestIdleCallback(fn, { timeout: IDLE_WAIT }), off: id => cancelIdleCallback(id) }
-  : { at: fn => setTimeout(fn, 1500), off: id => clearTimeout(id) };
 /* Nothing to offer without a setup, and nothing worth an interpreter for: a first exercise
  * with no setup still gets its Run warmed by the next one that has. */
-const warming = props.exercise.setup
-  ? idle.at(() => { warmPython(props.courseId, props.exercise).catch(() => {}); })
+const cancelWarming = props.exercise.setup
+  ? whenIdle(() => { warmPython(props.courseId, props.exercise).catch(() => {}); })
   : null;
-onBeforeUnmount(() => { if (warming != null) idle.off(warming); });
+onBeforeUnmount(() => cancelWarming?.());
+
+/* ---- WHAT IS WRONG WITH IT, from Python's own compiler --------------------------------
+ *
+ * Compiled, never run, by the interpreter the warm-up brought - so the message and the
+ * place it points are the ones a Run would give, and a red line means Run would fail. Until
+ * there is an interpreter nothing is marked, and it checks again the moment one arrives. */
+const lintAgain = ref(0);
+watch(startingPython, (now, was) => { if (was && !now) lintAgain.value++; });
+const lintPython = text => {
+  const found = checkPython(text);
+  if (!found) return [];
+  const [line, col, endLine, endCol, message] = found;
+  const starts = [0];
+  for (let i = 0; i < text.length; i++) if (text[i] === '\n') starts.push(i + 1);
+  const at = (l, c) => Math.min((starts[Math.min(l, starts.length) - 1] ?? 0) + Math.max(0, c - 1),
+                                text.length);
+  let from = at(line, col);
+  let to = endCol > 0 ? at(endLine, endCol) : from;
+  /* One character at least, and a real one: Python often points just past the end of a
+   * line - where the missing colon or bracket would have gone - and there is nothing there
+   * to underline. The last thing written before it is. */
+  if (to <= from || !text.slice(from, to).trim()) {
+    if (from < text.length && text[from].trim()) to = from + 1;
+    else {
+      const last = text.slice(0, from).search(/\S\s*$/);
+      if (last >= 0) { from = last; to = last + 1; }
+    }
+  }
+  return [{ from, to, message }];
+};
 
 /* What is being asked - a subscript's key, after a dot, a bare word - is worked out in
  * pycomplete.js, and Python only answers. */
@@ -520,13 +547,14 @@ const ranQuietly = computed(() =>
       <div class="editor-pane">
         <EditorPane v-model="code" name="script.py" language="python" :readonly="frozen"
                     :preamble="exercise.setup || ''" :completions="liveCompletions"
+                    :lint="lintPython" :lint-again="lintAgain"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="onCursor" @active="active = $event" @run="doRun()">
           <template #right>
-            <span v-if="startingPython" class="pyboot" role="status">
-              <span class="pyspin" aria-hidden="true"></span>Starting Python…
+            <span v-if="startingPython" class="pyboot ice-boot" role="status">
+              <span class="ice-spin" aria-hidden="true"></span>Starting Python…
             </span>
           </template>
         </EditorPane>
@@ -646,17 +674,8 @@ const ranQuietly = computed(() =>
 .actions .btn { margin-left: 0; }
 .actions .btn.ghost { margin-left: auto; }
 .kbd { font-family: var(--ice-font-mono); font-size: 11px; }
-/* THE SPINNER TURNS WHILE THE PAGE IS HELD. Importing pandas runs on the main thread, and an
-   animation of `transform` alone is run by the compositor, which is not - so this keeps
-   moving through exactly the second it exists to explain. `will-change` gives it the layer
-   that makes that true rather than likely. */
-.pyboot { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
-          font-size: 11.5px; color: var(--ice-fg-muted); white-space: nowrap; }
-.pyspin { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--ice-border);
-          border-top-color: var(--ice-primary); animation: pyspin .8s linear infinite;
-          will-change: transform; }
-@keyframes pyspin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .pyspin { animation-duration: 2.4s; } }
+/* The badge itself is `.ice-boot` in styles.css, shared with the SQL exercise. */
+.pyboot { margin-left: auto; }
 .verdict { font-size: 12.5px; }
 .verdict.pass { color: var(--ice-good); }
 .verdict.fail { color: var(--ice-bad); }

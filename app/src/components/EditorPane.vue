@@ -48,6 +48,9 @@ const props = defineProps({
   schema: { type: Object, default: null },
   /** Python: a completion source over what the setup made - see PythonExercise. */
   completions: { type: Function, default: null },
+  /** What is wrong with the code, and a nudge to check again - see CodeEditor. */
+  lint: { type: Function, default: null },
+  lintAgain: { type: Number, default: 0 },
   /* Somebody else's caret IN THIS STUDENT'S BUFFER - remote control, and nothing else. */
   peerAt: { type: Number, default: null },
   peerAnchor: { type: Number, default: null },
@@ -211,6 +214,7 @@ function take() {
       <div v-show="split || showing === 'mine'" class="one">
         <CodeEditor v-model="mine" :language="language" :readonly="readonly"
                     :preamble="preamble" :schema="schema" :completions="completions"
+                    :lint="lint" :lint-again="lintAgain"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="moved('mine', $event)" @run="emit('run')" />
       </div>

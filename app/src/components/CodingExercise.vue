@@ -2,7 +2,8 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
 import ResultGrid from './ResultGrid.vue';
-import { run, resetDb } from '../db.js';
+import { run, resetDb, warmDb, checkSql, dbStarting } from '../db.js';
+import { whenIdle } from '../idle.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
@@ -131,6 +132,27 @@ const running = computed(() =>
 watch(code, sendSoon);
 watch(() => props.resend, sendSoon);
 onBeforeUnmount(() => sendSoon.cancel());
+
+/* ---- THE STUDENT'S DATABASE, MADE BEFORE IT IS ASKED FOR ---------------------------------
+ *
+ * Warmed when the browser is idle, as a Python exercise warms its interpreter: the first Run
+ * then finds it waiting, and the editor's check below has something to ask. Seeding a dataset
+ * runs on the main thread, so the page may hold still for a moment while it does, and the
+ * badge beside the tabs says so. Only exercises with a dataset have a database to make. */
+const startingDb = computed(() => dbStarting.value);
+const cancelWarming = props.exercise.dataset
+  ? whenIdle(() => { warmDb(props.courseId, props.exercise.dataset, props.exercise.setup); })
+  : null;
+onBeforeUnmount(() => cancelWarming?.());
+
+/* WHAT IS WRONG WITH IT, from Postgres itself: every statement is planned against the
+ * student's own database and nothing is run - see sqllint.js. A red line means Run would
+ * fail. Nothing is marked until the database exists, and it checks again once it does. */
+const lintAgain = ref(0);
+watch(startingDb, (now, was) => { if (was && !now) lintAgain.value++; });
+const lintSql = text => (props.exercise.dataset
+  ? checkSql(props.courseId, props.exercise.dataset, props.exercise.setup, text)
+  : null);
 
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
  * exercise completes, because that is the moment there is an answer worth keeping. A step
@@ -473,12 +495,18 @@ async function doReset() {
       <div class="editor-pane">
         <EditorPane v-model="code" name="query.sql" :readonly="frozen"
                     :preamble="exercise.setup || ''" :schema="exercise.schema || null"
+                    :lint="lintSql" :lint-again="lintAgain"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="onCursor" @active="active = $event" @run="doRun()">
           <template #right>
-            <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
+            <span class="right tabx">
+              <span v-if="startingDb" class="ice-boot" role="status">
+                <span class="ice-spin" aria-hidden="true"></span>Loading the database…
+              </span>
+              <button class="link" @click="doReset" :disabled="busy">Reset database</button>
+            </span>
           </template>
         </EditorPane>
         <div class="actions">
@@ -577,6 +605,7 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .tab { font-size: 12px; padding: 9px 4px; color: var(--ice-fg-muted); }
 .tab.active { color: var(--ice-fg); box-shadow: inset 0 -2px 0 var(--ice-primary); }
 .right { margin-left: auto; }
+.tabx { display: inline-flex; align-items: center; gap: 12px; }
 .actions { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
            border-top: 1px solid var(--ice-border); background: var(--ice-bg-soft); }
 .verdict { font-size: 13px; margin-right: auto; }

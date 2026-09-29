@@ -290,3 +290,16 @@ body.ice-pointing [data-show]:not(:disabled):hover {
 @media (prefers-reduced-motion: reduce) {
   .cm-peer-bar { animation: none !important; }
 }
+
+/* STARTING SOMETHING THE PAGE MAY HOLD STILL FOR - Python, a student's database - said beside
+   the editor's tabs. THE SPINNER TURNS WHILE THE PAGE IS HELD: both run on the main thread,
+   and an animation of `transform` alone is run by the compositor, which is not, so it keeps
+   moving through exactly the second it exists to explain. `will-change` gives it the layer
+   that makes that true rather than likely. One definition for both exercise types. */
+.ice-boot { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px;
+            color: var(--ice-fg-muted); white-space: nowrap; }
+.ice-spin { flex: none; width: 11px; height: 11px; border-radius: 50%;
+            border: 2px solid var(--ice-border); border-top-color: var(--ice-primary);
+            animation: ice-spin .8s linear infinite; will-change: transform; }
+@keyframes ice-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ice-spin { animation-duration: 2.4s; } }

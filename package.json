@@ -19,7 +19,7 @@
   ],
   "scripts": {
     "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content",
-    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/store.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pycomplete.mjs && node test/beat.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/relay.mjs && node test/parts.mjs && node test/room.mjs && node test/player.mjs && node test/educator.mjs && node test/admin.mjs",
+    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/store.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pycomplete.mjs && node test/sqllint.mjs && node test/beat.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/relay.mjs && node test/parts.mjs && node test/room.mjs && node test/player.mjs && node test/educator.mjs && node test/admin.mjs",
     "test:store": "node test/store.mjs",
     "test:pointer": "node test/pointer.mjs",
     "test:decksync": "node test/decksync.mjs",
@@ -46,6 +46,7 @@
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-sql": "^6.8.0",
     "@codemirror/language": "^6.11.0",
+    "@codemirror/lint": "^6.9.7",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.36.2",
     "@electric-sql/pglite": "^0.4.2",

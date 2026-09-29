@@ -180,6 +180,22 @@ const check = (label, ok, detail = '') => {
 
   const run = await g.run({ pec: '', submission: "print('homelessness' in globals())", cwd });
   check("a Run never sees the editor's namespace", run.output.trim() === 'False', run.output);
+
+  /* ---- where the code stops being Python, for the editor's red line ----
+   * Compiled, never run: the position is the one a Run would report, and nothing the code
+   * does happens. */
+  check('code that compiles has nothing wrong with it', g.syntax('x = 1\nprint(x)') === null);
+  const open = g.syntax('x = [1, 2\nprint(x)');
+  check('an unclosed bracket is found where it opens',
+        open?.[0] === 1 && open?.[1] === 5 && /never closed/.test(open?.[4]), JSON.stringify(open));
+  const colon = g.syntax('if x > 1\n    print(x)');
+  check('a missing colon is found on its line', colon?.[0] === 1 && /expected ':'/.test(colon?.[4]),
+        JSON.stringify(colon));
+  const indent = g.syntax('def f():\nreturn 1');
+  check('an indentation error is an error too', indent?.[0] === 2, JSON.stringify(indent));
+  g.syntax("open('/tmp/ice-should-not-exist', 'w')");
+  check('checking runs nothing', !pyodide.FS.analyzePath('/tmp/ice-should-not-exist').exists);
+  check('a warning is not an error', g.syntax('s = "\\d"') === null);
 }
 
 console.log(failures ? `\n${failures} failing` : '\nall green');

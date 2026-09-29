@@ -381,6 +381,28 @@ def _ice_lookup(ns, path):
         obj = found
     return obj
 
+def _ice_syntax(code):
+    """Where the code stops being Python, WITHOUT RUNNING ANY OF IT.
+
+    compile() parses and compiles and executes nothing, and it is the same parser a Run goes
+    through - so the message and the position are the ones the student would get on Run.
+    [line, col, end_line, end_col, message], 1-based, or None when it compiles. Warnings
+    (an invalid escape, say) are not errors and are not reported."""
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            compile(code, "<your code>", "exec", dont_inherit=True)
+    except SyntaxError as e:
+        line = e.lineno or 1
+        col = e.offset or 1
+        end_line = getattr(e, "end_lineno", None) or line
+        end_col = getattr(e, "end_offset", None) or 0
+        return [line, col, end_line, end_col, e.msg or "invalid syntax"]
+    except (ValueError, OverflowError) as e:
+        return [1, 1, 1, 0, str(e)]
+    return None
+
 def _ice_complete(kind, base, prefix):
     """[label, type, detail] for what may follow, or None until the setup has run."""
     import inspect
@@ -474,6 +496,7 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
   const exec = pyodide.globals.get('_ice_run');
   const hints = pyodide.globals.get('_ice_hints');
   const complete = pyodide.globals.get('_ice_complete');
+  const syntax = pyodide.globals.get('_ice_syntax');
 
   /* Python hands back a proxy; every caller wants a plain object and none wants the leak. */
   const plain = result => {
@@ -527,6 +550,16 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
      */
     complete(kind, base, prefix) {
       const r = complete(kind, base || '', prefix || '');
+      if (r == null) return null;
+      try { return r.toJs(); } finally { r.destroy?.(); }
+    },
+
+    /**
+     * Where `code` stops being Python, as `[line, col, endLine, endCol, message]` (1-based),
+     * or null when it compiles. Compiled, never run - see `_ice_syntax`.
+     */
+    syntax(code) {
+      const r = syntax(code);
       if (r == null) return null;
       try { return r.toJs(); } finally { r.destroy?.(); }
     },

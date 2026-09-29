@@ -1,10 +1,25 @@
+import { ref } from 'vue';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../../src/extensions.mjs';
 import { loadDatasetSql } from './content.js';
+import { lintSql } from './sqllint.js';
 
 const templates = new Map();   // seeded data dir, so later databases are clones
 const prepared = new Map();    // that dir with one exercise's setup SQL applied
 const sessions = new Map();    // the student's own database
+const ready = new Map();       // ...once it exists, so a check never waits for one
+
+/* WHETHER A STUDENT'S DATABASE IS BEING MADE RIGHT NOW, for the badge beside the editor's
+ * tabs. Seeding a dataset and booting PGlite run on the main thread, and the page can hold
+ * still while they do - which is now as likely to happen when an exercise opens (see
+ * `warmDb`) as on a first Run. Same reason and same shape as `pythonStarting` in py.js. */
+export const dbStarting = ref(false);
+let startingFor = 0;
+const starting = async promise => {
+  startingFor++;
+  dbStarting.value = true;
+  try { return await promise; } finally { if (--startingFor === 0) dbStarting.value = false; }
+};
 
 /* Setup SQL is per exercise, not per dataset, and two exercises on the same dataset can
  * build different tables under the same name - DataCamp's `matches_spain` is all of Spain
@@ -66,8 +81,27 @@ export async function scratch(course, dataset, setup) {
 /** The student's long-lived database for this exercise's view of the dataset. */
 export function getDb(course, dataset, setup) {
   const k = key(course, dataset, setup);
-  if (!sessions.has(k)) sessions.set(k, scratch(course, dataset, setup));
+  if (!sessions.has(k)) {
+    const made = starting(scratch(course, dataset, setup)).then(db => { ready.set(k, db); return db; });
+    // A failure is not remembered: the next Run asks again rather than inheriting it.
+    made.catch(() => { if (sessions.get(k) === made) sessions.delete(k); });
+    sessions.set(k, made);
+  }
   return sessions.get(k);
+}
+
+/* ---- the editor's checking --------------------------------------------------------
+ *
+ * WARMED WHEN THE BROWSER IS IDLE, like Python: the exercise asks for its database before
+ * anybody presses Run, so the check has something to ask - and the first Run then finds it
+ * already made. Until it exists `checkSql` answers null and nothing is marked. */
+export const warmDb = (course, dataset, setup) => getDb(course, dataset, setup).catch(() => null);
+
+/** What Postgres would refuse in `text`, as `[{ from, to, message }]`, or null while there is
+ *  no database to ask. Planned, never run - see sqllint.js. */
+export function checkSql(course, dataset, setup, text) {
+  const db = ready.get(key(course, dataset, setup));
+  return db ? lintSql(db, text).catch(() => null) : null;
 }
 
 /** Throw the student's database away and start again from the seeded state. */
@@ -75,6 +109,7 @@ export async function resetDb(course, dataset, setup) {
   const k = key(course, dataset, setup);
   const existing = sessions.get(k);
   sessions.delete(k);
+  ready.delete(k);
   await existing?.then(db => db.close()).catch(() => {});
   return getDb(course, dataset, setup);
 }

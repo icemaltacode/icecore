@@ -224,6 +224,14 @@ export async function warmPython(course, exercise) {
   hinted = { grader: g, id: exercise.id };
 }
 
+/** Where `code` stops being Python - `[line, col, endLine, endCol, message]` - or null when it
+ *  compiles or there is no interpreter yet. Any interpreter will do: parsing does not depend
+ *  on which packages it holds. */
+export function checkPython(code) {
+  if (!grader) return null;
+  try { return grader.syntax(code); } catch { return null; }
+}
+
 /** `[label, type, detail]` for what may follow the caret, or null while not warmed yet. */
 export function completePython(exercise, kind, base, prefix) {
   if (!hinted || hinted.grader !== grader || hinted.id !== exercise.id) return null;
