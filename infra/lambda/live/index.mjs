@@ -1974,6 +1974,14 @@ async function tallied(cohort, mark, seeded = false) {
          * text - retyping a character back to what it was is still somebody typing, and a
          * watcher on the code alone would not see it. */
         when: now,
+        /* WHICH TAB SENT IT AND HOW FAR ALONG IT IS, carried through untouched - `deck`'s
+         * reason, below, applied to the editor. Pushes are concurrent invocations like every
+         * other message, so an older one can reach a student after a newer one, and each
+         * carries the whole buffer: applied last, it puts older code on the screen and leaves
+         * it there once the educator stops typing. The receiver keeps the highest number per
+         * tab. Null from a client older than this, which the receiver applies as before. */
+        origin: typeof msg.origin === 'string' && msg.origin ? msg.origin.slice(0, 40) : null,
+        seq: Number.isInteger(msg.seq) && msg.seq >= 0 ? msg.seq : null,
       }, { except: id });
       return { statusCode: 200, body: 'ok' };
     }
@@ -2113,6 +2121,11 @@ async function tallied(cohort, mark, seeded = false) {
         members: await membersOf(row.cohort),
         here: (await connectionsIn(row.cohort)).map(c => ({
           sub: c.sub, name: c.name, role: c.role, seen: c.seen, position: c.position || null,
+          /* WHEN THAT POSITION WAS WRITTEN, by this function's clock - the same clock that
+           * stamps every `moved`. A roster is read at one moment and can arrive after a move
+           * made a moment later; with this the client keeps the newer of the two rather than
+           * walking a student back. */
+          posAt: c.posAt || null,
           /* Same rule as the broadcast, applied to the pull: a roster asked for by a student
            * comes back without anybody's mark on it. The asker's own role is on the row this
            * function read to find the cohort, so there is nothing to trust here either. */

@@ -901,7 +901,7 @@ const myCursor = ref(null);
  * rather than typing, which is most of what showing it is for. */
 const myAnchor = ref(null);
 /* WHICH EXERCISE `myCode` BELONGS TO, and it is load-bearing rather than bookkeeping. The
- * emit that fills it is debounced, and an exercise whose starter code is empty never emits
+ * emit that fills it is paced, and an exercise whose starter code is empty never emits
  * at all - so on a fresh row this ref still holds the PREVIOUS one's text for a moment or
  * for good. Everything that stashes it has to know that, or it stashes the wrong exercise's
  * work and hands it back as this one's. */
@@ -1012,7 +1012,7 @@ watch(currentId, () => { myStep.value = 0; });
 
 /* Driving: every change goes with the position, because they change together - moving to an
  * exercise is also arriving at its starter code, and two messages would show one exercise's
- * prompt over another's buffer for as long as the second took to arrive. Already debounced
+ * prompt over another's buffer for as long as the second took to arrive. Already paced
  * inside the exercise component. */
 /* ONE EVENT CARRYING BOTH, and one send. They were two watchers on two refs, which meant a
  * caret change sent whatever text the debounce had last settled on - up to 300ms stale - and
@@ -1031,7 +1031,7 @@ function editorChanged({ code, cursor, anchor, step }) {
    * navigation, and was where an educator's fix went after remote control ended.
    *
    * ONE WRITER, HERE. Both editor components already report every change on this one
-   * debounced beat, and a second writer inside each of them would be the same record kept
+   * paced beat, and a second writer inside each of them would be the same record kept
    * two ways.
    *
    * AND NOT FOR SOMEBODY ELSE'S SESSION. `subject.watching` covers both a watched session
@@ -1059,13 +1059,54 @@ function editorChanged({ code, cursor, anchor, step }) {
     }
     return;
   }
-  /* The room, when the switch is on. Every keystroke, already debounced inside the exercise
+  /* The room, when the switch is on. Every keystroke, already paced inside the exercise
    * component - the same beat the drive above travels on, because it is the same thing being
    * watched from further away. */
   if (delivery.mine && sync.on) {
     pushEditor(current.value?.id ?? null, code, myCursor.value, myAnchor.value, step ?? 0);
+    lastPush = Date.now();
   }
 }
+
+/* ---- THE DEMONSTRATION, SENT AGAIN WHILE NOTHING IS BEING TYPED -------------
+ *
+ * A push is a moment: one that is lost is gone, and it used to be replaced only by the next
+ * keystroke. So a student whose wifi blinked while the educator wrote a line, and who came back
+ * after they stopped, sat looking at the old text until the educator happened to type again -
+ * measured in real browsers, never within fifteen seconds, three times out of three. Pressing
+ * Share on code already written showed the class nothing at all until the next keystroke, and
+ * write-then-press-then-talk is the ordinary way to use it.
+ *
+ * SO THE CURRENT STATE GOES AGAIN: once when sharing is confirmed on, and then whenever nothing
+ * has gone out for two seconds. Each push carries the whole buffer, so one arriving repairs
+ * everything missed before it - a lost push, a student who joined or reconnected mid-way, one who
+ * pressed Follow again. A student already holding it sees nothing happen: CodeEditor ignores a
+ * value equal to what it has.
+ *
+ * ASKED OF THE EXERCISE COMPONENT, NOT RESENT FROM `myCode`. That copy is only as current as the
+ * last report, and it belongs to whatever row reported last: on a slides row, or an exercise
+ * nobody has touched yet, it is still the previous exercise's buffer and must not be sent onto
+ * this one. The component on screen is the one place that knows what this row's buffer is, and on
+ * a row with no editor nothing answers, so nothing is sent.
+ *
+ * THE DELIVERER'S TAB ONLY. A control tab's editor holds one student's work, and `editorChanged`
+ * already refuses to push it. Costs one message to the room every two seconds while sharing is
+ * on and the educator is idle. */
+const RESEND_IDLE = 2000;
+const resend = ref(0);
+let lastPush = 0;
+let resending = null;
+const demonstrating = computed(() =>
+  !!(delivery.cohort && delivery.mine && sync.on && !controlSub.value));
+watch(demonstrating, on => {
+  clearInterval(resending); resending = null;
+  if (!on) return;
+  resend.value += 1;
+  resending = setInterval(() => {
+    if (Date.now() - lastPush >= RESEND_IDLE) resend.value += 1;
+  }, 500);
+});
+onBeforeUnmount(() => clearInterval(resending));
 
 /**
  * RUN AND CHECK, ON THE SCREENS THAT ARE WATCHING THIS ONE.
@@ -1092,7 +1133,7 @@ function editorChanged({ code, cursor, anchor, step }) {
  *
  * `sel` IS WHAT THE BUTTON WAS PRESSED AGAINST - the highlighted lines, or null for the
  * buffer. It comes from the component rather than from `myCursor`/`myAnchor` here, and that
- * is the point: those arrive on the editor's debounced beat, so an educator who highlights
+ * is the point: those arrive on the editor's beat, so an educator who highlights
  * four lines and presses Run in the same movement would relay the selection they had a beat
  * ago. The component knows exactly what its own press ran, and says so.
  */
@@ -1541,6 +1582,8 @@ watch(currentId, id => {
               :leader-at="followedPosition()?.title"
               :shared-name="control.sharing ? control.name : ''"
               :syncing="sync.on"
+              :sync-pending="sync.pending"
+              :sync-stuck="sync.stuck"
               :boarding="board.on"
               @end="endLiveHere" @leave="leaving = true" @follow-again="followAgainHere"
               @sync="setSync" @board="setBoard" />
@@ -1802,6 +1845,7 @@ watch(currentId, id => {
           :shared-anchor="syncedHere ? sync.anchor : null"
           :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
+          :resend="resend"
           @editor="editorChanged"
           @act="relayAct" />
 

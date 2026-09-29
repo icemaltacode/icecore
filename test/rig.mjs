@@ -1,7 +1,7 @@
 /* Real browsers, scripted, against the live site.
  *
  *   AWS_PROFILE=ice npm run test:rig -- [--label before] [--out results.json]
- *                                       [--only follow,cut,editor,share,draw]
+ *                                       [--only follow,cut,editor,start,dropout,share,draw]
  *
  * Phase 0c of LIVE-RELIABILITY.md. The synthetic classroom speaks the protocol, so it cannot see
  * the CLIENT's faults: a move recorded as sent while the socket was down, a Share editor button
@@ -40,7 +40,7 @@ const arg = (name, fallback) => {
 };
 const LABEL = String(arg('label', 'run'));
 const OUT = arg('out', null);
-const ONLY = String(arg('only', 'follow,cut,editor,share,draw')).split(',');
+const ONLY = String(arg('only', 'follow,cut,editor,start,dropout,share,draw')).split(',');
 const COURSE = 'icex-python-oney';
 const EXERCISE = 'Your First NumPy Array';   // topic 1.1.1's first exercise; its slides row is just before it
 
@@ -202,18 +202,68 @@ const rangeOf = page => page.evaluate(() => {
 /* An editor's text as the reader sees it, WITHOUT the other person's caret. That caret is a
  * widget inside the content carrying their name, so plain innerText on the student's side reads
  * "...Keith Vassallo..." and never equals the educator's. Line by line, with the widget cut out. */
+/* READ FROM THE EDITOR'S OWN STATE. CodeMirror draws only the lines near the viewport, so once a
+ * buffer is longer than the pane - and every run of this rig appends to the educator's draft -
+ * the DOM holds a window of it, and two panes of different heights hold different windows that
+ * never match. That read as the shared editor never catching up, on a run where every push had
+ * arrived. `cmTile` is CodeMirror's own back-pointer from the DOM (`findFromDOM` uses it; older
+ * releases called it `cmView`).
+ *
+ * The lines are only a fallback, and MARKED as one so that they can never agree: a comparison
+ * of two windows is a statement about scrolling, and must not pass for one about the channel. */
 const textOf = sel => {
   const root = document.querySelector(sel);
   if (!root) return null;
-  return [...root.querySelectorAll('.cm-line')].map(line => {
+  const view = root.cmTile?.root?.view || root.cmView?.rootView?.view;
+  if (view) return view.state.doc.toString();
+  return `[window ${Math.random()}]\n` + [...root.querySelectorAll('.cm-line')].map(line => {
     const copy = line.cloneNode(true);
     copy.querySelectorAll('.cm-peer').forEach(n => n.remove());
     return copy.textContent;
   }).join('\n');
 };
 const deckOf = page => page.frames().find(f => /\/slides\//.test(f.url()));
+/* THE SHARE EDITOR BUTTON, whatever it is saying. Phase 3 gave it two waiting labels, and a
+ * lookup by "editor" alone lost the button for exactly the moments being measured. */
+const SHARE = /editor|Starting|Stopping/i;
 const buttonText = page => page.evaluate(() =>
-  [...document.querySelectorAll('button.sync')].find(b => /editor/i.test(b.textContent))?.textContent.trim() || '');
+  [...document.querySelectorAll('button.sync')]
+    .find(b => /editor|Starting|Stopping/i.test(b.textContent))?.textContent.trim() || '');
+const shareButton = page => page.locator('button.sync', { hasText: SHARE });
+/** Share editor on or off, and wait for the button to say so. */
+async function sharing(on) {
+  const want = on ? 'Sharing editor' : 'Share editor';
+  if ((await buttonText(educator.page)) === want) return 0;
+  await press(shareButton(educator.page));
+  return until(async () => (await buttonText(educator.page)) === want, 10_000);
+}
+/** Both editors, as each reader sees them: the educator's own, and the student's copy of it. */
+const bothTexts = () => Promise.all([
+  educator.page.evaluate(textOf, '.one:not(.theirs) .cm-content'),
+  student.page.evaluate(textOf, '.one.theirs .cm-content'),
+]);
+const agree = async () => { const [a, b] = await bothTexts(); return a != null && a === b; };
+/* WHAT EACH SIDE SHOWED WHEN THEY DID NOT AGREE, and the last pushes either way on the wire. A
+ * bare "never caught up" says that something is wrong and nothing about what; this is the what. */
+const disagreement = async () => {
+  const [educatorShows, studentShows] = await bothTexts();
+  const tail = (frames, type) => frames.filter(f => f.m?.type === type).slice(-3)
+    .map(f => ({ seq: f.m.seq ?? null, origin: f.m.origin ?? null, at: f.m.at,
+                 code: String(f.m.code ?? '').slice(-160) }));
+  const screen = page => page.evaluate(() => ({
+    band: document.querySelector('.band')?.textContent.replace(/\s+/g, ' ').trim().slice(0, 160),
+    tabs: [...document.querySelectorAll('.tab')].map(t => t.textContent.trim()),
+    editors: document.querySelectorAll('.one').length,
+    row: document.querySelector('footer .muted')?.textContent?.trim(),
+  }));
+  const kinds = frames => frames.reduce((n, f) => ({ ...n, [f.m?.type]: (n[f.m?.type] || 0) + 1 }), {});
+  return { educatorShows: educatorShows?.slice(-160), studentShows: studentShows?.slice(-160),
+           same: educatorShows === studentShows,
+           educatorScreen: await screen(educator.page), studentScreen: await screen(student.page),
+           studentGot: kinds(wire.got), lastSent: tail(wire.sent, 'push'),
+           lastReceived: tail(wire.got, 'synced') };
+};
+const disagreements = [];
 
 /* CLICKS ARE DISPATCHED, NOT AIMED. In a narrow window the room panel floats over the footer,
  * and an aimed click lands on the chat box instead - which is a fact about hit-testing on one
@@ -289,6 +339,8 @@ async function setup() {
 }
 
 async function teardown() {
+  // `dropout` takes the student's network away; a run that failed inside it must not leave it so.
+  await student.page.context().setOffline(false).catch(() => {});
   await api('DELETE', `live/session?cohort=${encodeURIComponent(COHORT)}`).catch(() => {});
   await sleep(1000);
   const r = await ddb.send(new sdk.QueryCommand({
@@ -407,10 +459,7 @@ async function editor() {
   await next(educator.page);
   await followed('row', 10_000);
   await sleep(1000);
-  if (!/Sharing/.test(await buttonText(educator.page))) {
-    await press(educator.page.locator('button.sync', { hasText: 'Share editor' }));
-    await until(async () => /Sharing/.test(await buttonText(educator.page)), 10_000);
-  }
+  await sharing(true);
   const mark = wire.sent.length;
   const markGot = wire.got.length;
   const box = educator.page.locator('.one:not(.theirs) .cm-content').first();
@@ -432,32 +481,32 @@ async function editor() {
     typed.push({ began, stopped });
     // When typing stops: how long until the student's demonstration shows exactly what the
     // educator's editor shows. Null is "never caught up" within ten seconds.
-    const ms = await until(async () => {
-      const [a, b] = await Promise.all([
-        educator.page.evaluate(textOf, '.one:not(.theirs) .cm-content'),
-        student.page.evaluate(textOf, '.one.theirs .cm-content'),
-      ]);
-      return a != null && a === b;
-    }, 10_000);
+    const ms = await until(agree, 10_000);
+    if (ms == null) disagreements.push(await disagreement());
     converge.push({ ms, after: Date.now() - stopped });
     await sleep(2500);
   }
-  /* Push by push: when the student's tab received the text the educator's tab sent. */
+  /* Push by push: when the student's tab received the text the educator's tab sent.
+   *
+   * MATCHED ON THE NUMBER WHEN THERE IS ONE, and otherwise on the text AFTER the send. Phase 3
+   * resends an idle buffer every two seconds, so the same text goes out many times, and matching
+   * a resend against the first arrival of that text scored it as having arrived before it left. */
   const pushes = wire.sent.slice(mark).filter(f => f.m?.type === 'push');
   const synced = wire.got.slice(markGot).filter(f => f.m?.type === 'synced');
-  const firstGot = new Map();
-  for (const f of synced) if (!firstGot.has(f.m.code)) firstGot.set(f.m.code, f.t);
+  const arrivalOf = p => (Number.isInteger(p.m.seq)
+    ? synced.find(g => g.m.origin === p.m.origin && g.m.seq === p.m.seq)
+    : synced.find(g => g.m.code === p.m.code && g.t >= p.t));
   const lat = [];
   let lost = 0;
   for (const p of pushes) {
-    const t = firstGot.get(p.m.code);
-    if (t == null) lost += 1; else lat.push(t - p.t);
+    const g = arrivalOf(p);
+    if (g == null) lost += 1; else lat.push(g.t - p.t);
   }
   // Out of order: a push arriving after one the educator sent later.
   const order = new Map(pushes.map((p, i) => [p.m.code, i]));
   let disorder = 0, high = -1;
   for (const f of synced) {
-    const i = order.get(f.m.code);
+    const i = Number.isInteger(f.m.seq) ? f.m.seq : order.get(f.m.code);
     if (i == null) continue;
     if (i < high) disorder += 1;
     high = Math.max(high, i);
@@ -474,6 +523,8 @@ async function editor() {
   return { keystrokes: lines.reduce((n, l) => n + l.length + 1, 0), pushes: pushes.length,
            firstShownMs: spread(firstShown.filter(x => x != null)),
            updatesWhileTyping, lostPushes: lost, latencyMs: spread(lat), outOfOrder: disorder,
+           /* The Phase 3 bar: 95% of pushes on the student's screen within 300ms. */
+           within300: lat.length ? Math.round(100 * lat.filter(x => x <= 300).length / lat.length) : null,
            pauses: converge.length, neverCaughtUp: converge.filter(c => c.ms == null).length,
            catchUpMs: spread(converge.map(c => c.ms).filter(x => x != null)) };
 }
@@ -481,19 +532,88 @@ async function editor() {
 async function share() {
   const trials = [];
   for (let i = 0; i < 10; i++) {
-    const was = /Sharing/.test(await buttonText(educator.page));
+    const before = await buttonText(educator.page);
+    const was = before === 'Sharing editor';
+    const want = was ? 'Share editor' : 'Sharing editor';
     const markGot = wire.got.length;
-    await press(educator.page.locator('button.sync', { hasText: /editor/ }));
-    const own = await until(async () => /Sharing/.test(await buttonText(educator.page)) !== was, 5000);
+    await press(shareButton(educator.page));
+    /* TWO TIMES, because Phase 3 split them: when the button first MOVED (it says what it is
+     * waiting for), and when it said the new state for good (the server confirmed it). Before
+     * Phase 3 they are the same moment. */
+    const [moved, own] = await Promise.all([
+      until(async () => (await buttonText(educator.page)) !== before, 5000),
+      until(async () => (await buttonText(educator.page)) === want, 5000),
+    ]);
     const theirs = await until(async () => wire.got.slice(markGot)
       .some(f => f.m?.type === 'syncing' && f.m.on === !was), 5000);
-    trials.push({ own, theirs });
+    trials.push({ moved, own, theirs });
     await sleep(1500);
   }
   return { presses: trials.length,
-           didNothing: trials.filter(t => t.own == null).length,
+           didNothing: trials.filter(t => t.moved == null).length,
+           neverConfirmed: trials.filter(t => t.own == null).length,
            studentNeverTold: trials.filter(t => t.theirs == null).length,
+           movedMs: spread(trials.map(t => t.moved).filter(x => x != null)),
            buttonMs: spread(trials.map(t => t.own).filter(x => x != null)) };
+}
+
+/* SHARE PRESSED ON CODE THAT IS ALREADY WRITTEN, which is how it is used: write, press, talk.
+ * How long until the student's copy shows it, with nothing typed after the press. Before Phase 3
+ * nothing was sent until the next keystroke, so this measures a wait that only ended by typing. */
+async function start() {
+  const trials = [];
+  const box = educator.page.locator('.one:not(.theirs) .cm-content').first();
+  for (let i = 0; i < 3; i++) {
+    await sharing(false);
+    await sleep(800);
+    await box.focus();
+    await educator.page.keyboard.press('Control+End');
+    await educator.page.keyboard.press('Enter');
+    await educator.page.keyboard.type(`# written before sharing, ${i + 1}`, { delay: 20 });
+    await sleep(600);
+    await press(shareButton(educator.page));
+    const ms = await until(agree, 10_000);
+    if (ms == null) disagreements.push(await disagreement());
+    trials.push(ms);
+    await sleep(1500);
+  }
+  return { presses: trials.length, neverShown: trials.filter(t => t == null).length,
+           shownMs: spread(trials.filter(t => t != null)) };
+}
+
+/* THE STUDENT'S NETWORK GOES MID-DEMONSTRATION, the educator writes a line while it is gone and
+ * stops, and then it comes back. How long after it comes back until the student's copy matches.
+ * Before Phase 3 nothing sent that line again until the educator next typed. */
+async function dropout() {
+  await sharing(true);
+  const box = educator.page.locator('.one:not(.theirs) .cm-content').first();
+  const trials = [];
+  for (let i = 0; i < 3; i++) {
+    await until(agree, 10_000);
+    const opened = wire.opened.filter(o => o.who === 'student').length;
+    /* Offline the way the browser means it: the emulated network AND the event live.js listens
+     * for, so the socket is dropped the moment the network goes, as it is on a real laptop. */
+    await student.page.context().setOffline(true);
+    await student.page.evaluate(() => dispatchEvent(new Event('offline')));
+    await sleep(500);
+    await box.focus();
+    await educator.page.keyboard.press('Control+End');
+    await educator.page.keyboard.press('Enter');
+    await educator.page.keyboard.type(`# typed while a student was offline, ${i + 1}`, { delay: 60 });
+    await sleep(1000);
+    await student.page.context().setOffline(false);
+    await student.page.evaluate(() => dispatchEvent(new Event('online')));
+    const t0 = Date.now();
+    const back = await until(async () => wire.opened.filter(o => o.who === 'student').length > opened, 15_000);
+    const ms = await until(agree, 15_000);
+    if (ms == null) disagreements.push(await disagreement());
+    trials.push({ reconnectedMs: back, caughtUpMs: ms == null ? null : Date.now() - t0 });
+    await sleep(1500);
+  }
+  return { trials: trials.length,
+           neverCaughtUp: trials.filter(t => t.caughtUpMs == null).length,
+           reconnectedMs: spread(trials.map(t => t.reconnectedMs).filter(x => x != null)),
+           caughtUpMs: spread(trials.map(t => t.caughtUpMs).filter(x => x != null)) };
 }
 
 async function draw() {
@@ -585,10 +705,10 @@ async function draw() {
 }
 
 // ---------------------------------------------------------------- run
-const SCENARIOS = { follow, cut: cutThenMove, editor, share, draw };
+const SCENARIOS = { follow, cut: cutThenMove, editor, start, dropout, share, draw };
 try {
   await setup();
-  for (const name of ['follow', 'cut', 'editor', 'share', 'draw']) {
+  for (const name of ['follow', 'cut', 'editor', 'start', 'dropout', 'share', 'draw']) {
     if (!ONLY.includes(name)) continue;
     console.log(`-- ${name}`);
     try {
@@ -598,6 +718,13 @@ try {
     }
     console.log(JSON.stringify(results.scenarios[name]));
   }
+  /* WHAT THE RELAY CARRIES, read off the student's wire: whether pushes arrive numbered (Phase 3,
+   * step 10) and rosters say when each position was written (step 14). */
+  const got = wire.got.map(f => f.m).filter(Boolean);
+  results.pushesNumbered = `${got.filter(m => m.type === 'synced' && Number.isInteger(m.seq)).length}`
+    + ` of ${got.filter(m => m.type === 'synced').length}`;
+  results.rosterSaysWhen = got.some(m => m.type === 'roster' && (m.here || []).some(c => c.posAt));
+  if (disagreements.length) results.disagreements = disagreements.slice(0, 6);
   results.educatorSocketsLost = wire.closes.filter(c => c.who === 'educator').length;
   results.educatorSocketsOpened = wire.opened.filter(o => o.who === 'educator').length;
 } catch (e) {

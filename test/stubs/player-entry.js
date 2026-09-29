@@ -20,7 +20,7 @@ export * as delivery from '../../app/src/delivery.js';
  * to change what the stand-in will answer next. That is what makes "the class is told when
  * the list changes" checkable at all: without it the list is a constant, and a test that a
  * re-read happened could only assert that nothing changed. */
-export { previewRole, stopPreviewRoom, previewApi } from '../../app/src/preview.js';
+export { previewRole, stopPreviewRoom, previewApi, previewHold } from '../../app/src/preview.js';
 export { session, restore, startSession } from '../../app/src/auth.js';
 /* WHERE PYTHON IS FETCHED FROM, which only the BUILT app can answer: it is composed from
  * `import.meta.env.BASE_URL` and the installed Pyodide version, and neither exists in a plain

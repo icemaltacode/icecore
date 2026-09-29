@@ -920,8 +920,9 @@ Don't re-strip it.
 
 ## Tests
 
-`npm test` is the whole local suite and takes about six seconds: `setup-checks`, `csv`,
-`walk`, `relay`, `parts`, `room`, `player` and the rest. `test:python` (real Pyodide, minutes)
+`npm test` is the whole local suite and takes under a minute: `setup-checks`, `csv`,
+`walk`, `beat`, `relay`, `parts`, `room`, `player`, `educator` and the rest. Most of that is
+`player` and `educator`, which build the app and then wait out the live channel's real timers. `test:python` (real Pyodide, minutes)
 and `test:live` (real AWS, typed credentials) are deliberately out of it and run by name.
 
 **The live channel is measured, not assumed.** `test:classroom` plays a lesson's traffic through
@@ -929,6 +930,8 @@ the real API Gateway and Lambda with forged tickets and counts what each synthet
 receives; `test:rig` drives the real player in two signed-in debug Chromiums (ports 9222 and
 9223). Both run against production, both refuse to start during a real lesson, and both clean up
 after themselves. See LIVE-RELIABILITY.md, Phase 0, for what each measures and the numbers.
+`educator.mjs` is the delivering tab's half in a build: the Share editor button, what it sends
+and when, with preview's echo withheld (`previewHold`) to make a room that does not answer.
 
 **Nothing in this repo executed the app until `test/harness.mjs` existed**, and it cost a
 day: `nextTick` was never imported so every `applied()` threw and following only *appeared*
@@ -983,11 +986,12 @@ debugging browser to find.
   InvalidCharacterError on plain ASCII, `performance.now` as a stack overflow); and jsdom's
   timers stop when the window closes, so a test awaiting anything after `restore()` hangs
   forever.
-- **What is NOT covered, so nobody assumes it is:** anything that *sends*. `send()` drops
-  silently with no socket — the honest behaviour for a channel, and the state a preview run
-  is in — so `report()`'s payload is not observable from here. `test/live.mjs` covers the
-  server's side of those messages against a real socket. And where a follower lands *inside*
-  a slide range is the frame's own hash, which jsdom has no history to push.
+- **What is NOT covered, so nobody assumes it is:** what the SERVER does with a send. `send()`
+  still drops with no socket, which is the state a preview run is in, but `live.js`'s `outbox`
+  records every message it would have put on the wire, so a test can assert what a tab sends
+  and when (`report()`'s payload, the Share editor button's asks, the idle resend). What the
+  Lambda does with them is `test/live.mjs`'s, against a real socket. And where a follower lands
+  *inside* a slide range is the frame's own hash, which jsdom has no history to push.
 - **jsdom is a devDependency and that is safe.** npm installs a git dependency's devDeps only
   when it has a `prepare` script; this package has none, so a course repo's `npm ci` never
   sees it.

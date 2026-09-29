@@ -8,7 +8,8 @@ reconnects. After that it makes the shared editor, and then the rest of the chan
 a message lost for any other reason, so that one dropped message can never again leave a student
 behind.
 
-Status: **Phases 0, 1 and 2 are built, deployed and measured** (2026-09-29). Phases 3 and 4 are not started. Diagnosed on 2026-09-29 from the live function's logs and
+Status: **Phases 0 to 3 are built, deployed and measured** (2026-09-29). Phase 4 is not
+started. Diagnosed on 2026-09-29 from the live function's logs and
 metrics, during a lesson, without touching the deployment. Keith confirmed two things since:
 the stalls he saw that morning fell in the stretch the logs show failing, and he writes by hand
 on slides in most lessons and has seen the "Connection lost" band flash just after a stroke.
@@ -239,8 +240,8 @@ times in every run, by the cut scenario, and by nothing else.
 | Share editor pressed and nothing happened | **4 of 10** | **0 of 10** (85ms) | 0 of 10 |
 | Share on, but the educator's tab sent no keystrokes | **yes** | no | no |
 | Student's copy of the editor never caught up after a pause | **4 of 4** | **0 of 4** | 0 of 4 |
-| A typed line first reaches the student after | 4.8s | 4.7s | 4.8s (Phase 3, step 12) |
-| Updates the student sees while a line is being typed | 0 | 0 | 0 (Phase 3, step 12) |
+| A typed line first reaches the student after | 4.8s | 4.7s | 4.8s (0.12s after Phase 3, below) |
+| Updates the student sees while a line is being typed | 0 | 0 | 0 (25 to 45 after Phase 3) |
 | Largest annotation frame sent | 89KB | 89KB | **26.8KB**, in parts |
 | Snapshots over 32KB that reached the student whole | **0 of 7** | 0 of 7 | **12 of 12** |
 | Annotation frames that reached the student | 271 of 356 | 349 of 356 | **429 of 429** |
@@ -263,6 +264,53 @@ which passes through a Python exercise; it is recorded rather than explained awa
 The route that carries parts shipped with Phase 1's deploy, inert until a client sends parts.
 The Lambda records API Gateway's cut of an oversized sender as **1006** "Connection closed
 abnormally", not the 1009 the client sees, so that is the code to look for in a lesson's log.
+
+**Phase 3, in real browsers.** The rig gained two scenarios for it: `start` presses Share on code
+already written and waits for the student's copy to match, and `dropout` takes the student's
+network away while the educator writes a line, brings it back, and waits for the two to match.
+Run with the same 8-student synthetic classroom alongside. After the deploy, every scenario was
+run, not only these, because step 14 changed how a follower applies a move.
+
+| | Before Phase 3 | After Phase 3 |
+|---|---|---|
+| A typed line first reaches the student after (p50) | **4.75s** | **0.12s** |
+| Updates the student sees while a line is being typed | **0** (4 pushes for 143 keystrokes) | **25 to 45** a line (160 pushes) |
+| Pushes on the student's wire within 300ms of leaving | 100% (p50 97ms) | 100% (p50 89ms, p95 110ms, 0 lost, 0 out of order) |
+| The two copies match after typing stops | 4 of 4, in 152ms | 4 of 4, in 7ms |
+| Share pressed on code already written, shown to the student | **never** (see below) | **3 of 3, in 0.18s** |
+| Student offline while a line was written, caught up after coming back | **never** (see below) | **3 of 3, 1.2s** after the network returned |
+| Share editor button moved when pressed | 86ms (only on the answer) | **4ms** ("Starting…"), confirmed in 93ms, 0 of 10 failed |
+| Moves followed / Next during a reconnection / snapshots whole | | 22 of 22 / 6 of 6 / 12 of 12, as after Phase 2 |
+| Pushes arriving numbered; rosters saying when | | 214 of 214; yes |
+
+**The rig misread two of the before numbers, and the first after run.** It compared the two
+editors' text as drawn on the page, and CodeMirror draws only the lines near the viewport. Every
+run of the rig appends to the educator's draft, so by this phase the buffer was longer than
+either pane, and the two panes, of different heights, held different windows of it: the first
+after run reported "never caught up" on every comparison while every push had arrived and the
+student's last 160 characters equalled the educator's. It reads each editor's whole document
+from CodeMirror's own state now, and a fallback to the drawn lines can never compare equal.
+The "never" for `start` and `dropout` before Phase 3 is therefore not a browser measurement.
+It is still what that code did: it sent nothing after a Share press or after a student
+reconnected until the educator next typed, and the new checks in `test/educator.mjs`, run
+against it, saw no push after the press and none after 2.7 idle seconds. The editor comparison
+before (152ms) was a real match. The rows that do not compare text are unaffected.
+
+**One synthetic student went silent** in the 14-minute load run beside the after run: from about
+two minutes in it received nothing, its heartbeat went unanswered, and its socket never closed.
+The Lambda's log shows why without saying so: that connection closed at the end as `unknown`,
+meaning its row had been deleted while API Gateway still held the socket open, and the only
+thing that deletes a live connection's row is `emit` receiving `GoneException` for it, which it
+treats as routine and does not log. A 5-minute rerun alongside six cuts of the educator's socket,
+now recording when each student's row disappears, lost nothing. Not caused by this phase (its
+Lambda change only adds two fields to a push, and the synthetic students do not run the app). A
+real browser in that state gets no pong and reconnects within about 65 seconds, then catches up
+through step 11; the harness never reconnects, so it stayed silent. Open question 3.
+
+What this phase did not measure on the deployment is the Share button's give-up path: four
+unanswered asks, the warning, and `probe()` replacing a half-open socket. A room that does not
+answer cannot be made on demand against the real Lambda; `test/educator.mjs` covers it in a
+build, and `?hold=sync` shows it under `icecore dev --as admin`.
 
 ## Phase 1: stop the drops
 
@@ -457,6 +505,27 @@ whole at the other socket, and the sender's socket is still open afterwards.
 ## Phase 3: a shared editor that heals itself
 
 The Lambda goes first, then the app. Every change is additive on the wire.
+
+**As built**, where it differs from the steps below:
+- **Step 11 asks the exercise component for its buffer** (a `resend` counter prop) rather than
+  resending App.vue's copy after checking `myAt` against `currentId`. It is the same rule,
+  enforced by construction: only the component on screen can answer, a slides row has none, and
+  an exercise nobody has touched yet still answers with its starter, which the `myAt` check
+  would have refused to send at all.
+- **Step 12's first send goes on the next tick**, not synchronously. One keystroke is two events
+  (the text, then the caret), and sent on the first every keystroke would go out twice, the
+  first copy with the old caret.
+- **Step 13 checks the socket when it gives up.** Four unanswered asks on a socket that reads
+  open is the half-open socket the heartbeat takes a minute to notice, so `probe()` in live.js
+  pings it and replaces it if nothing comes back within 4 seconds; the reopened socket's roster
+  then asks again. A `syncing` this tab did not ask for (another of the educator's tabs, or an
+  older request landing late) is adopted as the new intent rather than argued with, so two tabs
+  cannot re-assert at each other.
+- **Step 15's second check already existed** in test:live. It gained the stamp check and a
+  check that the roster says when each position was written.
+- **Tests:** `test/beat.mjs`, `test/educator.mjs` (the delivering tab, an admin build) and new
+  checks in `test/player.mjs`. Every new check was run against the code before this phase and
+  failed there.
 
 ### 10. Number every push
 
@@ -692,11 +761,14 @@ filter @message like /\tclosed / | parse @message /closed (?<role>\S+) (?<code>\
     still does.
   - Every Next and Previous moves the student, including one pressed straight after a stroke
     and one pressed while the educator's wifi is switched off and back on.
-- **Phase 3:**
+- **Phase 3** (all three met on 2026-09-29, see Results):
   - In the rig, 95% of pushes reach the student's screen within 300ms of leaving the educator's.
+    *100%, p95 110ms.*
   - After typing stops, the two texts match within 2 seconds, every time. That includes a
-    student whose wifi is switched off and back on mid-demonstration.
+    student whose wifi is switched off and back on mid-demonstration. *4 of 4 in 7ms; 3 of 3
+    within 1.2s of the network returning.*
   - The Share editor button either confirms within a second or says what it is waiting for.
+    *Moves in 4ms, confirmed in 93ms.*
 - **Phase 4:**
   - The player tests pass.
   - The logs show the light roster costing what the estimate says.
@@ -747,3 +819,8 @@ filter @message like /\tclosed / | parse @message /closed (?<role>\S+) (?<code>\
 1. **The alarm threshold.** It starts at 10 failures in 5 minutes.
 2. **The intervals.** A 2-second resend, a 30-second roster and a 100ms beat are judgement calls.
    Each is a single constant, to be tuned against the rig and the logs.
+3. **A row deleted under a live socket.** Seen once (Phase 3 results). Two small Lambda changes
+   would make it visible and short: log every row `emit` deletes on `GoneException`, with the
+   message type; and when a message arrives from a connection with no row, close that socket
+   (`DeleteConnection`) rather than ignoring it, so the browser reconnects within one heartbeat
+   (20 seconds) instead of waiting out three (about 65).

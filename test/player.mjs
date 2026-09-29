@@ -164,6 +164,35 @@ moved('103', 'Third');
 await settle();
 check('and keeps following as they move on', at() === '4 / 4', at());
 
+/* ---- MOVES IN ORDER, BY THE SERVER'S CLOCK ----------------------------------
+ *
+ * Every move is its own concurrent invocation, so two quick presses of Next can reach a student
+ * the wrong way round, and applied as they came the class is left one slide behind. The Lambda
+ * stamps each with `at`, and the newest is where the educator is.
+ *
+ * STAMPED BETWEEN THE LAST MOVE AND NOW. `moved()` above stamps the present, so a time further
+ * back than the last one it sent is older than that move and rightly ignored; and a time in the
+ * future would make every move this file sends afterwards look old.
+ */
+{
+  await settle(300);
+  const ago = ms => new Date(Date.now() - ms).toISOString();
+  const place = (exercise, title) => ({ exercise, title, slide: null });
+  player.emitLocal({ type: 'moved', sub: tutor.sub, position: place('102', 'Second'), at: ago(100) });
+  player.emitLocal({ type: 'moved', sub: tutor.sub, position: place('103', 'Third'), at: ago(200) });
+  await settle();
+  check('a move that arrives after a newer one does not walk the class back', at() === '3 / 4', at());
+  /* A ROSTER IS READ AT ONE MOMENT and can land after a move made a moment later. */
+  player.emitLocal({ type: 'roster', members: [],
+                     here: [{ ...tutor, position: place('103', 'Third'), posAt: ago(270) }] });
+  await settle();
+  check('nor does a roster read before the newest move', at() === '3 / 4', at());
+  player.emitLocal({ type: 'roster', members: [],
+                     here: [{ ...tutor, position: place('103', 'Third'), posAt: ago(0) }] });
+  await settle();
+  check('but a roster newer than it does move them', at() === '4 / 4', at());
+}
+
 /* ---- A MOVE COUNTS ONLY ONCE IT HAS GONE -----------------------------------
  *
  * `report()` recorded a position as reported and THEN sent it, ignoring the answer - so a move
@@ -418,6 +447,37 @@ check('a drive that moves them to another exercise carries its code with it',
   await settle(300);
   check('and now Run reaches the class, not only the tab it was pressed in', reached(),
         text().slice(-240));
+
+  /* ---- THE NEWEST PUSH WINS, NOT THE LAST TO ARRIVE ------------------------
+   *
+   * Each push is its own concurrent invocation, so an older one can land after a newer one - and
+   * each carries the whole buffer, so applied last it leaves older code on thirty screens once the
+   * educator stops typing. The sending tab numbers them; a number means something only beside
+   * the tab that counted it.
+   */
+  {
+    const push = (code, stamp = {}) => player.emitLocal({
+      type: 'synced', at: '101', code, cursor: null, anchor: null, step: 0,
+      when: new Date().toISOString(), ...stamp });
+    push('SELECT the_fifth_push;', { origin: 'tab-a', seq: 5 });
+    await settle(200);
+    push('SELECT the_fourth_push;', { origin: 'tab-a', seq: 4 });
+    await settle(200);
+    check('an older push arriving late does not replace a newer one',
+          anyEditor().includes('the_fifth_push') && !anyEditor().includes('the_fourth_push'),
+          anyEditor());
+    push('SELECT from_before_the_deploy;');
+    await settle(200);
+    check('a push with no number is applied, as an educator tab from before this sends',
+          anyEditor().includes('from_before_the_deploy'), anyEditor());
+    push('SELECT from_a_reloaded_tab;', { origin: 'tab-b', seq: 1 });
+    await settle(200);
+    check('a push from a new tab is applied whatever its number',
+          anyEditor().includes('from_a_reloaded_tab'), anyEditor());
+    // And the demonstration the rest of this file expects, back on screen.
+    push(SHOWN, { origin: 'tab-b', seq: 2 });
+    await settle(200);
+  }
 
   player.emitLocal({ type: 'syncing', on: false });
   await settle(200);

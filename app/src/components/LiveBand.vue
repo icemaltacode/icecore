@@ -61,6 +61,13 @@ const props = defineProps({
    * a student it is why their editor has gone read-only. Two props would be two chances for
    * the switch to say one thing and the class to be doing another. */
   syncing: Boolean,
+  /* WHAT THE EDUCATOR ASKED FOR AND THE ROOM HAS NOT YET CONFIRMED - true, false, or null when
+   * nothing is outstanding. See `sync.pending` in delivery.js. The switch shows this over
+   * `syncing`, so it moves when pressed and says it is waiting, rather than sitting unchanged
+   * until an answer that may have been lost. */
+  syncPending: { type: Boolean, default: null },
+  /** The room did not answer the switch, and asking has been given up on. */
+  syncStuck: Boolean,
 });
 const emit = defineEmits(['end', 'leave', 'follow-again', 'sync', 'board']);
 
@@ -106,6 +113,20 @@ const away = computed(() => channel.lost && channel.status !== 'open');
  * them, and the second is the one they can do nothing about. */
 const alone = computed(() => !props.mine && !props.following && !away.value);
 
+/* THE SWITCH SAYS WHAT WAS ASKED FOR, and that it is waiting, until the room answers. A second
+ * press before then reverses the first rather than repeating it: it emits the opposite of what
+ * the switch is SHOWING, which is what the educator is looking at when they press it. */
+const sharing = computed(() => props.syncPending ?? props.syncing);
+const shareLabel = computed(() => {
+  if (props.syncPending === true) return 'Starting…';
+  if (props.syncPending === false) return 'Stopping…';
+  return props.syncing ? 'Sharing editor' : 'Share editor';
+});
+
+/* THE ROOM DID NOT ANSWER, and a dropped connection outranks it: that band already says why, and
+ * says it louder. */
+const stuck = computed(() => props.mine && props.syncStuck && !away.value);
+
 /* Through a function rather than `pointing = !pointing` in the template. An IMPORTED binding
  * is a maybe-ref to the compiler: it unwraps one for reading and cannot assign through one,
  * so the template spelling compiles without complaint and throws when the button is pressed -
@@ -114,7 +135,7 @@ const togglePointing = () => { pointing.value = !pointing.value; };
 </script>
 
 <template>
-  <div class="band" :class="{ away, alone }" role="status" aria-live="polite">
+  <div class="band" :class="{ away, alone, stuck }" role="status" aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
 
     <!-- IT REPLACES THE SENTENCE RATHER THAN APPENDING TO IT. This was an aside on the end of
@@ -129,6 +150,17 @@ const togglePointing = () => { pointing.value = !pointing.value; };
         Nothing is lost.</span>
       <span class="sub" v-else>You are still in {{ session?.name || 'your educator' }}’s
         lesson. Nothing you have done is lost.</span>
+    </span>
+
+    <!-- IN PLACE OF THE SENTENCE, for the reason the dropped connection is: a `.sub` line is
+         grey, and hidden under 720px. By the time this shows, the switch has been asked four
+         times over six seconds on a socket that looked open, and the socket is being checked -
+         if it is dead, the band turns into "Connection lost" within seconds and the switch is
+         asked for again when it comes back. If it is alive, pressing again is the thing to do. -->
+    <span v-else-if="stuck" class="what">
+      The class did not answer Share editor.
+      <span class="sub">Press it again. If it still does not answer, reload this page; the
+        lesson carries on.</span>
     </span>
 
     <span v-else class="what">
@@ -186,13 +218,16 @@ const togglePointing = () => { pointing.value = !pointing.value; };
          one student lives, is about people one at a time. It is a toggle rather than a
          press-and-hold: a demonstration lasts as long as the explanation does, and holding a
          button through it is not a thing anyone can do while also teaching. -->
-    <button v-if="mine" class="btn ghost sync" :class="{ on: syncing }" type="button"
-            :title="syncing
-              ? 'Your editor is on the class\'s screens. Their own work comes back when you stop.'
-              : 'Show the class what you type, in their own editors.'"
-            @click="emit('sync', !syncing)">
+    <button v-if="mine" class="btn ghost sync" :class="{ on: sharing, waiting: syncPending !== null }"
+            type="button" :aria-busy="syncPending !== null"
+            :title="syncPending !== null
+              ? 'Waiting for the class to confirm. Press again to change your mind.'
+              : syncing
+                ? 'Your editor is on the class\'s screens, in a tab of their own.'
+                : 'Show the class what you type, in a tab beside their own work.'"
+            @click="emit('sync', !sharing)">
       <Icon name="edit" :size="14" />
-      {{ syncing ? 'Sharing editor' : 'Share editor' }}
+      {{ shareLabel }}
     </button>
     <!-- BESIDE Share editor, because it is the same kind of thing: something an educator
          does to the ROOM rather than to one person. A board is not a place the class is sent
@@ -274,6 +309,12 @@ const togglePointing = () => { pointing.value = !pointing.value; };
              color: var(--ice-warn); }
 .band.away .dot { background: var(--ice-warn-line); animation: none; }
 .band.away .sub { color: var(--ice-warn); opacity: .85; }
+/* The switch that was not answered: the same colours, because it is the same kind of news - the
+   room is not hearing you - and one vocabulary for it is easier to read at a glance than two. */
+.band.stuck { background: var(--ice-warn-fill); border-bottom-color: var(--ice-warn-line);
+              color: var(--ice-warn); }
+.band.stuck .dot { background: var(--ice-warn-line); animation: none; }
+.band.stuck .sub { color: var(--ice-warn); opacity: .85; }
 /* On rather than pressed: it stays until it is switched back, so it wears the state
    colour rather than a click's. The caret's own colour, and deliberately - the accent moving
    in a student's editor and the switch that put it there are the same event seen from the two
@@ -281,10 +322,13 @@ const togglePointing = () => { pointing.value = !pointing.value; };
 .sync { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .sync.on { background: var(--ice-drive-fill); border-color: var(--ice-drive-line);
            color: var(--ice-fg); }
+/* Asked for and not yet confirmed: the state it is heading to, held back a little. It is usually
+   on screen for a tenth of a second, so it has to read as "not yet" without being a flash. */
+.sync.waiting { opacity: .7; }
 .clock { font-family: var(--ice-font-mono); font-variant-numeric: tabular-nums;
          font-size: 12px; color: var(--ice-fg-muted); }
 /* Except the one that says they are still in the lesson: that sentence is the difference
    between "reconnecting" and "you have been thrown out", and it is worth a second line on a
    small screen. */
-@media (max-width: 720px) { .sub { display: none; } .band.away .sub { display: block; } }
+@media (max-width: 720px) { .sub { display: none; } .band.away .sub, .band.stuck .sub { display: block; } }
 </style>

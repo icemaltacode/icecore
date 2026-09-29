@@ -57,6 +57,7 @@
  * say so: `room` needs the session, `driven` needs the control.
  */
 import { clean } from './svgclean.js';
+import { TAB } from './tab.js';
 
 const MESSAGE = 'ice:deck-sync';
 /* A CEILING ON THE MESSAGE, and it is a backstop rather than a working limit.
@@ -109,9 +110,7 @@ const SETTLE = 600;
  * every frame as its own concurrent invocation and imposes no order on them, so the wire
  * cannot be trusted to deliver a stroke in the order it was drawn. The counter is per tab
  * because an educator's room tab and their control tab are two senders that know nothing of
- * each other, and `origin` is random rather than derived from the sub for the same reason -
- * plus it then says nothing about anybody. */
-const ORIGIN = Math.random().toString(36).slice(2, 12);
+ * each other - see tab.js, which the shared editor's pushes are numbered against too. */
 let seq = 0;
 
 /* KEYED BY WHAT A CHANNEL IS, NOT BY WHAT IT IS CALLED.
@@ -271,7 +270,7 @@ function within(channel, patch) {
  * is the other half of that, for the frames nothing local can know were lost.
  */
 function put(channel, patch) {
-  return out(channel, patch, audience(), { origin: ORIGIN, seq: ++seq }) !== false;
+  return out(channel, patch, audience(), { origin: TAB, seq: ++seq }) !== false;
 }
 
 function flush() {
@@ -335,8 +334,8 @@ function fromDeck(e) {
  * `import.meta.env` Node cannot evaluate - which would put the policy above out of reach of
  * any test that did not build the whole player.
  *
- * So this file imports NOTHING BUT `svgclean.js`, which is of the same kind as this one -
- * pure, dependency-free, no `import.meta.env` - and so costs the property nothing.
+ * So this file imports NOTHING BUT `svgclean.js` and `tab.js`, which are of the same kind as
+ * this one - pure, dependency-free, no `import.meta.env` - and so cost the property nothing.
  */
 export function watchDecks(whoFor, send) {
   audience = whoFor;

@@ -19,9 +19,11 @@
  */
 import { reactive } from 'vue';
 import { api, session } from './auth.js';
-import { previewRole, previewRoom, stopPreviewRoom, previewSummaryRows } from './preview.js';
-import { open as openChannel, close as closeChannel, on, send, emitLocal, simulateLoss } from './live.js';
+import { previewRole, previewRoom, stopPreviewRoom, previewSummaryRows, previewHold } from './preview.js';
+import { open as openChannel, close as closeChannel, on, send, emitLocal, simulateLoss, probe }
+  from './live.js';
 import { applyDeck } from './decksync.js';
+import { TAB } from './tab.js';
 
 /**
  * The session this tab is in, if any. `mine` is whether we are the one delivering: an admin
@@ -149,14 +151,27 @@ export const pointer = reactive({ region: null, x: 0, y: 0 });
  * `when` changes on every push so a watcher fires on the MESSAGE rather than the text, for
  * `driven.at`'s reason: typing a character back to what it was is still somebody typing.
  */
+/* `pending` IS WHAT THIS TAB HAS ASKED FOR AND NOT YET SEEN CONFIRMED - true, false, or null
+ * when it is waiting on nothing. The switch shows `pending ?? on`, so it moves the moment it is
+ * pressed and says it is waiting; it used to sit unchanged until the room's answer arrived, and
+ * when that answer was lost it never moved at all, which read as a button that did nothing.
+ * `stuck` is set when asking has been given up on, for the band to say so. See `setSync`. */
 export const sync = reactive({ on: false, at: null, code: null, cursor: null, anchor: null,
-                               step: 0, when: null });
+                               step: 0, when: null, pending: null, stuck: false });
+
+/* WHAT THIS TAB LAST ASKED FOR: true, false, or null until it has pressed the switch at all.
+ *
+ * Module scope, because it has to outlive the socket - which is the whole of what it is for: a
+ * roster that disagrees with it, after a reconnection, gets it asked for again. Null in a tab
+ * that has never pressed, so a freshly loaded one adopts whatever the room already has rather
+ * than imposing an opinion it never had. It was `demonstrating`, and only ever put sharing back
+ * ON; turning it off is a decision exactly as much as turning it on. */
+let intent = null;
+
+/* THE NEWEST PUSH HEARD, by the tab that sent it - see `synced`. */
+let heardPush = { origin: null, seq: -1 };
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
-/* Whether this client has asked for its editor to be on the room's screens. Module scope,
- * because it has to outlive the socket - which is the whole of what it is for. */
-let demonstrating = false;
-
 export const live = reactive({ running: {}, loading: false });
 
 /**
@@ -233,7 +248,10 @@ export function forget() {
   sync.on = false; sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null;
   sync.step = 0; sync.when = null;
   // The intention goes with the session it was about, or the next lesson starts demonstrating.
-  demonstrating = false;
+  intent = null;
+  settled();
+  sync.stuck = false;
+  heardPush = { origin: null, seq: -1 };
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -379,8 +397,23 @@ const HANDLERS = {
      * not be read as being over. */
     if (m.session === false) { emitLocal({ type: 'ended' }); return; }
     room.members = m.members || [];
+    const before = room.here;
     room.here = {};
     for (const c of m.here || []) { add(c); record(c.sub, c.mark); }
+    /* A ROSTER CAN BE OLDER THAN A MOVE ALREADY HEARD. It is read from the table at one moment
+     * and can arrive after a `moved` sent a moment later, and applied as it stands it walks a
+     * following student back to where the educator was. Where this client holds a position
+     * that is newer than the roster's, it keeps it. Both times are the Lambda's own clock.
+     *
+     * Only when the roster says when: an older deployment omits `posAt`, and then the roster
+     * is the better guess, as it always was. */
+    for (const [sub, p] of Object.entries(room.here)) {
+      const was = before[sub];
+      if (was?.posAt && p.posAt && p.posAt < was.posAt) {
+        p.position = was.position;
+        p.posAt = was.posAt;
+      }
+    }
     /* Only when the roster says something about it. `control` is absent from a roster sent
      * by an older deployment and null from one where nobody is being driven, and the two
      * must not be the same thing here - clearing on absence would drop a live control every
@@ -388,7 +421,13 @@ const HANDLERS = {
     if ('control' in m) setControl(m.control);
     // Same rule for the same reason: absent from an older deployment, false from a room
     // where nothing is being shown, and the two must not be one thing here.
-    if ('sync' in m) sync.on = !!m.sync;
+    if ('sync' in m) {
+      sync.on = !!m.sync;
+      /* The roster is the authoritative read of the flag, so it confirms what was asked for as
+       * well as a `syncing` would: the write landed, and it was the answer that got lost. */
+      if (sync.pending === sync.on) settled();
+      if (intent === sync.on) sync.stuck = false;
+    }
 
     /* AND A DEMONSTRATION IS PUT BACK, which `control` has always done and this never did.
      *
@@ -405,8 +444,15 @@ const HANDLERS = {
      * stays as it is - this is the other half of it rather than a softening.
      *
      * AFTER THE ROSTER RATHER THAN ON OPEN, because the roster is the authoritative read of
-     * the flag: sending on open would race its own answer and could be overwritten by it. */
-    if (delivery.mine && demonstrating && !sync.on) send('sync', { on: true });
+     * the flag: sending on open would race its own answer and could be overwritten by it.
+     *
+     * BOTH WAYS NOW. It only ever put sharing back on; a Stop pressed while the socket was
+     * between connections was discarded, and the room went on being shown the editor. Asked
+     * through `request`, so it is confirmed and retried like a press. */
+    if ('sync' in m && delivery.mine && intent !== null && sync.on !== intent
+        && sync.pending !== intent) {
+      request(intent);
+    }
   },
   joined(m) { add(m.who); },
   /* MERGED, never replaced. A roster answers "what is everybody doing now" and carries one
@@ -418,18 +464,46 @@ const HANDLERS = {
     if (!p) return;
     if (--p.conns <= 0) delete room.here[m.sub];
   },
+  /* IN ORDER, BY THE SERVER'S CLOCK. Each move is its own concurrent invocation, so two quick
+   * presses of Next can arrive the wrong way round, and applied as they came the class is left
+   * one slide behind. The Lambda stamps every move with `at` and refuses to write one older than
+   * the last (see `active` there), so the newest `at` is the true position. */
   moved(m) {
     const p = room.here[m.sub];
-    if (p) { p.position = m.position; p.seen = m.at; }
+    if (!p) return;
+    if (p.posAt && m.at && m.at < p.posAt) return;
+    p.position = m.position;
+    p.seen = m.at;
+    p.posAt = m.at || p.posAt;
   },
   controlling(m) { setControl(m.control); },
   /* The switch. Cleared of its buffer on the way down so that turning it on again cannot
    * momentarily show the last thing the educator wrote half an hour ago. */
   syncing(m) {
     sync.on = !!m.on;
+    if (sync.pending === sync.on) settled();
+    /* AN ANSWER THIS TAB DID NOT ASK FOR, disagreeing with what it last asked for: another tab
+     * of the same educator threw the switch, or an older request landed after a newer one. The
+     * room is right and the switch says so - and this tab adopts it, or its next roster would
+     * put back a decision somebody has since reversed. Never re-asked from here: two tabs that
+     * each re-asserted what they wanted would argue at network speed. */
+    else if (sync.pending === null && intent !== null) intent = sync.on;
+    if (intent === sync.on) sync.stuck = false;
     if (!m.on) { sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null; }
   },
+  /* THE NEWEST PUSH WINS, NOT THE LAST TO ARRIVE. Each push is its own concurrent invocation,
+   * so an older one can land after a newer one, and applied as it came it puts older code on
+   * thirty screens - permanently, if the educator has stopped typing. The sending tab numbers
+   * them (see `pushEditor`), and a number is only compared with the same tab's: an educator who
+   * reloads starts again from one, and that must not read as old.
+   *
+   * An unnumbered push is applied, so an educator's tab from before this was deployed keeps
+   * working. */
   synced(m) {
+    if (typeof m.origin === 'string' && m.origin && Number.isInteger(m.seq)) {
+      if (m.origin === heardPush.origin && m.seq <= heardPush.seq) return;
+      heardPush = { origin: m.origin, seq: m.seq };
+    }
     sync.at = m.at ?? null;
     sync.code = typeof m.code === 'string' ? m.code : null;
     sync.cursor = m.cursor ?? null;
@@ -513,12 +587,16 @@ function record(sub, mark) {
 function add(who) {
   if (!who?.sub) return;
   const had = room.here[who.sub];
+  /* A second tab must not reset where the first one said the person was - and of two tabs that
+   * both say, the one that said it later is where they are. `posAt` is when the position was
+   * written, by the Lambda's clock. */
+  const theirs = who.position != null && !(had?.posAt && who.posAt && who.posAt < had.posAt);
   room.here[who.sub] = {
     sub: who.sub,
     name: who.name || had?.name || '',
     role: who.role || had?.role || 'student',
-    // A second tab must not reset where the first one said the person was.
-    position: who.position ?? had?.position ?? null,
+    position: theirs ? who.position : had?.position ?? null,
+    posAt: theirs ? who.posAt || null : had?.posAt ?? null,
     seen: who.seen || had?.seen || new Date().toISOString(),
     conns: (had?.conns || 0) + 1,
   };
@@ -594,18 +672,78 @@ export function releaseControl() {
 /**
  * Show the class what you are writing, or stop.
  *
- * NOTHING IS SET HERE. The switch is a field on the session row and what comes back is the
+ * `on` IS NOT SET HERE. The switch is a field on the session row and what comes back is the
  * `syncing` broadcast, so a toggle that was refused - a second admin in the room, a session
  * that has just ended - reads as off rather than lying about a room it never reached. Same
  * rule the four control sends follow, and the echo is the same preview door.
+ *
+ * WHAT IS SET IS `pending`, so the button moves at once and says it is waiting. It used to wait
+ * for that broadcast before moving at all, and when the broadcast was lost the button never
+ * moved - "I press Share editor and nothing happens". See `request`.
  */
 export function setSync(on) {
-  /* WHAT THIS CLIENT ASKED FOR, held because the flag on the session row is about to stop
-   * being the only copy of it - see the roster handler. A decision, not a state: it changes
-   * when the educator throws the switch and at no other time. */
-  demonstrating = !!on;
-  if (send('sync', { on: !!on })) return;
-  if (previewRole()) emitLocal({ type: 'syncing', on: !!on });
+  /* WHAT THIS CLIENT ASKED FOR, held because the flag on the session row is not the only copy
+   * of it - see the roster handler. A decision, not a state: it changes when the educator
+   * throws the switch, and when the room says somebody else threw it. */
+  intent = !!on;
+  request(intent);
+}
+
+/* HOW HARD TO ASK. Four tries a second and a half apart is six seconds, which is long past any
+ * answer a working socket gives (under a tenth of a second, measured) and short enough that an
+ * educator is told before they have finished wondering. */
+const RETRY_SYNC = 1500;
+const SYNC_TRIES = 4;
+let retrying = null;
+let tries = 0;
+
+/**
+ * Ask for the switch, and go on asking until the room answers.
+ *
+ * REPEATING IS HARMLESS. The write is a SET or a REMOVE of one flag, so the second time it
+ * lands it changes nothing, and the broadcast it causes says what every screen already shows.
+ *
+ * A TRY ONLY COUNTS IF IT WENT. With no socket, nothing is sent and the button goes on
+ * waiting: the band's "Connection lost" line already says why, and the reopened socket's roster
+ * asks again. Four tries that DID go and heard nothing is a socket that looks open and is not,
+ * so it is given up on and the socket is asked, now, whether it is alive - see `probe`.
+ */
+function request(on) {
+  sync.pending = on;
+  sync.stuck = false;
+  tries = 0;
+  again();
+}
+
+function again() {
+  clearTimeout(retrying); retrying = null;
+  if (sync.pending === null) return;
+  if (tries >= SYNC_TRIES) {
+    sync.pending = null;
+    sync.stuck = true;
+    probe();
+    return;
+  }
+  if (sendSync(sync.pending)) tries += 1;
+  // The echo can confirm synchronously in preview, in which case there is nothing left to do.
+  if (sync.pending !== null) retrying = setTimeout(again, RETRY_SYNC);
+}
+
+/* Preview has no socket, so its echo stands in for the room's answer - and can be WITHHELD, so
+ * the waiting label and the band's "the class did not answer" are something a person can look
+ * at before shipping rather than a state that only exists on a bad day. See `previewHold`. */
+function sendSync(on) {
+  if (send('sync', { on })) return true;
+  if (!previewRole()) return false;
+  if (!previewHold.sync) emitLocal({ type: 'syncing', on });
+  return true;
+}
+
+/* Asked and answered, or given up: nothing is outstanding. */
+function settled() {
+  clearTimeout(retrying); retrying = null;
+  sync.pending = null;
+  tries = 0;
 }
 
 /* AN EDITOR'S TEXT IS CAPPED WHERE IT IS SENT, at the Lambda's own EDITOR_LIMIT - which trims
@@ -615,8 +753,14 @@ export function setSync(on) {
 const EDITOR_CHARS = 20000;
 const capped = code => String(code ?? '').slice(0, EDITOR_CHARS);
 
+/* NUMBERED BY THE SENDING TAB, so a student keeps the newest rather than the last to arrive -
+ * see `synced`. */
+let pushSeq = 0;
+
 /** What the educator has in their editor, on its way to everybody following. */
 export const pushEditor = (at, code, cursor, anchor, step) => send('push', {
+  origin: TAB,
+  seq: ++pushSeq,
   at: at ?? null,
   code: capped(code),
   cursor: cursor ?? null,

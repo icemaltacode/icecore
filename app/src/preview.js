@@ -31,6 +31,19 @@ export const previewRole = () => {
 
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
+/**
+ * ANSWERS THE PREVIEW HOLDS BACK, so a room that does not answer can be looked at.
+ *
+ * The Share editor button waits for the room to confirm, retries, and after a few seconds says
+ * the class did not answer. Preview's echo answers at once, so none of that is otherwise
+ * reachable without a real lesson going wrong. `?hold=sync` on the URL holds the echo back under
+ * `icecore dev --as admin`; a test sets the flag directly.
+ */
+export const previewHold = {
+  sync: typeof location !== 'undefined'
+    && new URLSearchParams(location.search).getAll('hold').includes('sync'),
+};
+
 /* Seeded so the user table has something in it - an empty table tells you nothing about how
  * a full one looks, and every state the screen draws differently needs an example: invited,
  * active, suspended, admin, and somebody in no cohort at all - which is now the same thing

@@ -149,6 +149,8 @@ async function connect(sub, name, role) {
     last: { push: -1, deck: -1, move: -1 },   // the last to ARRIVE, which is what a screen shows
     disorder: { push: 0, deck: 0, move: 0 },
     heard: [],                                  // anything the educator is told, by type
+    lastHeard: null,                            // performance.now() of the last frame of any kind
+    rowGone: null,                              // when the Lambda's row for this socket vanished
   };
   const note = (kind, n, at) => {
     if (client.got[kind].has(n)) return;
@@ -159,6 +161,7 @@ async function connect(sub, name, role) {
   };
   ws.onmessage = e => {
     const at = performance.now();
+    client.lastHeard = at;
     let m;
     try { m = JSON.parse(e.data); } catch { return; }
     if (m.type === 'pong') client.pongs += 1;
@@ -292,6 +295,7 @@ function session() {
 async function lesson() {
   await ddb.send(new sdk.PutCommand({ TableName: TABLE, Item: session() }));
   const started = Date.now();
+  const t0run = performance.now();
   try {
     const tutor = await connect(TUTOR, 'Synthetic tutor', 'tutor');
     const students = [];
@@ -316,6 +320,26 @@ async function lesson() {
     const beats = setInterval(() => {
       for (const c of everyone) if (send(c, { type: 'ping' })) c.pings += 1;
     }, 20_000);
+
+    /* WHETHER EACH STUDENT IS STILL IN THE ROOM AS THE LAMBDA SEES IT. A socket can stay open
+     * while its row is deleted - the Lambda deletes a row when a post to it comes back Gone -
+     * and from then on nothing is sent to it and nothing it sends is answered, with no close to
+     * say so. Found by a run where one student heard nothing for twelve minutes on an open
+     * socket. Every five seconds, by sub. */
+    const rows = setInterval(async () => {
+      const r = await ddb.send(new sdk.QueryCommand({
+        TableName: TABLE, IndexName: 'byCourse', KeyConditionExpression: 'sk = :sk',
+        ExpressionAttributeValues: { ':sk': `LIVECONN#${COHORT}` },
+      })).catch(() => null);
+      if (!r) return;
+      const here = new Set((r.Items || []).map(i => i.sub));
+      for (const c of everyone) {
+        if (!c.closed && c.rowGone == null && !here.has(c.sub)) {
+          c.rowGone = performance.now();
+          console.log(`ROW GONE  ${c.sub} at ${new Date().toISOString()}, socket still open`);
+        }
+      }
+    }, 5000);
 
     let interrupted = null;
     const guard = setInterval(async () => {
@@ -394,6 +418,7 @@ async function lesson() {
     await moves;
     clearInterval(beats);
     clearInterval(guard);
+    clearInterval(rows);
     if (interrupted) {
       await cleanup();
       console.log('ABANDONED  the numbers from a run cut short by a lesson are not a measurement');
@@ -406,7 +431,14 @@ async function lesson() {
     const result = { label: LABEL, kind: 'lesson', cohort: COHORT,
                      startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(),
                      students: students.length, minutes: MINUTES, sent: {}, delivery: {},
-                     latencyMs: {}, disorder: {}, stale: {}, heartbeat: {}, closes: [] };
+                     latencyMs: {}, disorder: {}, stale: {}, heartbeat: {}, closes: [],
+                     /* Per student: when they last heard anything and when their row went,
+                      * as seconds into the run, so a silent student can be put on a clock. */
+                     perStudent: students.map(c => ({
+                       sub: c.sub, pushes: c.got.push.size,
+                       lastHeardSec: c.lastHeard == null ? null : Math.round((c.lastHeard - t0run) / 1000),
+                       rowGoneSec: c.rowGone == null ? null : Math.round((c.rowGone - t0run) / 1000),
+                     })) };
     for (const kind of ['push', 'deck', 'move']) {
       const expected = sent[kind].size * students.length;
       let received = 0, lostToAny = 0, lostToHalf = 0;
@@ -479,6 +511,7 @@ if (!OVERSIZE) {
     outOfOrder: r.disorder[k],
   }])));
   console.log('heartbeat', r.heartbeat, 'sockets closed', r.closes.length);
+  console.table(r.perStudent);
   console.log('lambda', JSON.stringify({ ...r.lambda, containers: undefined }));
   console.table(r.lambda.containers);
 }

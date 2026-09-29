@@ -430,6 +430,19 @@ leave the second looking like a student's own move.
 before anybody has reported a position, and a nudge that cannot go anywhere is worse than
 no nudge.
 
+**A MOVE COUNTS ONLY ONCE IT HAS GONE, AND NEWER BEATS LATER.** Two rules from
+LIVE-RELIABILITY.md, both about moves that were lost rather than made:
+
+- `report()` records a position as reported only once `send` has taken it, and a reopened
+  socket says where it is before anything else. It used to record first and send second, so a
+  Next pressed while the educator's socket was reconnecting was never sent and never tried
+  again, and after any reconnection the room had nobody to follow until the educator moved.
+- A follower applies a move only if it is no older than the position it holds, by the
+  Lambda's own clock: every `moved` carries `at`, and the roster carries `posAt` for each
+  person. Two quick presses of Next are two concurrent invocations and can arrive the wrong way
+  round, and a roster read a moment before a move can land a moment after it; applied as they
+  came, either leaves the class one slide behind.
+
 ## Class results
 
 **This step's one-line description in the build order was wrong, and the error is the
@@ -756,18 +769,12 @@ be two things moving the same screen. One fact each.
   else. A class does not move as one — somebody is a step behind, somebody read ahead — and
   dropping the educator's query into whatever exercise a student happens to have open is the
   difference between a demonstration and vandalism.
-- **The student's editor is read-only while it lasts, and moving is the way out.** Two people
-  typing into one buffer is not a thing this can do, so it is `frozen` exactly as a driven
-  screen is. There is no second gesture to learn: a student who moves stops following, which
-  stops the sync, which unfreezes the editor — the rule they already have. The band says so
-  in the sentence it already had.
-- **What they had written comes back.** The band promises it and it would otherwise be false:
-  a student mid-attempt would watch their query be replaced and then be left with the
-  educator's. One stash for the exercise on screen, taken on the first push into it — the
-  exercise component is keyed by row, so a synced buffer cannot outlive the row it arrived
-  on. The cost is honest and stated in the code: a student who walks *out* of a demonstration
-  mid-way leaves their own attempt behind with it, because the restore is a prop change a
-  mounted editor reacts to and there is nothing left to react.
+- **It opens a tab of its own, beside the student's work.** It used to write into the
+  student's editor, freeze it, and hand their own work back when it stopped, which left a
+  student who walked out of a demonstration half way without their attempt. Since 95521e1 the
+  educator's version is a second tab (`EditorPane.vue`), split beside theirs when there is room,
+  and kept afterwards so it can be come back to. Nothing of the student's is touched, so there
+  is nothing to give back, and moving away is simply moving away.
 - **Control outranks it**, exactly as the bands do. A student whose screen is being driven has
   one person in their editor and must not have two, and a control tab never pushes — its
   editor holds one student's work rather than the educator's, and putting that on thirty
@@ -790,7 +797,35 @@ be two things moving the same screen. One fact each.
   the authoritative read of the flag and sending on open would race its own answer.
 - **The switch reads the flag back rather than setting it optimistically**, which is what
   the four control sends already do: a toggle that says on when the write was refused is
-  worse than one that lags.
+  worse than one that lags. **It no longer sits still while it waits**, though: it shows what
+  was asked for ("Starting…", "Stopping…") until the room confirms, asks again every 1.5
+  seconds, and after four unanswered asks says the class did not answer and checks the socket
+  there and then. It used to wait for the broadcast before moving at all, and when that
+  broadcast was lost the button never moved: "I press Share editor and nothing happens". A
+  press made while the socket is down waits for it, and the roster puts it back in **both**
+  directions after a reconnection, where it used to restore only "on".
+
+Four rules came out of measuring it in real browsers (LIVE-RELIABILITY.md, Phase 3):
+
+- **It sends while the educator types, not after.** The editor's beat was a 160ms debounce,
+  so anybody typing faster than that sent nothing until they paused: a line reached the class
+  4.8 seconds after it was begun, whole. `beat.js` is a throttle now: the first change at once,
+  at most ten a second after that, and always the last state.
+- **Every push is numbered by the tab that sent it**, and a student keeps the newest. Pushes
+  are concurrent invocations and can arrive in any order, and each carries the whole buffer,
+  so an older one arriving last left older code on the screen for good. A number means
+  something only beside the tab that counted it (`tab.js`), so a reloaded educator starts
+  again from one without being ignored.
+- **The state is sent, not only the changes.** When sharing is confirmed on, and whenever
+  nothing has gone out for two seconds, the exercise on the educator's screen reports its
+  buffer again and it goes to the room. That is what repairs a lost push, a student who joined
+  or reconnected mid-way, and a student who pressed Follow again, within two seconds and
+  without anybody typing. It also means pressing Share on code already written shows it at
+  once. The buffer is asked of the exercise component rather than resent from App.vue's copy,
+  because that copy belongs to whichever row reported last.
+- **Nothing sent is bigger than the channel carries.** An editor's text is capped at 20,000
+  characters where it is sent, the Lambda's own limit, because API Gateway cuts the sender's
+  connection past its frame limits rather than refusing the message.
 
 ## Look here
 

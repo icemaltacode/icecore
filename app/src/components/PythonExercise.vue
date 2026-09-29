@@ -23,6 +23,7 @@ import RevealNotice from './RevealNotice.vue';
 import * as store from '../progress-store.js';
 import { progressId } from '../progress.js';
 import { selectedCode } from '../selection.js';
+import { beat } from '../beat.js';
 
 const props = defineProps({
   /* REMOTE CONTROL, both directions. `frozen` makes the editor read-only for a student whose
@@ -61,6 +62,15 @@ const props = defineProps({
   saved: Object,
   /** What was last in the editor here, finished or not - see progress-store.js. */
   draft: Object,
+  /* ASKED TO SAY WHAT IS IN THE EDITOR AGAIN, unchanged. A counter: every change of it is one
+   * more report of the current state on the ordinary beat below. The educator's tab turns it
+   * while sharing - once when the switch goes on and again whenever nothing has gone out for
+   * two seconds - so the class gets what is on screen without anybody typing. See App.vue.
+   *
+   * Asked of the component rather than resent from App.vue's copy, because this is the only
+   * place that knows what the buffer is: App.vue's copy is only as current as the last report,
+   * and an exercise that has not been touched yet has never reported at all. */
+  resend: { type: Number, default: 0 },
 });
 const emit = defineEmits(['solved', 'checked', 'editor', 'act']);   // see McqExercise
 
@@ -78,7 +88,7 @@ watch(() => props.drivenCode, v => {
   if (typeof v === 'string' && v !== code.value) code.value = v;
 });
 
-/* THE TEXT AND THE CARET LEAVE TOGETHER, on one debounced emit.
+/* THE TEXT AND THE CARET LEAVE TOGETHER, on one beat.
  *
  * They were two events with different timing - the code debounced, the caret immediate - so
  * every keystroke sent a caret against text up to 300ms old. On the other side that is a
@@ -86,9 +96,9 @@ watch(() => props.drivenCode, v => {
  * caret at all. A caret is an offset INTO a buffer; sending it apart from that buffer is
  * sending a number without its units.
  *
- * Short, because this is what somebody watching sees as "typing". Long enough that a burst
- * of keystrokes is one message rather than thirty. */
-const BEAT = 160;
+ * PACED, NOT HELD BACK. This was a 160ms debounce, which sends nothing at all while somebody
+ * types faster than that - so a class watched each line of a demonstration arrive whole, seconds
+ * after it was begun. See beat.js: at most ten a second now, and always the last state. */
 /* REFS RATHER THAN PLAIN LOCALS, because the Run button reads them now as well as the beat
  * below: it says whether it is about to run the selection or the file, and a label computed
  * from something Vue is not watching would go stale the moment anybody dragged. */
@@ -97,16 +107,12 @@ const cursorAt = ref(null);
  * two offsets into ONE buffer; sending either without the other is sending a number with no
  * units, which is the argument the caret already made against a message of its own. */
 const anchorAt = ref(null);
-let beat;
-const sendSoon = () => {
-  clearTimeout(beat);
-  beat = setTimeout(
-    /* The STEP travels with the text, for the caret's reason one line up: a buffer
-     * belongs to a step of an exercise, and the one writer that keeps drafts outside this
-     * component has no other way to know which. */
-    () => emit('editor', { code: code.value, cursor: cursorAt.value, anchor: anchorAt.value,
-                           step: stepIndex.value }), BEAT);
-};
+/* The STEP travels with the text, for the caret's reason one line up: a buffer belongs to a
+ * step of an exercise, and the one writer that keeps drafts outside this component has no
+ * other way to know which. */
+const sendSoon = beat(() => emit('editor', {
+  code: code.value, cursor: cursorAt.value, anchor: anchorAt.value, step: stepIndex.value,
+}));
 /* `{ head, anchor }` from the editor. An anchor equal to the head is a bare caret, and is
  * sent as null rather than as a zero-width range - the other side would draw a highlight
  * over no characters, which is a decoration that exists and cannot be seen. */
@@ -132,7 +138,8 @@ const active = ref({ mine: true, code: '', cursor: null, anchor: null });
 const running = computed(() =>
   selectedCode(active.value.code, active.value.cursor, active.value.anchor));
 watch(code, sendSoon);
-onBeforeUnmount(() => clearTimeout(beat));
+watch(() => props.resend, sendSoon);
+onBeforeUnmount(() => sendSoon.cancel());
 
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
  * exercise completes, because that is the moment there is an answer worth keeping. A step
@@ -282,7 +289,7 @@ const wrap = async fn => {
  * lines of a long query had every screen in the room run the entire file, which is a
  * different demonstration from the one they were giving. The educator's selection arrives as
  * TEXT and is run as text - offsets would be indexed against this browser's copy of the
- * buffer, which is a debounced beat behind theirs. `whole` still answers the press that
+ * buffer, which is a beat behind theirs. `whole` still answers the press that
  * carries nothing, which is what makes this student's stale highlight stay ignored.
  */
 async function doRun({ whole = false, only = null } = {}) {

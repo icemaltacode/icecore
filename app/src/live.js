@@ -38,6 +38,7 @@
 import { reactive } from 'vue';
 import { api, socketUrl } from './auth.js';
 import { split, assembler, bytes, PART_BYTES } from './parts.js';
+import { TAB } from './tab.js';
 
 /**
  * 'closed' | 'opening' | 'open' | 'waiting' - `waiting` is between attempts.
@@ -112,7 +113,6 @@ export const outbox = { on: false, sent: [] };
  * instead, and refused here if one still slips past. */
 const SPLITTABLE = new Set(['deck']);
 let partId = 0;
-const TAB = Math.random().toString(36).slice(2, 10);
 
 /**
  * Send a message. Silently drops when there is no socket - which is the honest behaviour
@@ -244,16 +244,50 @@ async function attach(cohort, mine) {
  */
 function beat(cohort, mine) {
   if (mine !== generation) return;
-  if (Date.now() - heard > SILENT) {
-    console.warn('live: nothing heard for', Math.round((Date.now() - heard) / 1000), 's - reconnecting');
-    clearInterval(heart); heart = null;
-    const dead = socket;
-    socket = null;
-    if (dead) { dead.onclose = null; try { dead.close(); } catch { /* already gone */ } }
-    live.lost = true;
-    return schedule(cohort, mine);
-  }
+  if (Date.now() - heard > SILENT) return giveUp(cohort, mine, Date.now() - heard);
   send('ping');
+}
+
+/* The socket is taken to be dead: dropped, and a new one scheduled. */
+function giveUp(cohort, mine, silent) {
+  console.warn('live: nothing heard for', Math.round(silent / 1000), 's - reconnecting');
+  clearInterval(heart); heart = null;
+  const dead = socket;
+  socket = null;
+  if (dead) { dead.onclose = null; try { dead.close(); } catch { /* already gone */ } }
+  live.lost = true;
+  schedule(cohort, mine);
+}
+
+/* Long enough for one round trip over a phone's tethering, short enough to beat the heartbeat's
+ * minute by most of it. */
+const PROBE = 4000;
+
+/**
+ * Ask now, rather than at the next heartbeat, and give the socket up if nothing comes back.
+ *
+ * FOR A CALLER THAT HAS REASON TO DOUBT IT. The heartbeat takes a minute to conclude anything,
+ * which is right when nothing suggests a problem. Something that sent a request and heard no
+ * answer - the Share editor button asking four times - has a suggestion, and a socket that
+ * still reads OPEN but carries nothing is exactly the one the heartbeat is slowest to catch.
+ *
+ * Anything at all arriving counts as an answer, as it does for the heartbeat. A socket that is
+ * fine costs one ping.
+ */
+export function probe() {
+  if (!socket || live.status !== 'open') return;
+  const asked = Date.now();
+  const cohort = live.cohort;
+  const mine = generation;
+  /* THE SOCKET ASKED, and only it is judged. One that has already been replaced by the time the
+   * answer is due is somebody else's business, and killing its successor while it is still
+   * opening would be a reconnection nobody needed. */
+  const which = socket;
+  send('ping');
+  setTimeout(() => {
+    if (mine !== generation || socket !== which || heard >= asked) return;
+    giveUp(cohort, mine, Date.now() - heard);
+  }, PROBE);
 }
 
 function schedule(cohort, mine) {

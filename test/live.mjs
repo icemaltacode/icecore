@@ -901,10 +901,16 @@ try {
       check('and tells the educator who threw the switch', onA?.on === true,
             JSON.stringify(onA));
 
-      A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT 1', cursor: 8 }));
+      A.ws.send(JSON.stringify({ type: 'push', at: '101', code: 'SELECT 1', cursor: 8,
+                                 origin: 'test-tab', seq: 7 }));
       const pushed = await heardB.next('synced');
       check('the editor reaches the class', pushed?.code === 'SELECT 1',
             JSON.stringify(pushed));
+      /* THE NUMBER IS WHAT LETS A STUDENT KEEP THE NEWEST, and it only works if the relay
+       * passes it through untouched - pushes are concurrent invocations and arrive in any
+       * order. LIVE-RELIABILITY.md, step 10. */
+      check('with the sending tab and its number intact',
+            pushed?.origin === 'test-tab' && pushed?.seq === 7, JSON.stringify(pushed));
       check('it names the exercise it belongs to', pushed?.at === '101',
             JSON.stringify(pushed));
       /* A caret is an offset INTO a buffer, so it travels with it or it points at the wrong
@@ -925,6 +931,12 @@ try {
       const withSync = await heardB.next('roster');
       check('a roster says the editor is being shared', withSync?.sync === true,
             JSON.stringify(withSync?.sync));
+      /* WHEN EACH POSITION WAS WRITTEN, so a client can tell a roster read before a move from
+       * one read after it. Only somebody who has reported a position has one. Step 14. */
+      const placed = (withSync?.here || []).filter(c => c.position);
+      check('and says when each position in it was written',
+            placed.length > 0 && placed.every(c => typeof c.posAt === 'string'),
+            JSON.stringify(withSync?.here));
 
       /* A STUDENT MAY NOT FREEZE THE ROOM. `tutor` is the gate on the switch itself, and it
        * is the one that keeps a demonstration something an educator does rather than
