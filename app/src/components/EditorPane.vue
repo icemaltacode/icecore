@@ -33,7 +33,10 @@ const props = defineProps({
    * control, which writes into their own work deliberately - a different thing from sharing,
    * and the one case where somebody else's text belongs in this buffer. */
   readonly: Boolean,
-  /** The educator's version for this step, as `{ code, by }`, or null when there is none. */
+  /** The educator's version for this step, as `{ code, by }`, or null when there is none.
+   * A shared screen adds `caret`: the tab is the student's and the typing is the educator's.
+   * It also sets `screen`, because it is shown only while shared and never kept - the
+   * exercise gives back its output pane when it goes, which a demonstration does not. */
   shared: Object,
   /** Whether it is arriving RIGHT NOW, as opposed to being read back from a past lesson. */
   live: Boolean,
@@ -211,7 +214,7 @@ function take() {
              code to see what it does is what a demonstration is for. -->
         <CodeEditor :model-value="theirs" :language="language" readonly
                     :peer-at="live ? sharedAt : null" :peer-anchor="live ? sharedAnchor : null"
-                    :peer-name="shared?.by"
+                    :peer-name="shared?.caret || shared?.by"
                     @cursor="moved('theirs', $event)" @run="emit('run')" />
 
         <div v-if="asking" class="ask">

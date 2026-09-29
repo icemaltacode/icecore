@@ -73,6 +73,26 @@ export const driven = reactive({
 });
 
 /**
+ * WHAT IS IN A SHARED SCREEN'S EDITOR, for everybody watching it.
+ *
+ * The class half of a controlled screen that is shown to the room. Its position already
+ * reached them - see `followedPosition` - and its editor did not, so they were walked to the
+ * exercise and shown the starter while the educator wrote into somebody else's. `sub` is
+ * whose screen it came from, so a copy can never be shown under the wrong name.
+ *
+ * NEVER KEPT. A demonstration is saved so a student can come back to it; this is a
+ * classmate's work, shown for as long as sharing is on and not a moment longer. It is cleared
+ * when sharing stops or control moves - see `setControl`.
+ */
+export const shown = reactive({
+  sub: null, at: null, code: null, cursor: null, anchor: null, when: null,
+});
+const dropShown = () => {
+  shown.sub = null; shown.at = null; shown.code = null;
+  shown.cursor = null; shown.anchor = null; shown.when = null;
+};
+
+/**
  * WHAT THE STUDENT HAD WRITTEN when control began, as they sent it.
  *
  * The half of remote control that actually helps: an educator taking over somebody who is
@@ -170,6 +190,8 @@ let intent = null;
 
 /* THE NEWEST PUSH HEARD, by the tab that sent it - see `synced`. */
 let heardPush = { origin: null, seq: -1 };
+/* And the newest drive seen through a shared screen, for the same reason - see `shown`. */
+let heardShown = { origin: null, seq: -1 };
 
 /** Every session running right now, keyed by cohort - what the Live buttons read. */
 export const live = reactive({ running: {}, loading: false });
@@ -252,6 +274,8 @@ export function forget() {
   settled();
   sync.stuck = false;
   heardPush = { origin: null, seq: -1 };
+  dropShown();
+  heardShown = { origin: null, seq: -1 };
   clearInterval(catching); catching = null;
   stopPreviewRoom();
   stopReporting();
@@ -384,6 +408,10 @@ function setControl(c) {
   control.sharing = !!c?.sharing;
   control.at = c?.at || null;
   control.refused = '';
+  /* A shared screen's editor goes the moment it stops being shared, or stops being that
+   * student's. Left behind, it would go on showing a classmate's work after they had been
+   * told the class could no longer see it. */
+  if (!control.sharing || shown.sub !== control.sub) dropShown();
 }
 
 const dropBuffer = () => { sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null; };
@@ -524,6 +552,23 @@ const HANDLERS = {
     p.posAt = m.at || p.posAt;
   },
   controlling(m) { heardAt.control = Date.now(); setControl(m.control); },
+  /* A SHARED SCREEN'S EDITOR, arriving. Only while this client knows it is being shown that
+   * screen: the Lambda gates it on the session row, and this is the same rule stated where
+   * the state is actually held, so a `shown` racing a `controlling` that turned sharing off
+   * cannot put it back. Newest per sending tab, `synced`'s rule. */
+  shown(m) {
+    if (!control.sharing || m.sub !== control.sub) return;
+    if (typeof m.origin === 'string' && m.origin && Number.isInteger(m.seq)) {
+      if (m.origin === heardShown.origin && m.seq <= heardShown.seq) return;
+      heardShown = { origin: m.origin, seq: m.seq };
+    }
+    shown.sub = m.sub;
+    shown.at = m.at ?? null;
+    shown.code = typeof m.code === 'string' ? m.code : null;
+    shown.cursor = m.cursor ?? null;
+    shown.anchor = m.anchor ?? null;
+    shown.when = m.when || new Date().toISOString();
+  },
   /* The switch. Cleared of its buffer on the way down so that turning it on again cannot
    * momentarily show the last thing the educator wrote half an hour ago. */
   syncing(m) {
@@ -820,8 +865,14 @@ export const pushEditor = (at, code, cursor, anchor, step) => send('push', {
   step: Number.isInteger(step) ? step : 0,
 });
 
+/* Numbered for `push`'s reason: while the screen is shared, each drive also reaches the class
+ * as `shown`, and the class keeps the newest rather than the last to arrive. */
+let driveSeq = 0;
+
 /** Send the controlled screen somewhere, and what to put in its editor. */
 export const drive = where => send('drive', {
+  origin: TAB,
+  seq: ++driveSeq,
   at: where?.at ?? null,
   title: where?.title || '',
   slide: where?.slide ?? null,

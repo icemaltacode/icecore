@@ -732,6 +732,19 @@ courtesy, it is the same route.
   sharing is on. The controlled student's client applies it and then reports `active` like
   any other move, so what the class follows is what that screen *actually shows* rather than
   what it was told to show. One hop longer, and the only version that cannot drift.
+- **While sharing is on, the drive's EDITOR reaches the class, as `shown`.** This half was
+  missing: sharing carried the position alone, so the class was walked to the exercise,
+  told they were watching the student's screen, and shown the starter code while the
+  educator wrote the fix where only that student could see it. The Lambda sends it on from
+  `drive`, gated on the session row's `sharing` rather than on anything the control tab
+  believes, and to everybody except the pair. A classmate draws it the way they draw a
+  demonstration, as a tab beside their own work named after the student, but it is never
+  kept: it is somebody else's work, visible exactly as long as sharing is on.
+- **So does a Run pressed on it, and never a Check.** Each classmate runs the shared tab's
+  code in their own browser. Check grades and records against whoever's screen it runs on,
+  so relaying it would mark the whole class on their own half-finished answers. When
+  sharing stops, every classmate gets their own screen back: the tab goes, and so does the
+  output of any run of it.
 - **`leaderPosition` became `followedPosition`**, and the rename is the feature: while a
   screen is shared, every following client renders *that*. Two functions would mean each
   caller choosing, and a caller choosing wrong would leave half a screen following the class

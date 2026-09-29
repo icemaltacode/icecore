@@ -140,6 +140,18 @@ const result = ref(null);
 const error = ref('');
 const verdict = ref(null);
 const busy = ref(false);
+/* WHETHER THE RESULT PANE HOLDS A RUN OF SOMEBODY ELSE'S SCREEN, and it is given back when
+ * that screen stops being shared. A classmate's run is relayed to everybody watching and runs
+ * that screen's code here; once control ends the editor tab goes back to their own - see
+ * EditorPane - and an output pane still showing a program that is no longer on screen is
+ * not their screen back. A demonstration is not given back like this: its tab is kept, so
+ * what it printed still belongs to something they can see. */
+const ranScreen = ref(false);
+watch(() => props.live, (now, was) => {
+  if (!was || now || !ranScreen.value) return;
+  result.value = null; error.value = ''; verdict.value = null;
+  ranScreen.value = false;
+});
 const showHint = ref(false);
 const showSolution = ref(false);
 const picked = ref(null);
@@ -248,10 +260,17 @@ watch(() => props.exercise.id, () => { stepIndex.value = 0; passed.value = {}; }
  * pushed buffer is: a drive and a press can cross, and running an instruction against the
  * exercise that happens to be on screen now is the difference between a demonstration and
  * vandalism.
+ *
+ * A GATE OPENING IS NOT A PRESS. App.vue hands this the press only while this screen is one
+ * it may reach - driven, shown a demonstration, watching a shared screen - so the prop goes
+ * from null to the last press heard, and a watcher on `when` alone read that as the educator
+ * pressing Run again. Stop sharing and start again on the same exercise, and every screen
+ * re-ran whatever was last pressed, with nobody pressing anything. So the object has to have
+ * been there already for a change of `when` to count.
  */
-watch(() => props.pressed?.when, () => {
-  const p = props.pressed;
-  if (!p?.when || !p.do || busy.value) return;
+watch(() => [props.pressed, props.pressed?.when], ([p], [was]) => {
+  if (!p || !was) return;
+  if (!p.when || !p.do || busy.value) return;
   if (p.at != null && progressId(p.at) !== progressId(props.exercise.id)) return;
   /* A CHOICE IS NOT DRIVEN THE WAY CODE IS, so a relayed Check on a step nobody has
    * answered on THIS side would mark the student wrong for a question the educator answered
@@ -294,6 +313,7 @@ async function doRun({ whole = false, only = null } = {}) {
     ? (props.live && typeof props.shared?.code === 'string' ? props.shared.code : code.value)
     : active.value.code;
   const sending = sel ?? buffer;
+  ranScreen.value = whole && props.live && !!props.shared?.screen;
   /* Said out loud on every press, WITH what it ran. Only a CONTROL TAB relays it - see
    * App.vue - so a press that arrived from one does not bounce back to where it came from. */
   emit('act', 'run', sel);
@@ -307,6 +327,7 @@ async function doCheck() {
   /* Said out loud on every press. Only a CONTROL TAB relays it - see App.vue - so a
    * press that arrived from one does not bounce back to where it came from. */
   emit('act', 'check');
+  ranScreen.value = false;
   busy.value = true; error.value = '';
   try {
     const v = isMcqStep.value ? checkChoice() : await gradeQuery();

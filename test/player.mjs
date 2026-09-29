@@ -513,6 +513,91 @@ check('a drive that moves them to another exercise carries its code with it',
         editorText().includes('the_answer_everybody_watched'), editorText());
 }
 
+// ------------------------------- a classmate's screen, shown to the class
+/* SHARING A CONTROLLED SCREEN SHARED ITS POSITION AND NOTHING ELSE. The class was walked to
+ * the exercise, told they were watching somebody's screen, and shown the starter code while
+ * the educator wrote the fix into that student's editor where nobody else could see it. Found
+ * on the live rig: 33 drives reached the controlled student and none reached the classmate.
+ *
+ * The editor now arrives as `shown`, and is drawn the way a demonstration is - a tab beside
+ * their own work - named after the student whose screen it is. Unlike a demonstration it is
+ * not kept: it is a classmate's work, visible for exactly as long as sharing is on.
+ */
+{
+  const DORIS = 'SELECT what_the_educator_wrote_for_doris;';
+  const doris = { sub: 'doris-sub', name: 'Doris McDay', role: 'student',
+                  seen: new Date().toISOString() };
+  const showing = (code, stamp = {}) => player.emitLocal({
+    type: 'shown', sub: doris.sub, at: '101', code, cursor: null, anchor: null,
+    when: new Date().toISOString(), ...stamp });
+  const hasDoris = () => anyEditor().includes('what_the_educator_wrote_for_doris');
+
+  player.emitLocal({ type: 'joined', who: { ...doris,
+    position: { exercise: '101', title: 'First', slide: null } } });
+  const control = sharing => player.emitLocal({ type: 'controlling', control: {
+    sub: doris.sub, name: doris.name, by: tutor.sub, byName: tutor.name,
+    sharing, at: '2026-09-29T15:45:38.274Z' } });
+
+  control(false);
+  await settle(150);
+  showing(DORIS, { origin: 'ctl', seq: 1 });
+  await settle(200);
+  check('a controlled screen that is NOT shared shows the class nothing of its editor',
+        !hasDoris(), anyEditor());
+
+  control(true);
+  await settle(150);
+  showing(DORIS, { origin: 'ctl', seq: 2 });
+  await settle(250);
+  check("while it is shared, the class sees that screen's editor", hasDoris(), anyEditor());
+  check('and it did NOT land in their own', !editorText().includes('for_doris'), editorText());
+  check('the tab is named after the student whose screen it is',
+        [...document.querySelectorAll('.tab')].some(t => /Doris McDay's version/.test(t.textContent)),
+        [...document.querySelectorAll('.tab')].map(t => t.textContent.trim()));
+
+  showing('SELECT an_older_drive;', { origin: 'ctl', seq: 1 });
+  await settle(200);
+  check('an older drive arriving late does not replace a newer one',
+        hasDoris() && !anyEditor().includes('an_older_drive'), anyEditor());
+
+  /* ---- AND RUN, ON EVERY SCREEN WATCHING IT ----------------------------------
+   *
+   * The educator's Run on a shared screen reaches the class, and each classmate runs THAT
+   * screen's code in their own browser. When sharing stops they get their own screen back:
+   * the editor tab and the output pane both, because output from a program no longer on
+   * screen is not their screen. The stub is the instrument, as it is above, so the pane is
+   * emptied by one full cycle before the cycle that proves anything. */
+  const pressRun = () => player.emitLocal(
+    { type: 'acting', do: 'run', at: '101', when: new Date().toISOString() });
+  pressRun();
+  await settle(300);
+  control(false);
+  await settle(250);
+  check('it goes the moment sharing stops, rather than being kept like a demonstration',
+        !hasDoris(), anyEditor());
+  check("and so does the output of that screen's run", !reached(), text().slice(-200));
+
+  control(true);
+  await settle(150);
+  showing(DORIS, { origin: 'ctl', seq: 3 });
+  await settle(250);
+  check('shared again, and nothing has run here yet', hasDoris() && !reached(),
+        text().slice(-200));
+  pressRun();
+  await settle(300);
+  check("Run pressed on a shared screen runs on the classmate's too", reached(),
+        text().slice(-200));
+  control(false);
+  await settle(250);
+  check('and when control ends they get their own screen back',
+        !reached() && !hasDoris() && editorText().includes('everybody_watched'),
+        `${editorText()} | ${text().slice(-160)}`);
+
+  player.emitLocal({ type: 'controlling', control: null });
+  player.emitLocal({ type: 'left', sub: doris.sub });
+  await settle(150);
+}
+
 // ------------------------------------------- and Run runs what is highlighted
 /* EVERY EDITOR A STUDENT HAS EVER USED runs the highlighted lines, and this one ran the
  * whole file regardless - so trying one line meant commenting out the rest and remembering

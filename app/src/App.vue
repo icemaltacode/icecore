@@ -18,7 +18,7 @@ import { delivery, room, sessionFor, join as joinLive, end as endLive, forget as
          control, driven, drive, takeControl, setSharing, releaseControl,
          pressed, press, point, sendDeck,
          drivingSomebody, beingDriven, sendBuffer, borrowed,
-         sync, setSync, pushEditor,
+         sync, setSync, pushEditor, shown,
          watchForSessions, stopWatchingForSessions, invitation } from './delivery.js';
 import WatchBanner from './components/WatchBanner.vue';
 import LiveBand from './components/LiveBand.vue';
@@ -928,6 +928,20 @@ const synced = computed(() => !!(delivery.cohort && !delivery.mine && !controlSu
 const syncedHere = computed(() =>
   synced.value && sync.code != null && progressId(sync.at) === progressId(currentId.value));
 
+/**
+ * A CLASSMATE'S SCREEN IS BEING SHOWN TO THIS ONE, editor and all.
+ *
+ * `synced`'s rules for the same reasons, with the controlled student in place of the
+ * educator: not for whoever is delivering, not in a control tab, not for the student whose
+ * screen it is, and only while still following - moving away is still the whole way out.
+ */
+const watchingShared = computed(() => !!(delivery.cohort && !delivery.mine && !controlSub.value
+  && control.sharing && control.sub && !beingDriven() && delivery.following));
+
+/** And whether what that screen's editor holds is for the exercise on screen here. */
+const shownHere = computed(() => watchingShared.value && shown.sub === control.sub
+  && shown.code != null && progressId(shown.at) === progressId(currentId.value));
+
 /* ---- FOLDING THE CHROME AWAY FOR A DEMONSTRATION --------------------------
  *
  * A demonstration is worth watching BESIDE your own work rather than instead of it, and two
@@ -1046,16 +1060,21 @@ function editorChanged({ code, cursor, anchor, step }) {
    * is the opposite case and is kept: remote control is help written into this student's own
    * work, and leaving them with it is the entire point. */
   if (course.value && current.value && !subject.value.watching
-      && !(synced.value && syncedHere.value))
+      && !(synced.value && syncedHere.value) && !shownHere.value)
     store.saveDraft(course.value.id, current.value.id, step ?? 0, code);
   /* A CONTROL TAB DRIVES AND NEVER SYNCS. Its editor holds one student's work rather than
    * the educator's, and pushing that to the room would put somebody's half-finished attempt
-   * on thirty screens - with their name nowhere near it. */
+   * on thirty screens - with their name nowhere near it.
+   *
+   * WHILE CONTROL IS SHARED the class does see it, under the student's name and with the
+   * student told - but that is the Lambda passing each drive on, decided from the session
+   * row. Nothing here pushes either way. */
   if (controlSub.value) {
     if (drivingSomebody()) {
       drive({ at: current.value?.id ?? null, title: current.value?.title,
               slide: mySlide.value, code,
               cursor: myCursor.value, anchor: myAnchor.value });
+      lastPush = Date.now();
     }
     return;
   }
@@ -1096,8 +1115,14 @@ const RESEND_IDLE = 2000;
 const resend = ref(0);
 let lastPush = 0;
 let resending = null;
+/* AND A SHARED SCREEN, from the control tab, for the same reason: a classmate who joins or
+ * reconnects while the educator has stopped typing would otherwise see its editor only at the
+ * next keystroke, and sharing turned on over code already written would show nothing at all.
+ * The student being driven gets the same drive again, which changes nothing on their screen -
+ * CodeEditor ignores a value equal to what it has. */
 const demonstrating = computed(() =>
-  !!(delivery.cohort && delivery.mine && sync.on && !controlSub.value));
+  !!(delivery.cohort && delivery.mine && sync.on && !controlSub.value)
+  || !!(controlSub.value && drivingSomebody() && control.sharing));
 watch(demonstrating, on => {
   clearInterval(resending); resending = null;
   if (!on) return;
@@ -1222,6 +1247,14 @@ const shownCode = computed(() => {
  * session left to ask. See progress-store.js for why it is kept per COHORT.
  */
 const sharedHere = computed(() => {
+  /* A SHARED SCREEN BEATS A DEMONSTRATION, the rule `followedPosition` already applies to
+   * where the class is: while one is shown, it is what everybody was told to look at. Named
+   * after the student whose screen it is; the caret is the educator's, who is the one typing.
+   * Never read back from the store, because it is never written there - see `shown`. */
+  if (shownHere.value) {
+    return { code: shown.code, by: control.name || 'A classmate', caret: control.byName,
+             screen: true };
+  }
   if (syncedHere.value && sync.code != null)
     return { code: sync.code, by: delivery.name || 'Educator' };
   if (!course.value || !currentId.value || subject.value.watching) return null;
@@ -1836,13 +1869,13 @@ watch(currentId, id => {
           :frozen="beingDriven()"
           :driven-code="shownCode"
           :shared="sharedHere"
-          :live="syncedHere"
-          :pressed="beingDriven() || syncedHere ? pressed : null"
+          :live="syncedHere || shownHere"
+          :pressed="beingDriven() || syncedHere || shownHere ? pressed : null"
           @solved="markSolved"
           :peer-at="beingDriven() ? driven.cursor : null"
           :peer-anchor="beingDriven() ? driven.anchor : null"
-          :shared-at="syncedHere ? sync.cursor : null"
-          :shared-anchor="syncedHere ? sync.anchor : null"
+          :shared-at="shownHere ? shown.cursor : syncedHere ? sync.cursor : null"
+          :shared-anchor="shownHere ? shown.anchor : syncedHere ? sync.anchor : null"
           :peer-name="beingDriven() ? control.byName : delivery.name"
           @checked="(id, v) => reportMark({ at: id, ...v })"
           :resend="resend"

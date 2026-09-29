@@ -828,6 +828,41 @@ try {
     check('sharing can be turned on afterwards', shared?.control?.sharing === true,
           JSON.stringify(shared?.control));
 
+    /* WHILE SHARED, A DRIVE ALSO REACHES THE CLASS as `shown` - the controlled student's
+     * editor, which sharing used to leave behind. Neither end of the pair is its audience:
+     * the student already has the drive and the educator wrote it. That the class DOES hear
+     * it needs a third account, which this test does not have; the player test covers what a
+     * classmate draws, and the rig covered the room. */
+    A.ws.send(JSON.stringify({ type: 'drive', at: '202', title: 'Driven there',
+                               code: 'SELECT 2', origin: 'test-tab', seq: 1 }));
+    check('a shared drive still reaches the screen being driven',
+          (await heardB.next('driven'))?.code === 'SELECT 2', 'the drive did not arrive');
+    if (distinct) {
+      check('and neither end of the pair is sent it as `shown`',
+            (await heardA.next('shown', 1500)) === null
+              && (await heardB.next('shown', 1500)) === null,
+            'the pair was sent the class\'s copy');
+    } else {
+      await heardA.next('driven', 1500);
+      skip('and neither end of the pair is sent it as `shown`',
+           'one account was used for both sockets');
+    }
+
+    /* AND ITS RUN, which reaches the class by the same gate. The pair is outside that
+     * audience too, so the student is pressed once rather than twice. */
+    A.ws.send(JSON.stringify({ type: 'act', do: 'run', at: '202' }));
+    check('a shared Run still reaches the screen being driven',
+          (await heardB.next('acting'))?.do === 'run', 'the press did not arrive');
+    if (distinct) {
+      check('once, and not to the educator',
+            (await heardB.next('acting', 1500)) === null
+              && (await heardA.next('acting', 1500)) === null,
+            'the pair was sent the class\'s copy of the press');
+    } else {
+      await heardA.next('acting', 1500);
+      skip('once, and not to the educator', 'one account was used for both sockets');
+    }
+
     /* THE WRITE GATE, AND IT HAS TO BE ASKED WHILE CONTROL IS HELD - which is the whole
      * point of it, and was the first way this block was written wrong: placed after the
      * release below, the refusal it got back was the gate working.

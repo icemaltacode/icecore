@@ -1484,6 +1484,8 @@ async function tallied(cohort, mark, seeded = false) {
       const c = held?.control;
       if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
       const at = msg.at == null ? null : String(msg.at).slice(0, 200);
+      // Read once for both sends below: `shown` is addressed from the same room.
+      const conns = await connectionsIn(row.cohort);
       await emit(event, row.cohort, {
         type: 'driven',
         position: at === null ? null : {
@@ -1509,7 +1511,42 @@ async function tallied(cohort, mark, seeded = false) {
          * at words nobody chose. Undefined is "not sent"; null is a bare caret. */
         anchor: msg.anchor === null ? null : offset(msg.anchor),
         at: now,
-      }, { sub: c.sub });
+      }, { sub: c.sub, from: conns });
+
+      /* AND WHILE THE SCREEN IS SHARED, THE CLASS SEES ITS EDITOR. Sharing carried the
+       * controlled student's POSITION and nothing else, so the class was walked to the right
+       * exercise and shown its starter code while the educator wrote the fix somewhere they
+       * could not see it - a band saying "watching Doris's screen" over a screen that was not
+       * hers.
+       *
+       * A MESSAGE OF ITS OWN, NOT THE DRIVE. The drive is an instruction to one browser and
+       * the class must not obey it: where they look is still whatever that screen reports,
+       * for the reason above. This is the editor alone, which is `push`'s shape rather than
+       * `drive`'s, and the class shows it the way it shows a demonstration - a tab beside
+       * their own work, named after whose it is.
+       *
+       * GATED ON THE ROW, NEVER ON THE CLIENT. This is a student's editor going to every
+       * screen in the room, which is what they were told would happen when sharing is on and
+       * must not happen when it is off. The row just read is the authority; a control tab
+       * that believes sharing is on is not.
+       *
+       * Neither end of the pair hears it: the student already has the drive, and the
+       * educator's tabs are where it came from. */
+      if (c.sharing && typeof msg.code === 'string') {
+        await emit(event, row.cohort, {
+          type: 'shown',
+          sub: c.sub,
+          at,
+          code: msg.code.slice(0, EDITOR_LIMIT),
+          cursor: offset(msg.cursor) ?? null,
+          anchor: offset(msg.anchor) ?? null,
+          /* `push`'s ordering, carried through untouched: drives are concurrent invocations
+           * too, and each carries the whole buffer, so the newest per tab is what stays. */
+          origin: typeof msg.origin === 'string' && msg.origin ? msg.origin.slice(0, 40) : null,
+          seq: Number.isInteger(msg.seq) && msg.seq >= 0 ? msg.seq : null,
+          when: now,
+        }, { from: conns.filter(x => x.sub !== c.sub && x.sub !== c.by) });
+      }
       return { statusCode: 200, body: 'ok' };
     }
 
@@ -1585,6 +1622,25 @@ async function tallied(cohort, mark, seeded = false) {
       /* Everybody but the sender, or the one person being driven. A press that came back to
        * the tab that made it would run the educator's own exercise a second time. */
       }, room ? { except: id } : { sub: c.sub });
+
+      /* A SHARED SCREEN'S RUN IS RUN ON EVERY SCREEN WATCHING IT, which is `shown`'s audience
+       * and `shown`'s gate: the row's `sharing`, and everybody but the pair. Each classmate's
+       * browser runs the shared tab's code against its own database, so what appears is that
+       * screen's code with that classmate's own output - the gesture travels, not the result.
+       *
+       * RUN ONLY, NEVER CHECK. Check grades a submission and records the verdict against
+       * whoever's screen it runs on, so a Check pressed for one student would mark every
+       * classmate on their own half-finished answer, by somebody who cannot see it. */
+      if (!room && what === 'run' && c.sharing) {
+        const conns = await connectionsIn(row.cohort);
+        await emit(event, row.cohort, {
+          type: 'acting',
+          do: 'run',
+          at: msg.at == null ? null : String(msg.at).slice(0, 200),
+          sel: typeof msg.sel === 'string' && msg.sel ? msg.sel.slice(0, EDITOR_LIMIT) : null,
+          when: now,
+        }, { from: conns.filter(x => x.sub !== c.sub && x.sub !== c.by) });
+      }
       return { statusCode: 200, body: 'ok' };
     }
 
