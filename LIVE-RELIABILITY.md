@@ -8,8 +8,8 @@ reconnects. After that it makes the shared editor, and then the rest of the chan
 a message lost for any other reason, so that one dropped message can never again leave a student
 behind.
 
-Status: **Phases 0 to 3 are built, deployed and measured** (2026-09-29). Phase 4 is not
-started. Diagnosed on 2026-09-29 from the live function's logs and
+Status: **Phases 0 to 3 are built, deployed and measured** (2026-09-29), and so is the fix found
+after them (a student arriving is not a student gone). Phase 4 is not started. Diagnosed on 2026-09-29 from the live function's logs and
 metrics, during a lesson, without touching the deployment. Keith confirmed two things since:
 the stalls he saw that morning fell in the stretch the logs show failing, and he writes by hand
 on slides in most lessons and has seen the "Connection lost" band flash just after a stroke.
@@ -301,11 +301,10 @@ two minutes in it received nothing, its heartbeat went unanswered, and its socke
 The Lambda's log shows why without saying so: that connection closed at the end as `unknown`,
 meaning its row had been deleted while API Gateway still held the socket open, and the only
 thing that deletes a live connection's row is `emit` receiving `GoneException` for it, which it
-treats as routine and does not log. A 5-minute rerun alongside six cuts of the educator's socket,
-now recording when each student's row disappears, lost nothing. Not caused by this phase (its
-Lambda change only adds two fields to a push, and the synthetic students do not run the app). A
-real browser in that state gets no pong and reconnects within about 65 seconds, then catches up
-through step 11; the harness never reconnects, so it stayed silent. Open question 3.
+treated as routine and did not log. A real browser in that state gets no pong and reconnects
+within about 65 seconds, then catches up through step 11; the harness never reconnects, so it
+stayed silent. That one was not reproduced, but chasing it found a cause that is: see
+**After Phase 3: a student arriving is not a student gone**, below.
 
 What this phase did not measure on the deployment is the Share button's give-up path: four
 unanswered asks, the warning, and `probe()` replacing a half-open socket. A room that does not
@@ -649,6 +648,38 @@ otherwise walk a student back.
 - A push arrives with its `origin` and `seq` intact.
 - A `sync` from the deliverer comes back to the deliverer.
 
+## After Phase 3: a student arriving is not a student gone
+
+Found while explaining the silent synthetic student. Lambda only, three changes.
+
+- **The cause.** API Gateway answers a post to a connection with `GoneException` until its
+  `$connect` handler has returned, and `$connect` writes the connection's row before it returns.
+  The room's list is read from an eventually consistent index, so a push or a deck frame can
+  find a student's row in that stretch, get Gone, and `emit` deleted the row as stale. The
+  student's socket then opened with no row: nothing was sent to it and nothing it sent was
+  answered, with no close to say so, until the browser's heartbeat gave up about a minute later.
+  Typing sends ten pushes a second since step 12, so a student joining or reconnecting during a
+  demonstration was the likeliest to land in it.
+- **Fixed:** `emit` keeps the row of a connection younger than 10 seconds when a post to it is
+  Gone (`ARRIVING`), and logs every row it does delete (`gone <type> <id> <age>`).
+- **Cut short, whatever the cause:** a message from a connection with no row now closes that
+  socket (`DeleteConnection`, logged as `rowless`), so the browser reconnects within one
+  heartbeat instead of three. `rowFor` reads consistently, because a read that missed a row
+  written a moment before would now close a socket that had just opened.
+- **Tests:** `test/relay.mjs` runs the real `emit` and `handler` against a local stand-in that
+  answers Gone and speaks enough DynamoDB to see deletes; all three new checks failed against
+  the Lambda before this. Two probes against the deployment, in the synthetic classroom:
+  `--arrivals` (the educator pushes 20 a second while one student connects 20 times) and
+  `--rowless` (a live student's row is deleted, then it pings).
+
+| Against the deployment | Before | After |
+|---|---|---|
+| Students arriving during fast typing left with no row, hearing nothing | **4 of 20** | **0 of 40** |
+| A socket whose row was deleted, closed after its next ping | **0 of 3** (still open after 3s) | **3 of 3**, in 70 to 84ms |
+
+Deployed 2026-09-29 13:58 UTC. In the log since: three `rowless` lines (the probe's own), no
+`gone`, no failed posts.
+
 ## Phase 4: a room that catches up
 
 ### 16. A light roster, every 30 seconds
@@ -819,8 +850,6 @@ filter @message like /\tclosed / | parse @message /closed (?<role>\S+) (?<code>\
 1. **The alarm threshold.** It starts at 10 failures in 5 minutes.
 2. **The intervals.** A 2-second resend, a 30-second roster and a 100ms beat are judgement calls.
    Each is a single constant, to be tuned against the rig and the logs.
-3. **A row deleted under a live socket.** Seen once (Phase 3 results). Two small Lambda changes
-   would make it visible and short: log every row `emit` deletes on `GoneException`, with the
-   message type; and when a message arrives from a connection with no row, close that socket
-   (`DeleteConnection`) rather than ignoring it, so the browser reconnects within one heartbeat
-   (20 seconds) instead of waiting out three (about 65).
+3. **A row deleted under a live socket.** Found and fixed after Phase 3; see that section. The
+   one synthetic student seen mid-run was not reproduced, and if it recurs the `gone` and
+   `rowless` log lines now say when, to whom, and what was being sent.

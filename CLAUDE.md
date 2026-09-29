@@ -1009,6 +1009,12 @@ debugging browser to find.
   degraded STAYS degraded while it is kept warm, which is why stopping and restarting a share in
   class never helped. `test/relay.mjs` counts connections at a local server and fails if the
   pattern comes back.
+- **A new socket answers `GoneException` until its `$connect` has returned**, and `$connect`
+  writes the connection's row before that. So a broadcast in between finds the row, gets Gone,
+  and must NOT treat it as stale: `emit` deleted it, and 4 of 20 students joining during fast
+  typing were left on an open socket with no row, hearing nothing. `emit` keeps a row younger
+  than `ARRIVING` (10s), and a message from a socket with no row closes it so the client
+  reconnects. `test/relay.mjs` and `test:classroom -- --arrivals` guard it.
 - **Nothing a client sends on the live socket may exceed 28KB in one piece.** Three limits, and
   the smallest decides. The Lambda drops a deck patch over 32KB (`DECK_LIMIT`) without a word,
   so the snapshot of every annotated slide, which passes that within a few handwritten words,

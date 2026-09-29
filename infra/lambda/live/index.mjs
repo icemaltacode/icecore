@@ -53,7 +53,7 @@ import { randomUUID } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, QueryCommand, GetCommand, PutCommand, DeleteCommand, UpdateCommand }
   from '@aws-sdk/lib-dynamodb';
-import { ApiGatewayManagementApiClient, PostToConnectionCommand }
+import { ApiGatewayManagementApiClient, PostToConnectionCommand, DeleteConnectionCommand }
   from '@aws-sdk/client-apigatewaymanagementapi';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -271,11 +271,25 @@ async function connectionsCached(cohort) {
   return rows;
 }
 
+/* HOW LONG A CONNECTION IS STILL ARRIVING. API Gateway answers a post to a connection with
+ * `GoneException` until its `$connect` handler has returned, and `$connect` writes the row before
+ * it returns - so for that stretch the room's list names somebody who cannot yet be reached, and
+ * the index the list is read from is eventually consistent besides. Ten seconds covers a cold
+ * start with room to spare; a row that really is dead at that age is forgotten by the next post
+ * after it, or by its own `$disconnect`. */
+const ARRIVING = 10_000;
+
 /**
  * Send one payload to every connection in a cohort's session.
  *
  * A `GoneException` is ROUTINE and means the row is stale rather than that something failed:
- * a client that closed a laptop lid never sent `$disconnect`. Delete the row and carry on.
+ * a client that closed a laptop lid never sent `$disconnect`. Delete the row and carry on -
+ * UNLESS THE CONNECTION IS STILL ARRIVING (see `ARRIVING`). Deleting that row left a student
+ * whose socket had just opened with no row at all: nothing was sent to them again and nothing
+ * they sent was answered, with no close to say so, until their heartbeat gave up a minute later.
+ * An educator typing sends ten pushes a second, so a student joining or reconnecting in the
+ * middle of a demonstration was the likeliest to land in that window.
+ *
  * Every other failure is logged and swallowed - one unreachable client must not stop the
  * other eleven hearing what was said.
  */
@@ -304,8 +318,13 @@ async function emit(event, cohort, payload, { except, only, sub, from } = {}) {
       return 1;
     } catch (e) {
       if (e.name === 'GoneException') {
+        const age = Date.now() - Date.parse(row.at || 0);
+        if (age < ARRIVING) return 0;
         await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: row.pk, sk: row.sk } }))
           .catch(() => {});
+        /* SAID, because it takes somebody out of the room. It was silent, as routine, and the one
+         * time it took a live student out there was nothing in the log to say it had happened. */
+        console.log('gone', payload?.type, id, `${Math.round(age / 1000)}s`);
         return 0;
       }
       /* WHAT WAS LOST, not only that something was. The type is the difference between "a
@@ -915,11 +934,17 @@ async function connect(event) {
 /* The connection id is all `$disconnect` carries, so the row is found before it is deleted.
  * One extra read on a path that runs once per socket, which buys the sort key carrying the
  * cohort - and that is what makes fan-out a single query on an index that already exists. */
+/* CONSISTENT, because a row that was written a moment ago must be found. A socket's first
+ * messages - asking for the roster, saying where it is - follow its `$connect` by milliseconds,
+ * and an eventually consistent read could miss the row and ignore them. It matters more now that
+ * a message with no row behind it closes its socket (see `message`): a miss would close a socket
+ * that had just opened. */
 const rowFor = async connectionId => {
   const r = await ddb.send(new QueryCommand({
     TableName: TABLE,
     KeyConditionExpression: 'pk = :pk',
     ExpressionAttributeValues: { ':pk': `CONN#${connectionId}` },
+    ConsistentRead: true,
     Limit: 1,
   }));
   return r.Items?.[0] || null;
@@ -1051,8 +1076,20 @@ async function deckAudience(row, to, held, connectionId) {
 async function message(event) {
   const id = event.requestContext.connectionId;
   const row = await rowFor(id);
-  // A socket whose row has gone is a socket this function no longer knows anything about.
-  if (!row) return { statusCode: 401, body: 'unknown connection' };
+  /* A SOCKET WHOSE ROW HAS GONE is a socket this function no longer knows anything about, so it
+   * is CLOSED rather than ignored. Ignored, it was a student left in a room that could not hear
+   * them and would not speak to them: nothing is sent to a connection without a row, and its
+   * pings went unanswered, so the only way back was the client's heartbeat giving up after three
+   * silent intervals - over a minute. Closed, the client's `onclose` reconnects at once, with a
+   * fresh row. Its next ping is at most twenty seconds away, so that is the worst case now. */
+  if (!row) {
+    let type = null;
+    try { type = JSON.parse(event.body || '{}').type ?? null; } catch { /* not JSON */ }
+    console.log('rowless', type, id);
+    await managementFor(event).send(new DeleteConnectionCommand({ ConnectionId: id }))
+      .catch(() => {});
+    return { statusCode: 401, body: 'unknown connection' };
+  }
 
   let msg;
   try { msg = JSON.parse(event.body || '{}'); }

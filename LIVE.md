@@ -152,7 +152,12 @@ a hostname — the ticket already names everything the server has to know.
 A message is delivered with `PostToConnectionCommand` from
 `@aws-sdk/client-apigatewaymanagementapi`, per connection. **A `GoneException` is routine
 and means the row is stale** — delete it and carry on; a client that closed a laptop lid
-without a clean `$disconnect` is the normal case, not an error to log.
+without a clean `$disconnect` is the normal case, not an error to log. **Except for a
+connection still arriving:** API Gateway answers Gone until `$connect` has returned, and the
+row is written before that, so a broadcast in between used to delete the row of a student who
+had just joined and leave their socket deaf. A row younger than 10 seconds is kept, every
+deletion is logged as `gone`, and a message from a socket with no row closes it so the client
+reconnects. See LIVE-RELIABILITY.md, "After Phase 3".
 
 The management endpoint is built **from the event** — `requestContext.apiId` and `.stage` —
 rather than from an environment variable. Passing it in would make the function depend on

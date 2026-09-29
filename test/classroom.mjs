@@ -54,6 +54,8 @@ const MINUTES = Number(arg('minutes', 12));
 const LABEL = String(arg('label', 'run'));
 const OUT = arg('out', null);
 const OVERSIZE = arg('oversize', false) === true;
+const ARRIVALS = arg('arrivals', false) === true;
+const ROWLESS = arg('rowless', false) === true;
 
 /* THE AWS SDK COMES FROM infra/, the one place it is installed. A machine without infra's
  * dependencies cannot run this at all, and says so rather than failing somewhere obscure. */
@@ -281,6 +283,90 @@ async function oversize() {
   }
 }
 
+/** The Lambda's row for one sub's connection in this cohort, or null. */
+async function rowOf(sub) {
+  const r = await ddb.send(new sdk.QueryCommand({
+    TableName: TABLE, IndexName: 'byCourse', KeyConditionExpression: 'sk = :sk',
+    ExpressionAttributeValues: { ':sk': `LIVECONN#${COHORT}` },
+  }));
+  return (r.Items || []).find(i => i.sub === sub) || null;
+}
+
+/* A STUDENT ARRIVING WHILE THE EDUCATOR TYPES. API Gateway answers a post to a connection with
+ * Gone until its `$connect` has returned, and `$connect` writes the row first - so a push landing
+ * in between used to make `emit` delete the row of somebody who had only just arrived, leaving an
+ * open socket that nothing was sent to again. The educator pushes twenty times a second here, as
+ * fast typing now does with room to spare, while one student connects twenty times: each time,
+ * is its row still there a moment later, and is it hearing the pushes? */
+async function arrivals() {
+  const started = Date.now();
+  await ddb.send(new sdk.PutCommand({ TableName: TABLE, Item: session() }));
+  try {
+    const tutor = await connect(TUTOR, 'Synthetic tutor', 'tutor');
+    send(tutor, { type: 'sync', on: true });
+    await sleep(3000);
+    let n = 0, typing = true;
+    const typer = (async () => {
+      while (typing) {
+        send(tutor, { type: 'push', at: 'syn-editor', step: 0, cursor: 1, anchor: null,
+                      code: `# push ${n++}\n` });
+        await sleep(50);
+      }
+    })();
+    const trials = [];
+    for (let i = 0; i < 20; i++) {
+      const sub = `zz-synthetic-arrival-${String(i).padStart(2, '0')}`;
+      const c = await connect(sub, `Arrival ${i}`, 'student');
+      await sleep(1500);
+      const row = await rowOf(sub);
+      const before = c.got.push.size;
+      await sleep(1000);
+      trials.push({ rowKept: !!row, hearing: c.got.push.size > before });
+      try { c.ws.close(); } catch { /* gone */ }
+      await sleep(300);
+    }
+    typing = false;
+    await typer;
+    const lost = trials.filter(t => !t.rowKept).length;
+    const deaf = trials.filter(t => !t.hearing).length;
+    console.log(`arrivals: ${trials.length}, arrived without a row ${lost}, not hearing pushes ${deaf}`);
+    return { label: LABEL, kind: 'arrivals', startedAt: new Date(started).toISOString(),
+             trials: trials.length, arrivedWithoutRow: lost, notHearing: deaf, detail: trials };
+  } finally {
+    await cleanup();
+  }
+}
+
+/* A SOCKET WHOSE ROW HAS GONE. Its row is deleted from under it, it sends one ping, and the
+ * question is whether the Lambda closes it - so the client reconnects - or ignores it, which
+ * leaves it deaf until its heartbeat gives up a minute later. */
+async function rowless() {
+  const started = Date.now();
+  await ddb.send(new sdk.PutCommand({ TableName: TABLE, Item: session() }));
+  try {
+    await connect(TUTOR, 'Synthetic tutor', 'tutor');
+    const results = [];
+    for (let i = 0; i < 3; i++) {
+      const sub = `zz-synthetic-rowless-${i}`;
+      const c = await connect(sub, `Rowless ${i}`, 'student');
+      await sleep(1500);
+      const row = await rowOf(sub);
+      if (!row) { results.push({ trial: i, closedMs: null, note: 'no row to delete' }); continue; }
+      await ddb.send(new sdk.DeleteCommand({ TableName: TABLE, Key: { pk: row.pk, sk: row.sk } }));
+      await sleep(500);
+      const t0 = performance.now();
+      send(c, { type: 'ping' });
+      for (let w = 0; w < 60 && !c.closed; w++) await sleep(50);
+      results.push({ trial: i, closedMs: c.closed ? Math.round(c.closed.at - t0) : null,
+                     code: c.closed?.code ?? null });
+    }
+    console.table(results);
+    return { label: LABEL, kind: 'rowless', startedAt: new Date(started).toISOString(), results };
+  } finally {
+    await cleanup();
+  }
+}
+
 function session() {
   return {
     pk: 'COHORTS', sk: `LIVE#${COHORT}`,
@@ -498,8 +584,9 @@ async function lesson() {
 }
 
 // ---------------------------------------------------------------- run
-const result = OVERSIZE ? await oversize() : await lesson();
-if (!OVERSIZE) {
+const result = OVERSIZE ? await oversize() : ARRIVALS ? await arrivals()
+  : ROWLESS ? await rowless() : await lesson();
+if (!OVERSIZE && !ARRIVALS && !ROWLESS) {
   const r = result;
   console.log(`\n${r.label}: ${r.students} students, ${r.minutes} minutes, ${r.cohort}`);
   console.table(Object.fromEntries(['push', 'deck', 'move'].map(k => [k, {
