@@ -33,7 +33,20 @@ async function json(url) {
 export const loadManifest = () => json(`${BASE}courses.json`);
 
 /** One course: units, exercises, expected results, and reference solutions. */
-export const loadCourse = id => json(`${BASE}${encodeURIComponent(id)}/index.json`);
+export async function loadCourse(id) {
+  const course = await json(`${BASE}${encodeURIComponent(id)}/index.json`);
+  /* EACH SQL EXERCISE IS HANDED ITS DATASET'S TABLES, for the editor to complete. The build
+   * writes them once per dataset rather than once per exercise - see `schemas` in build.mjs -
+   * so they are attached here, by reference, and an exercise whose setup adds a view already
+   * carries its own and keeps it. */
+  const schemas = course?.schemas || {};
+  for (const m of course?.modules || [])
+    for (const u of m.units || [])
+      for (const t of u.topics || [])
+        for (const ex of t.exercises || [])
+          if (ex.dataset && !ex.schema && schemas[ex.dataset]) ex.schema = schemas[ex.dataset];
+  return course;
+}
 
 /* The Playground's declaration of what it offers - sets of datasets, borrowed from the
  * courses that own them. Its own file rather than a field of index.json: index.json is the

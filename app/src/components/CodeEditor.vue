@@ -3,6 +3,7 @@ import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { EditorState, Compartment, StateField, StateEffect } from '@codemirror/state';
 import { EditorView, WidgetType, Decoration, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { autocompletion } from '@codemirror/autocomplete';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
@@ -25,7 +26,15 @@ const highlight = HighlightStyle.define([
  * only thing that differs is which CodeMirror language extension is installed - the
  * theming, the keymap and the Mod-Enter-to-run contract are the same editor. Two copies
  * would have drifted the moment either was touched. */
-const LANGUAGES = { sql: () => sql({ dialect: PostgreSQL }), python: () => python() };
+/* WHAT EACH LANGUAGE OFFERS TO COMPLETE comes with it. SQL gets the exercise's tables and
+ * columns - `schema`, read out of the dataset at build time - and its keywords in capitals,
+ * which is how every query in the courses is written. Python completes its keywords, its
+ * builtins and the names already written in the editor; it cannot know what the setup
+ * defined or what a DataFrame has, and does not pretend to. */
+const LANGUAGES = {
+  sql: schema => sql({ dialect: PostgreSQL, upperCaseKeywords: true, schema: schema || undefined }),
+  python: () => python(),
+};
 
 /* SOMEBODY ELSE'S CARET, drawn in this editor.
  *
@@ -212,6 +221,8 @@ const props = defineProps({
   peerName: String,
   /** Code that runs before this editor's, shown folded above it - see `Preamble`. */
   preamble: { type: String, default: '' },
+  /** SQL only: the tables and columns this exercise can query, `{ table: [column] }`. */
+  schema: { type: Object, default: null },
 });
 const emit = defineEmits(['update:modelValue', 'run', 'cursor']);
 const host = ref(null);
@@ -220,6 +231,8 @@ let view = null;
  * the view would throw away the undo history and the scroll position each time. */
 const editable = new Compartment();
 const preambled = new Compartment();
+const language = new Compartment();
+const languageFor = () => (LANGUAGES[props.language] || LANGUAGES.sql)(props.schema);
 
 onMounted(() => {
   view = new EditorView({
@@ -232,7 +245,10 @@ onMounted(() => {
         peer,
         lineNumbers(), history(), highlightActiveLine(),
         syntaxHighlighting(highlight, { fallback: true }),
-        (LANGUAGES[props.language] || LANGUAGES.sql)(),
+        language.of(languageFor()),
+        /* AS THEY TYPE, and Ctrl+Space when they want it sooner. Enter takes the suggestion
+         * while the list is open and is a new line otherwise; Cmd/Ctrl+Enter still runs. */
+        autocompletion(),
         keymap.of([
           { key: 'Mod-Enter', run: () => (emit('run'), true) },
           indentWithTab, ...defaultKeymap, ...historyKeymap,
@@ -338,6 +354,22 @@ onMounted(() => {
             fontFamily: 'var(--ice-font-mono)', fontSize: '13px', lineHeight: '1.6',
             opacity: '.8',
           },
+          /* The suggestion list, in the app's own tokens: CodeMirror's default is a light
+             box, which in the dark theme is a white rectangle over the code. */
+          '.cm-tooltip': {
+            background: 'var(--ice-bg)', color: 'var(--ice-fg)',
+            border: '1px solid var(--ice-border)', borderRadius: '8px',
+            boxShadow: '0 8px 24px rgb(0 0 0 / .22)', overflow: 'hidden',
+          },
+          '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+            fontFamily: 'var(--ice-font-mono)', fontSize: '13px', maxHeight: '14em',
+          },
+          '.cm-tooltip.cm-tooltip-autocomplete > ul > li': { padding: '2px 10px 2px 6px' },
+          '.cm-tooltip-autocomplete ul li[aria-selected]': {
+            background: 'var(--ice-primary-soft)', color: 'var(--ice-fg)',
+          },
+          '.cm-completionDetail': { color: 'var(--ice-fg-muted)', fontStyle: 'normal' },
+          '.cm-completionMatchedText': { textDecoration: 'none', fontWeight: '700' },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
           '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
             background: 'var(--ice-primary-soft)',
@@ -368,6 +400,10 @@ const applyPeer = () => view?.dispatch({
   }),
 });
 watch(() => [props.peerAt, props.peerAnchor, props.peerName], applyPeer);
+
+watch(() => [props.language, props.schema], () => {
+  view?.dispatch({ effects: language.reconfigure(languageFor()) });
+});
 
 watch(() => [props.preamble, props.language], () => {
   view?.dispatch({ effects: preambled.reconfigure(preamble(props.preamble, props.language)) });

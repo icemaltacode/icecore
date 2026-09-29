@@ -770,6 +770,70 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
     }
   }
 
+  // ---- what the editor may complete ----
+  //
+  // Table and column names, so a student typing a query is offered the ones that exist - a
+  // mistyped column is the commonest thing a SQL exercise is failed on. Read from the
+  // database itself rather than parsed out of the dataset's SQL: views, `CREATE TABLE AS`
+  // and anything an exercise's setup adds are only known once they have run.
+  //
+  // PER DATASET, not per exercise. The same dozen tables would otherwise be written into
+  // index.json two hundred times; they go once, as the course's `schemas`, and the player
+  // hands each exercise its dataset's (see content.js). Only an exercise whose setup changes
+  // what is there carries its own. Cached like the expected results, so a warm build boots
+  // no database for this either.
+  {
+    const read = async dump => {
+      const db = new PGlite({ loadDataDir: dump, extensions: EXTENSIONS });
+      try {
+        const { rows } = await db.query(`
+          SELECT table_schema AS s, table_name AS t, column_name AS c
+            FROM information_schema.columns
+           WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+           ORDER BY table_schema, table_name, ordinal_position`);
+        const out = {};
+        // A table outside `public` is completed by its qualified name, which is how it
+        // has to be written.
+        for (const r of rows) (out[r.s === 'public' ? r.t : `${r.s}.${r.t}`] ||= []).push(r.c);
+        return out;
+      } finally { await db.close(); }
+    };
+    const known = new Map();
+    const schemaFor = async (dataset, setup) => {
+      const key = cache.schemaKeyFor(datasets[dataset], setup);
+      if (!known.has(key)) {
+        let schema = cache.get(key)?.schema || null;
+        if (!schema) {
+          try {
+            let dump = await template(dataset);
+            if (setup) dump = await withSetup(dump, setup);
+            schema = await read(dump);
+            cache.put(key, { schema });
+          } catch {
+            // A setup that fails is already a warning from the pass above; it just
+            // completes nothing extra.
+            schema = null;
+          }
+        }
+        known.set(key, schema);
+      }
+      return known.get(key);
+    };
+
+    for (const course of courses.values()) {
+      for (const u of topicsOf(course)) {
+        for (const ex of u.exercises) {
+          if (ex.type !== 'coding' || !ex.dataset || !datasets[ex.dataset]) continue;
+          const base = await schemaFor(ex.dataset, '');
+          if (base) (course.schemas ||= {})[ex.dataset] = base;
+          if (!ex.setup) continue;
+          const own = await schemaFor(ex.dataset, ex.setup);
+          if (own && JSON.stringify(own) !== JSON.stringify(base)) ex.schema = own;
+        }
+      }
+    }
+  }
+
   // ---- hand corrections still in place ----
   //
   // See `correctionRegister`. The register says which exercises were fixed by hand; the

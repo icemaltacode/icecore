@@ -33,3 +33,6 @@ export { pyodideOptions } from '../../app/src/wheels.js';
  * adds no seam to the player either - `findFromDOM` is CodeMirror's own public door onto a
  * view that is already mounted, and the package is already in this bundle. */
 export { EditorView } from '@codemirror/view';
+/* And what it is offering to complete, read from its own state rather than from a popup
+ * jsdom cannot lay out. Same bundle, so the same module instance the editor itself uses. */
+export { startCompletion, currentCompletions } from '@codemirror/autocomplete';

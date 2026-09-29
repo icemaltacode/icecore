@@ -41,6 +41,7 @@
     "test:rig": "node test/rig.mjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.9.0",
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-sql": "^6.8.0",

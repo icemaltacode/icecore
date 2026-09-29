@@ -103,6 +103,14 @@ export function openExpectedCache({ contentDir, extensions = [], log = () => {} 
       : [s.solution || '', !!s.nondeterministic]),
   ]));
 
+  /* WHAT A DATASET HOLDS once an exercise's setup has run: its tables and their columns, for
+   * the editor to complete. Its own key rather than a step in `keyFor`, because it belongs
+   * to the dataset and the setup and to nothing a solution does - eight datasets answer for
+   * two hundred exercises, and each is booted once, on a cold cache, and never again. */
+  const schemaKeyFor = (datasetSql, setup) => sha(JSON.stringify([
+    runKey, 'schema', sha(datasetSql || ''), setup || '',
+  ]));
+
   const file = key => path.join(dir, `${key}.json`);
 
   /* Registers the key as live whether or not it hits, so `sweep` can tell an entry this
@@ -150,5 +158,5 @@ export function openExpectedCache({ contentDir, extensions = [], log = () => {} 
     if (dropped) log(`  cache: dropped ${dropped} stale entr${dropped === 1 ? 'y' : 'ies'}`);
   };
 
-  return { enabled, keyFor, get, put, sweep, stats: () => ({ hits, writes }) };
+  return { enabled, keyFor, schemaKeyFor, get, put, sweep, stats: () => ({ hits, writes }) };
 }

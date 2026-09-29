@@ -22,15 +22,20 @@ const COURSE = {
     { topic: '1.1.1', title: 'Topic One',
       slides: 'slides/c1/1.1/index.html', slide: 3, end: 9, slideCount: 31,
       exercises: [
-        { id: 101, title: 'First', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 1' }] },
+        /* A dataset, and the tables the build would have read out of it, so the editor has
+         * something to complete - see the end of this file. */
+        { id: 101, title: 'First', type: 'coding', xp: 20, prompt: 'p', dataset: 'shop',
+          steps: [{ sample: 'SELECT 1' }] },
         { id: 102, title: 'Second', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 2' }] },
       ] },
   ] }] }],
+  schemas: { shop: { shop: ['id', 'city'], orders: ['id', 'shop_id', 'total'] } },
 };
 
 const dom = installDom({ hash: '#/', search: '?course=c1' });
 dom.serve('/content/courses.json', [{ id: 'c1', title: 'Course One', exercises: 2, xp: 40 }]);
 dom.serve('/content/c1/index.json', COURSE);
+dom.serve('/content/c1/data/shop.sql', 'CREATE TABLE shop (id int, city text);');
 
 const { createApp } = await import('vue');
 const { buildPlayer } = await import('./harness.mjs');
@@ -295,6 +300,34 @@ check('and a roster that changes nothing leaves it on screen',
   await submit();
   check('hours count, and an empty minutes box is a zero',
         out('timer').at(-1)?.seconds === 3605, JSON.stringify(out('timer').at(-1)));
+}
+
+/* ---- completion ---------------------------------------------------------------
+ *
+ * The editor offers what exists: in SQL, the exercise's own tables and columns, which the
+ * build reads out of the dataset once and the player hands to every exercise using it. A
+ * mistyped column is the commonest way a SQL exercise is failed. Read from CodeMirror's own
+ * state - what it is offering - rather than from a popup jsdom cannot lay out.
+ */
+{
+  footer(/Next/)?.click();
+  await settle(300);
+  const view = player.EditorView.findFromDOM(document.querySelector('.cm-editor'));
+  const offered = async text => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text },
+                    selection: { anchor: text.length } });
+    player.startCompletion(view);
+    await settle(250);
+    return player.currentCompletions(view.state).map(c => c.label);
+  };
+  const tables = await offered('SELECT * FROM ord');
+  check("the exercise's own tables are offered", tables.includes('orders'), tables.join(', '));
+  const columns = await offered('SELECT orders.');
+  check('and their columns', ['id', 'shop_id', 'total'].every(c => columns.includes(c)),
+        columns.join(', '));
+  const keywords = await offered('SELECT * FROM orders WHE');
+  check('keywords are offered in capitals, as the courses write them',
+        keywords.includes('WHERE'), keywords.join(', '));
 }
 
 player.outbox.on = false;
