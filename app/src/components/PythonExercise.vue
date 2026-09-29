@@ -549,8 +549,16 @@ const ranQuietly = computed(() =>
                 background: var(--ice-bg); border: 1px solid var(--ice-border); overflow-x: auto; }
 
 .work { display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); min-height: 0; }
-.editor-pane, .result-pane { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 0; }
-.result-pane { grid-template-rows: auto minmax(0, 1fr); border-top: 1px solid var(--ice-border); }
+/* THE EDITOR YIELDS AND THE BUTTONS NEVER DO. This was a three-row grid - tab bar, editor,
+   actions - left behind when the tab bar moved into EditorPane, so the editor fell into the
+   `auto` row and sized itself to the code, and the buttons fell into the one that may shrink
+   to nothing. Short code left an acre of empty action bar; long code, a small screen or a
+   zoomed page pushed the bar out of its row and under the editor, where Run and Check
+   answer could be seen and not pressed. The same column CodingExercise has always used. */
+.editor-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.editor-pane > .pane { flex: 1; min-height: 0; }
+.result-pane { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0;
+               border-top: 1px solid var(--ice-border); }
 .tabbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
           border-bottom: 1px solid var(--ice-border); }
 .tab { font-family: var(--ice-font-mono); font-size: 11px; color: var(--ice-fg-muted); }
