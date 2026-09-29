@@ -136,5 +136,51 @@ const check = (label, ok, detail = '') => {
         home.cwd !== '/' && !`/report.xlsx`.startsWith(`${home.cwd}/`), home.cwd);
 }
 
+// ---------------------------------------------------------------- completion
+/* What the editor may offer, from the live objects an exercise's setup made: the names it
+ * defined, a DataFrame's methods and columns, a module's functions. Read from a namespace of
+ * its own, which a Run must never see. */
+{
+  const pyodide = await loadPyodide();
+  const g = await createGrader({ pyodide, packages: ['pandas'], readWheel });
+  pyodide.FS.mkdirTree('/ice-data/module-3');
+  pyodide.FS.writeFile('/ice-data/module-3/homelessness.csv',
+                       'region,state,individuals\nPacific,California,109008\nMountain,Utah,1904\n');
+  const cwd = '/ice-data/module-3';
+  const labels = rows => (rows || []).map(r => r[0]);
+  const row = (rows, label) => (rows || []).find(r => r[0] === label);
+
+  check('nothing is offered before the setup has run', g.complete('name', '', 'hom') === null);
+
+  g.hints({ pec: "import pandas as pd\nprint('noise')\nhomelessness = pd.read_csv('homelessness.csv')",
+            cwd });
+  const names = g.complete('name', '', 'hom');
+  check("the setup's own names are offered", labels(names).includes('homelessness'),
+        JSON.stringify(names));
+  check('and say what they are', row(names, 'homelessness')?.[2] === 'DataFrame',
+        JSON.stringify(row(names, 'homelessness')));
+
+  const methods = g.complete('attr', 'homelessness', 'he');
+  check("a DataFrame's methods follow its name", row(methods, 'head')?.[1] === 'method',
+        JSON.stringify(methods));
+  const cols = g.complete('attr', 'homelessness', '');
+  check('and its columns, as columns', row(cols, 'state')?.[2] === 'column',
+        JSON.stringify(row(cols, 'state')));
+  check('without running a property to name it', row(cols, 'T')?.[1] === 'property',
+        JSON.stringify(row(cols, 'T')));
+  check('private names stay out of the way', !labels(cols).some(l => l.startsWith('_')));
+
+  const keys = g.complete('key', 'homelessness', 'st');
+  check('inside homelessness["...", its column names', JSON.stringify(labels(keys)) === '["state"]',
+        JSON.stringify(keys));
+  check("a module's functions follow its name",
+        row(g.complete('attr', 'pd', 'read_c'), 'read_csv')?.[1] === 'function');
+  check('something that does not exist offers nothing rather than failing',
+        JSON.stringify(g.complete('attr', 'nothing_here', '')) === '[]');
+
+  const run = await g.run({ pec: '', submission: "print('homelessness' in globals())", cwd });
+  check("a Run never sees the editor's namespace", run.output.trim() === 'False', run.output);
+}
+
 console.log(failures ? `\n${failures} failing` : '\nall green');
 process.exit(failures ? 1 : 0);

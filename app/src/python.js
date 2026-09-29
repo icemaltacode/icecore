@@ -318,6 +318,111 @@ def _ice_grade(pec, sol, stu, sct, cwd, seed, capture):
         "error": err or "",
         "figures": _ice_figures() if capture else [],
     }
+
+# ---- completion: the names the setup made -----------------------------------
+#
+# Students start an exercise with homelessness already defined and pandas already imported,
+# and the editor could only offer what they had typed themselves. So the setup is run a
+# second time, into a namespace of its OWN - never the one a Run or a Check uses - and the
+# editor asks it what exists.
+#
+# NOTHING HERE PARSES WHAT WAS TYPED. The JavaScript side has already worked out whether the
+# caret is after a dot, inside a subscript's quotes or on a bare name, and asks one of three
+# plain questions. A regex written here would live inside a JavaScript template literal,
+# where a backslash is an escape before Python ever sees it.
+#
+# NOTHING HERE RUNS AN ATTRIBUTE TO NAME IT. getattr on every name a DataFrame lists would
+# transpose it for .T, build a Styler for .style and raise for .dt - so a name is classified
+# statically, by what it is on the class, and a column is anything the class does not know.
+
+_ice_hint_ns = None
+
+def _ice_hints(pec, cwd):
+    """Run the setup into a fresh namespace for the editor to complete from."""
+    global _ice_hint_ns
+    import io, contextlib
+    ns = {"__name__": "__ice_hints__"}
+    try:
+        quiet = io.StringIO()
+        with ChDir(cwd or os.getcwd()):
+            with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
+                exec(pec or "", ns)
+    except BaseException:
+        # A setup that stops half way still defined what came before it, which is still
+        # worth offering.
+        pass
+    _ice_hint_ns = ns
+    return True
+
+def _ice_kind(value):
+    import inspect
+    if inspect.ismodule(value):
+        return "namespace"
+    if inspect.isclass(value):
+        return "class"
+    if isinstance(value, (staticmethod, classmethod)) or inspect.isroutine(value):
+        return "function"
+    if isinstance(value, property) or inspect.isdatadescriptor(value):
+        return "property"
+    return "variable"
+
+def _ice_lookup(ns, path):
+    import inspect
+    parts = path.split(".")
+    if parts[0] not in ns:
+        raise KeyError(parts[0])
+    obj = ns[parts[0]]
+    for part in parts[1:]:
+        found = inspect.getattr_static(obj, part)
+        # A module attribute or an instance's own value is the thing itself; a property on
+        # the class would have to be run to get one, and is not.
+        if _ice_kind(found) == "property":
+            raise AttributeError(part)
+        obj = found
+    return obj
+
+def _ice_complete(kind, base, prefix):
+    """[label, type, detail] for what may follow, or None until the setup has run."""
+    import inspect
+    ns = _ice_hint_ns
+    if ns is None:
+        return None
+    out = []
+    try:
+        if kind == "name":
+            for name, value in ns.items():
+                if name.startswith("_") or not name.startswith(prefix):
+                    continue
+                out.append([name, _ice_kind(value), type(value).__name__])
+        elif kind == "attr":
+            obj = _ice_lookup(ns, base)
+            for name in dir(obj):
+                if not name.startswith(prefix):
+                    continue
+                if name.startswith("_") and not prefix.startswith("_"):
+                    continue
+                missing = object()
+                found = inspect.getattr_static(obj, name, missing)
+                if found is missing:
+                    # Listed by dir() and unknown to the class: a DataFrame's columns.
+                    out.append([name, "property", "column"])
+                else:
+                    k = _ice_kind(found)
+                    out.append([name, "method" if k == "function" and not inspect.ismodule(obj)
+                                else k, ""])
+        elif kind == "key":
+            obj = _ice_lookup(ns, base)
+            if hasattr(obj, "columns"):
+                keys, detail = list(obj.columns), "column"
+            elif isinstance(obj, dict):
+                keys, detail = list(obj.keys()), "key"
+            else:
+                keys, detail = [], ""
+            out = [[k, "property", detail] for k in keys
+                   if isinstance(k, str) and k.startswith(prefix)]
+    except Exception:
+        return []
+    return out[:300]
 `;
 
 /* Plots are rendered to a memory buffer rather than to a canvas. Nothing in module 2's 551
@@ -367,6 +472,8 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
   pyodide.runPython(BRIDGE);
   const call = pyodide.globals.get('_ice_grade');
   const exec = pyodide.globals.get('_ice_run');
+  const hints = pyodide.globals.get('_ice_hints');
+  const complete = pyodide.globals.get('_ice_complete');
 
   /* Python hands back a proxy; every caller wants a plain object and none wants the leak. */
   const plain = result => {
@@ -405,6 +512,23 @@ export async function createGrader({ pyodide, readWheel, packages = [], wheels =
      */
     async run({ pec = '', submission, cwd = '', seed = DEFAULT_SEED }) {
       return plain(exec(pec, submission, cwd, seed));
+    },
+
+    /**
+     * Run the exercise's setup into a namespace of its own, for `complete` to read. Never the
+     * namespace a run or a grade uses, so nothing here can change what either of them sees.
+     */
+    hints({ pec = '', cwd = '' }) { hints(pec, cwd); },
+
+    /**
+     * What may follow the caret, as `[label, type, detail]`, or null until `hints` has run.
+     * `kind` is 'name' (a bare word), 'attr' (after `base.`) or 'key' (inside `base["`), and
+     * the caller has already worked out which - see `_ice_complete`.
+     */
+    complete(kind, base, prefix) {
+      const r = complete(kind, base || '', prefix || '');
+      if (r == null) return null;
+      try { return r.toJs(); } finally { r.destroy?.(); }
     },
   };
 }

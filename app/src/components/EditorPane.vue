@@ -46,6 +46,8 @@ const props = defineProps({
   preamble: { type: String, default: '' },
   /** SQL: the tables and columns the exercise can query, for completion - see CodeEditor. */
   schema: { type: Object, default: null },
+  /** Python: a completion source over what the setup made - see PythonExercise. */
+  completions: { type: Function, default: null },
   /* Somebody else's caret IN THIS STUDENT'S BUFFER - remote control, and nothing else. */
   peerAt: { type: Number, default: null },
   peerAnchor: { type: Number, default: null },
@@ -208,7 +210,7 @@ function take() {
            history and the scroll position, and the split flips this twice on a resize. -->
       <div v-show="split || showing === 'mine'" class="one">
         <CodeEditor v-model="mine" :language="language" :readonly="readonly"
-                    :preamble="preamble" :schema="schema"
+                    :preamble="preamble" :schema="schema" :completions="completions"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="moved('mine', $event)" @run="emit('run')" />
       </div>

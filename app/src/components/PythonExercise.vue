@@ -14,7 +14,9 @@
  */
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
-import { gradePython, runPython, pythonReady } from '../py.js';
+import { gradePython, runPython, pythonReady, warmPython, completePython } from '../py.js';
+import { syntaxTree } from '@codemirror/language';
+import { askFor } from '../pycomplete.js';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
 import { askTutor, tutorAvailable } from '../hint.js';
@@ -140,6 +142,50 @@ const running = computed(() =>
 watch(code, sendSoon);
 watch(() => props.resend, sendSoon);
 onBeforeUnmount(() => sendSoon.cancel());
+
+/* ---- COMPLETION FROM WHAT THE SETUP MADE ----------------------------------------------
+ *
+ * The editor completes Python's keywords and what has already been typed on its own. What it
+ * could not offer is what the SETUP defined - `homelessness`, `pd` - and what those hold: a
+ * DataFrame's methods and columns. Students were starting exercises unsure what already
+ * existed; this answers it where they are typing.
+ *
+ * WARMED WHEN THE BROWSER IS IDLE, NEVER WAITED FOR. It needs the interpreter, which takes
+ * seconds, so until it arrives this source answers nothing and the editor carries on with
+ * what it had; the names join in from the next keystroke after. The same warm-up pays for
+ * the interpreter a first Run used to wait on.
+ *
+ * IDLE, AND STILL ON THE MAIN THREAD. Pyodide runs here rather than in a worker, and
+ * importing pandas holds the page for a second or two - scheduled for idle time it usually
+ * lands while the instructions are being read. The timeout makes it happen on a page that is
+ * never idle. A worker is the real fix, and a larger one. */
+const IDLE_WAIT = 4000;
+const idle = typeof requestIdleCallback === 'function'
+  ? { at: fn => requestIdleCallback(fn, { timeout: IDLE_WAIT }), off: id => cancelIdleCallback(id) }
+  : { at: fn => setTimeout(fn, 1500), off: id => clearTimeout(id) };
+/* Nothing to offer without a setup, and nothing worth an interpreter for: a first exercise
+ * with no setup still gets its Run warmed by the next one that has. */
+const warming = props.exercise.setup
+  ? idle.at(() => { warmPython(props.courseId, props.exercise).catch(() => {}); })
+  : null;
+onBeforeUnmount(() => { if (warming != null) idle.off(warming); });
+
+/* What is being asked - a subscript's key, after a dot, a bare word - is worked out in
+ * pycomplete.js, and Python only answers. */
+const liveCompletions = context => {
+  const line = context.state.doc.lineAt(context.pos);
+  const before = line.text.slice(0, context.pos - line.from);
+  const node = syntaxTree(context.state).resolveInner(context.pos, -1).name;
+  const ask = askFor(before, node, context.explicit);
+  if (!ask) return null;
+  const rows = completePython(props.exercise, ...ask);
+  if (!rows?.length) return null;
+  return {
+    from: context.pos - ask[2].length,
+    options: rows.map(([label, type, detail]) => ({ label, type, detail: detail || undefined })),
+    validFor: /^\w*$/,
+  };
+};
 
 /* What solved each step, this time round: filled as steps pass and handed up whole when the
  * exercise completes, because that is the moment there is an answer worth keeping. A step
@@ -469,7 +515,7 @@ const ranQuietly = computed(() =>
     <section class="work">
       <div class="editor-pane">
         <EditorPane v-model="code" name="script.py" language="python" :readonly="frozen"
-                    :preamble="exercise.setup || ''"
+                    :preamble="exercise.setup || ''" :completions="liveCompletions"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"

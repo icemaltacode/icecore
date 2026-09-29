@@ -41,6 +41,12 @@ that could be shown externally or open-sourced.
   through a topic: its slides, then the exercises that practise them. `App.vue` and
   `ContentsModal.vue` both draw it, and the two disagreeing reads as exercises going
   missing.
+- `app/src/pycomplete.js` — pure, like `walk.js`. What a Python editor is being asked to
+  complete (a bare name, after a dot, inside `x["`), worked out in JavaScript because a regex
+  inside the Python bridge sits in a template literal. `py.js`'s `warmPython` runs the setup
+  into a namespace of its own at idle time and `_ice_complete` answers from it; until it has,
+  the editor offers only what CodeMirror knows. Pyodide is on the main thread, so the warm-up
+  can hold the page for a second or two - a worker is the real fix.
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 

@@ -223,6 +223,10 @@ const props = defineProps({
   preamble: { type: String, default: '' },
   /** SQL only: the tables and columns this exercise can query, `{ table: [column] }`. */
   schema: { type: Object, default: null },
+  /* A completion source of the caller's own, offered beside the language's: Python's names
+   * from the live interpreter. Added as language data rather than as an override, so the
+   * keywords and the names already typed stay offered too. */
+  completions: { type: Function, default: null },
 });
 const emit = defineEmits(['update:modelValue', 'run', 'cursor']);
 const host = ref(null);
@@ -232,6 +236,10 @@ let view = null;
 const editable = new Compartment();
 const preambled = new Compartment();
 const language = new Compartment();
+const completing = new Compartment();
+const extraCompletions = () => (props.completions
+  ? EditorState.languageData.of(() => [{ autocomplete: props.completions }])
+  : []);
 const languageFor = () => (LANGUAGES[props.language] || LANGUAGES.sql)(props.schema);
 
 onMounted(() => {
@@ -249,6 +257,7 @@ onMounted(() => {
         /* AS THEY TYPE, and Ctrl+Space when they want it sooner. Enter takes the suggestion
          * while the list is open and is a new line otherwise; Cmd/Ctrl+Enter still runs. */
         autocompletion(),
+        completing.of(extraCompletions()),
         keymap.of([
           { key: 'Mod-Enter', run: () => (emit('run'), true) },
           indentWithTab, ...defaultKeymap, ...historyKeymap,
@@ -400,6 +409,10 @@ const applyPeer = () => view?.dispatch({
   }),
 });
 watch(() => [props.peerAt, props.peerAnchor, props.peerName], applyPeer);
+
+watch(() => props.completions, () => {
+  view?.dispatch({ effects: completing.reconfigure(extraCompletions()) });
+});
 
 watch(() => [props.language, props.schema], () => {
   view?.dispatch({ effects: language.reconfigure(languageFor()) });

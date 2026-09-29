@@ -174,3 +174,28 @@ function readFiles(pyodide, cwd, names = []) {
 
 /** Whether the interpreter has already been paid for, so the UI can say so honestly. */
 export const pythonReady = () => !!grader;
+
+/* ---- the editor's completion, from what the setup made -------------------------------
+ *
+ * WARMED, NEVER WAITED FOR. An exercise asks for this when the browser is idle, and until it
+ * has finished `completePython` answers null and the editor offers what it always did. The
+ * same work also pays for the interpreter a first Run would otherwise have waited on.
+ *
+ * ONE EXERCISE AT A TIME, for the interpreter that is alive. A namespace holding the last
+ * exercise's DataFrames is memory for names nobody is being offered, and one belonging to an
+ * interpreter since replaced would offer names that no longer exist. */
+let hinted = null;   // { grader, id } - whose names the editor may be offered
+
+export async function warmPython(course, exercise) {
+  const mod = moduleDataDir(exercise.topicId || exercise.topic);
+  const g = await graderFor(exercise);
+  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
+  g.hints({ pec: exercise.setup || '', cwd });
+  hinted = { grader: g, id: exercise.id };
+}
+
+/** `[label, type, detail]` for what may follow the caret, or null while not warmed yet. */
+export function completePython(exercise, kind, base, prefix) {
+  if (!hinted || hinted.grader !== grader || hinted.id !== exercise.id) return null;
+  try { return grader.complete(kind, base, prefix); } catch { return null; }
+}
