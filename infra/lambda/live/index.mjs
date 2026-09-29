@@ -71,6 +71,9 @@ const offset = v => (Number.isFinite(Number(v)) && v != null ? Number(v) : undef
  * frame: past API Gateway's limit a message is not rejected in any way a person could see,
  * the connection is closed, which reads as the room going quiet. */
 const DECK_LIMIT = 32 * 1024;
+/* How many parts one deck patch may arrive in. Matches MAX_PARTS in app/src/parts.js - well
+ * over a megabyte of drawing, and a bound on what one message may ask this to relay. */
+const PARTS_MAX = 64;
 
 const json = (statusCode, body) => ({
   statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -177,12 +180,31 @@ const isAdmin = claims => {
  * One file, because a message that two functions can both send must have one definition;
  * two Lambdas, because that is the shape of the dependency.
  *
- * A missing WS_ENDPOINT on a socket event is not a fallback, it is the normal path. */
-const managementFor = event => new ApiGatewayManagementApiClient({
-  endpoint: process.env.WS_ENDPOINT
+ * A missing WS_ENDPOINT on a socket event is not a fallback, it is the normal path.
+ *
+ * ONE CLIENT PER ENDPOINT, FOR THE LIFE OF THE CONTAINER - and this was a new client per CALL,
+ * which is the single worst bug the live channel has had. Every client brings its own pool of
+ * keep-alive connections, so every post to every student opened a fresh HTTPS connection -
+ * its own DNS lookup, its own TLS handshake - and then left it open in a pool nothing would
+ * ever use again. A warm container accumulated them for as long as it lived, its memory
+ * climbed to the limit, and once enough had piled up DNS lookups failed with
+ * `getaddrinfo EBUSY` and posts started to fail: 2,850 of them in one lesson, each a message
+ * some student never received. `emit` swallowed every one, so no metric noticed. See
+ * LIVE-RELIABILITY.md.
+ *
+ * Keyed by endpoint rather than held in one constant because the socket function only learns
+ * its endpoint from the event - the cycle above. In practice the map holds one entry. The DynamoDB
+ * client at the top of this file is built once for the same reason, and never failed. */
+const management = new Map();
+const managementFor = event => {
+  const endpoint = process.env.WS_ENDPOINT
     || `https://${event.requestContext.apiId}.execute-api.`
-       + `${process.env.AWS_REGION}.amazonaws.com/${event.requestContext.stage}`,
-});
+       + `${process.env.AWS_REGION}.amazonaws.com/${event.requestContext.stage}`;
+  if (!management.has(endpoint)) {
+    management.set(endpoint, new ApiGatewayManagementApiClient({ endpoint }));
+  }
+  return management.get(endpoint);
+};
 
 /**
  * Who is EXPECTED in a session, as opposed to who is connected.
@@ -286,7 +308,10 @@ async function emit(event, cohort, payload, { except, only, sub, from } = {}) {
           .catch(() => {});
         return 0;
       }
-      console.error('post failed', id, e.name, e.message);
+      /* WHAT WAS LOST, not only that something was. The type is the difference between "a
+       * student missed a keystroke" and "a student missed a move", and a line without it
+       * cannot say which a lesson suffered. The metric filter counts these lines. */
+      console.error('post failed', payload?.type, id, e.name, e.code || '', e.message);
       return 0;
     }
   }));
@@ -302,7 +327,9 @@ const to = async (event, connectionId, payload) => {
       ConnectionId: connectionId, Data: Buffer.from(JSON.stringify(payload)),
     }));
   } catch (e) {
-    if (e.name !== 'GoneException') console.error('reply failed', e.name, e.message);
+    if (e.name !== 'GoneException') {
+      console.error('reply failed', payload?.type, connectionId, e.name, e.code || '', e.message);
+    }
   }
 };
 
@@ -900,6 +927,12 @@ const rowFor = async connectionId => {
 
 async function disconnect(event) {
   const row = await rowFor(event.requestContext.connectionId);
+  /* WHY IT CLOSED, and who it was. A socket closed by API Gateway for an oversized frame logs
+   * 1009, and that looked, from the educator's chair, like an ordinary "Connection lost" -
+   * nothing anywhere recorded the difference. One line per socket, a few dozen a lesson. */
+  const rc = event.requestContext;
+  console.log('closed', row?.role || 'unknown', rc.disconnectStatusCode ?? '-',
+              JSON.stringify(rc.disconnectReason ?? ''));
   if (!row) return { statusCode: 200, body: 'gone' };
   await ddb.send(new DeleteCommand({ TableName: TABLE, Key: { pk: row.pk, sk: row.sk } }));
   /* The row is deleted FIRST, so `left` cannot be heard by a client that then re-reads a
@@ -991,6 +1024,28 @@ async function orphaned(event, row) {
     return;   // somebody took it in the meantime, and theirs is the live one
   }
   await emit(event, row.cohort, { type: 'controlling', control: null });
+}
+
+/**
+ * WHO A DECK PATCH MAY GO TO, whole or in parts. `emit`'s options, or null for "not yours".
+ *
+ * ASKED FOR BY THE SENDER AND CHECKED HERE. An educator has two tabs open and they are the same
+ * PERSON, so `by` cannot tell them apart - a sub is all this side has. The tab says which of the
+ * two it is and this checks it is entitled to say so: the room needs the session, one student
+ * needs the control over that student. Getting it wrong in the trusting direction would put one
+ * student's screen in front of the whole class.
+ *
+ * One definition for `deck` and `part`, because a part judged differently from the whole it
+ * belongs to is a way around the check.
+ */
+async function deckAudience(row, to, held, connectionId) {
+  if (to === 'driven') {
+    const c = held?.control;
+    if (!c || c.by !== row.sub) return null;
+    return { sub: c.sub, from: await connectionsCached(row.cohort) };
+  }
+  if (!held || held.by !== row.sub) return null;
+  return { except: connectionId, from: await connectionsCached(row.cohort) };
 }
 
 async function message(event) {
@@ -1973,25 +2028,44 @@ async function tallied(cohort, mark, seeded = false) {
       const channel = String(msg.channel || '').slice(0, 300);
       const body = JSON.stringify(msg.data ?? null);
       if (!channel || body.length > DECK_LIMIT) return { statusCode: 200, body: 'not carried' };
-      /* WHO IT IS FOR, ASKED FOR BY THE SENDER AND CHECKED HERE.
-       *
-       * An educator has two tabs open and they are the same PERSON, so `by` cannot tell them
-       * apart - a sub is all this side has. The tab says which of the two it is and this
-       * checks it is entitled to say so: the room needs the session, one student needs the
-       * control over that student. Getting it wrong in the trusting direction would put one
-       * student's screen in front of the whole class. */
-      if (msg.to === 'driven') {
-        const c = held?.control;
-        if (!c || c.by !== row.sub) return { statusCode: 200, body: 'not driving' };
-        await emit(event, row.cohort, {
-          type: 'decked', channel, data: msg.data, origin, seq, at: now,
-        }, { sub: c.sub, from: await connectionsCached(row.cohort) });
-        return { statusCode: 200, body: 'ok' };
-      }
-      if (!held || held.by !== row.sub) return { statusCode: 200, body: 'not delivering' };
+      const audience = await deckAudience(row, msg.to, held, id);
+      if (!audience) return { statusCode: 200, body: 'not yours to send' };
       await emit(event, row.cohort, {
         type: 'decked', channel, data: msg.data, origin, seq, at: now,
-      }, { except: id, from: await connectionsCached(row.cohort) });
+      }, audience);
+      return { statusCode: 200, body: 'ok' };
+    }
+
+    /* A DECK PATCH TOO BIG TO CARRY WHOLE, arriving in pieces - see app/src/parts.js.
+     *
+     * `deck` above drops anything over DECK_LIMIT, and the snapshot of every annotated slide
+     * passes that within a few handwritten words - so the snapshot that gives a student back a
+     * stroke they missed reached nobody. API Gateway has its own limits beyond that, and cuts
+     * the sender off over them. So the client sends a big patch in parts and the receiving
+     * client puts it back together; this relays each part to exactly the audience the whole
+     * patch would have had, checked exactly as `deck` checks it.
+     *
+     * ONLY THE DECK TRAVELS THIS WAY, because it is the only message this function passes
+     * through untouched. Everything else is trimmed, validated or stamped here, and none of that
+     * can be done to a message this side only ever sees in pieces.
+     *
+     * `of` goes out as `decked`, the type the receivers listen for, so nothing above the
+     * receiving live.js knows that parts exist. */
+    case 'part': {
+      if (msg.of !== 'deck') return { statusCode: 200, body: 'not carried in parts' };
+      const n = Number(msg.n);
+      const total = Number(msg.total);
+      const pid = String(msg.id || '').slice(0, 60);
+      const chunk = typeof msg.chunk === 'string' ? msg.chunk : '';
+      if (!pid || !Number.isInteger(n) || !Number.isInteger(total) || total < 1
+          || total > PARTS_MAX || n < 0 || n >= total || !chunk || chunk.length > DECK_LIMIT) {
+        return { statusCode: 200, body: 'not a part' };
+      }
+      const held = await sessionCached(row.cohort);
+      const audience = await deckAudience(row, msg.to, held, id);
+      if (!audience) return { statusCode: 200, body: 'not yours to send' };
+      await emit(event, row.cohort, { type: 'part', of: 'decked', id: pid, n, total, chunk },
+                 audience);
       return { statusCode: 200, body: 'ok' };
     }
 
@@ -2106,6 +2180,10 @@ async function tallied(cohort, mark, seeded = false) {
       return { statusCode: 200, body: 'ok' };
   }
 }
+
+/* For test/relay.mjs, which runs the real fan-out against a local server. Nothing in the
+ * deployment imports these; the entry point is `handler`. */
+export { emit, managementFor };
 
 export async function handler(event) {
   // An HTTP API event has `requestContext.http`; a socket event has `routeKey`. Nothing

@@ -19,10 +19,12 @@
   ],
   "scripts": {
     "demo": "node bin/icecore.mjs dev ../icecore-datacamp-data-analyst/content",
-    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/store.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/room.mjs && node test/player.mjs && node test/admin.mjs",
+    "test": "node test/setup-checks.mjs && node test/csv.mjs && node test/selection.mjs && node test/store.mjs && node test/svgclean.mjs && node test/walk.mjs && node test/pointer.mjs && node test/decksync.mjs && node test/relay.mjs && node test/parts.mjs && node test/room.mjs && node test/player.mjs && node test/admin.mjs",
     "test:store": "node test/store.mjs",
     "test:pointer": "node test/pointer.mjs",
     "test:decksync": "node test/decksync.mjs",
+    "test:relay": "node test/relay.mjs",
+    "test:parts": "node test/parts.mjs",
     "test:setup": "node test/setup-checks.mjs",
     "test:csv": "node test/csv.mjs",
     "test:selection": "node test/selection.mjs",
@@ -32,7 +34,9 @@
     "test:player": "node test/player.mjs",
     "test:admin": "node test/admin.mjs",
     "test:python": "node test/python-artefacts.mjs",
-    "test:live": "node test/live.mjs"
+    "test:live": "node test/live.mjs",
+    "test:classroom": "node test/classroom.mjs",
+    "test:rig": "node test/rig.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.9.0",

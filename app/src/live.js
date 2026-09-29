@@ -37,6 +37,7 @@
  */
 import { reactive } from 'vue';
 import { api, socketUrl } from './auth.js';
+import { split, assembler, bytes, PART_BYTES } from './parts.js';
 
 /**
  * 'closed' | 'opening' | 'open' | 'waiting' - `waiting` is between attempts.
@@ -98,13 +99,48 @@ export function on(type, fn) {
 }
 
 /**
+ * What `send` would have put on the wire, for the tests. Off everywhere else, and it records
+ * rather than intercepts: `send` still answers exactly as it would, so every fallback a caller
+ * takes on a failed send is the same fallback it takes in a browser. test/harness.mjs used to
+ * say that nothing which SENDS was covered; this is how that stopped being true.
+ */
+export const outbox = { on: false, sent: [] };
+
+/* THE ONE MESSAGE TYPE THAT MAY TRAVEL IN PARTS: the only one the Lambda relays untouched.
+ * Everything else is trimmed, validated and stamped on the way through, which cannot be done
+ * to a message the Lambda only ever sees in pieces - so those are capped where they are made
+ * instead, and refused here if one still slips past. */
+const SPLITTABLE = new Set(['deck']);
+let partId = 0;
+const TAB = Math.random().toString(36).slice(2, 10);
+
+/**
  * Send a message. Silently drops when there is no socket - which is the honest behaviour
  * for a channel: everything that travels on it is a moment, and a moment that could not be
  * delivered has passed. Anything that must survive a reconnection is a row, not a message.
+ *
+ * NOTHING OVER 28KB REACHES THE SOCKET IN ONE PIECE. The Lambda drops a deck patch over 32KB
+ * without a word, and API Gateway cuts the sender's connection over its own limits - see
+ * parts.js for the three, measured. So a deck patch that big goes as parts, and any other
+ * message that big is refused here, with a warning: one message not arriving is better than
+ * one that is silently dropped, or that takes the connection down with it.
  */
 export function send(type, data = {}) {
+  const text = JSON.stringify({ type, ...data });
+  let frames = [text];
+  if (bytes(text) > PART_BYTES) {
+    const parts = SPLITTABLE.has(type)
+      ? split(text, { type: 'part', of: type, to: data.to ?? null }, `${TAB}-${++partId}`)
+      : null;
+    if (!parts) {
+      console.warn('live: not sending a', type, `of ${bytes(text)} bytes - over one frame`);
+      return false;
+    }
+    frames = parts.map(p => JSON.stringify(p));
+  }
+  if (outbox.on) outbox.sent.push(...frames.map(f => JSON.parse(f)));
   if (socket?.readyState !== WebSocket.OPEN) return false;
-  socket.send(JSON.stringify({ type, ...data }));
+  for (const f of frames) socket.send(f);
   return true;
 }
 
@@ -115,7 +151,20 @@ function deliver(msg) {
   }
 }
 
-const received = raw => { try { deliver(JSON.parse(raw)); } catch { /* not JSON */ } };
+/* PARTS ARE PUT BACK TOGETHER HERE AND NOWHERE ABOVE. The Lambda relays each part with `of`
+ * naming the type its listeners know - `decked`, not the sender's `deck` - and the whole message
+ * is delivered as that, so decksync.js receives an ordinary `decked` and nothing but this file
+ * knows parts exist. A message missing a part is forgotten after five seconds; the next
+ * snapshot says the same thing again. */
+const pieces = assembler();
+function arrived(msg) {
+  if (msg?.type !== 'part') return deliver(msg);
+  const whole = pieces.add(msg);
+  if (whole == null) return;
+  try { deliver({ ...JSON.parse(whole), type: msg.of }); } catch { /* a part that lied */ }
+}
+
+const received = raw => { try { arrived(JSON.parse(raw)); } catch { /* not JSON */ } };
 
 /**
  * Deliver a message as though it had arrived on the socket.
@@ -126,7 +175,10 @@ const received = raw => { try { deliver(JSON.parse(raw)); } catch { /* not JSON 
  * not been written when the script was. A second dispatcher only ever knows about the
  * handlers somebody remembered to add to it.
  */
-export const emitLocal = deliver;
+/* Through `arrived` rather than straight to `deliver`, so a test can hand it parts and see
+ * them reassembled on exactly the path a socket's messages take. Everything that is not a part
+ * goes straight through, as before. */
+export const emitLocal = arrived;
 
 async function attach(cohort, mine) {
   const url = socketUrl();

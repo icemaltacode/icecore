@@ -12,7 +12,9 @@
  * already exist.
  */
 export { default as App } from '../../app/src/App.vue';
-export { emitLocal, live as channel, send, on } from '../../app/src/live.js';
+export { emitLocal, live as channel, send, on, outbox } from '../../app/src/live.js';
+/* The pure half of the frame limit, so a test can build parts exactly as a sender would. */
+export { split } from '../../app/src/parts.js';
 export * as delivery from '../../app/src/delivery.js';
 /* `previewApi` is the stand-in's own front door, and a test uses it the way the app does -
  * to change what the stand-in will answer next. That is what makes "the class is told when

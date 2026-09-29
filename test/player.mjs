@@ -164,6 +164,42 @@ moved('103', 'Third');
 await settle();
 check('and keeps following as they move on', at() === '4 / 4', at());
 
+/* ---- A MOVE COUNTS ONLY ONCE IT HAS GONE -----------------------------------
+ *
+ * `report()` recorded a position as reported and THEN sent it, ignoring the answer - so a move
+ * made while the socket was between connections was never sent and never tried again, and the
+ * class sat on the old slide until the educator moved a second time. Nothing here could see it:
+ * `send` drops silently with no socket, and there is never a socket in preview. The outbox is
+ * what sees it - every send is recorded, and every one of them fails, which is exactly the
+ * state a reconnecting tab is in.
+ */
+{
+  player.outbox.on = true;
+  player.outbox.sent.length = 0;
+  const actives = () => player.outbox.sent.filter(m => m.type === 'active');
+  moved('102', 'Second');
+  await settle();
+  const first = actives().length;
+  check('following a move reports where this screen now is',
+        first >= 1 && String(actives().at(-1)?.at) === '102', JSON.stringify(actives()));
+  dispatchEvent(new window.KeyboardEvent('keydown', { key: 'a' }));
+  await settle(60);
+  check('a report that could not be sent is tried again on the next thing the student does',
+        actives().length > first, `${actives().length} reports, was ${first}`);
+
+  /* A REOPENED SOCKET IS A NEW CONNECTION ROW WITH NO POSITION ON IT, so the first thing it
+   * says is where it is - or after any reconnection the room had nobody to follow. */
+  player.outbox.sent.length = 0;
+  player.emitLocal({ type: 'open' });
+  await settle(60);
+  check('a reopened socket asks for the roster and then says where it is, throttle or not',
+        player.outbox.sent.some(m => m.type === 'roster')
+        && actives().length === 1 && String(actives()[0].at) === '102',
+        JSON.stringify(player.outbox.sent).slice(0, 200));
+  player.outbox.on = false;
+  player.outbox.sent.length = 0;
+}
+
 /* A SLIDES STEP IS A RANGE, so paging inside one is a move even though the row has not
  * changed - and the follower has to page with it or the class sits on slide 3 while the
  * educator is nine slides in, which looks exactly like following being broken. */
@@ -731,6 +767,45 @@ await settle(150);
   await settle(200);
   check('and one that does not fit what is held reaches the deck not at all',
         !got.some(m => m?.kind === 'ice:deck-sync'), JSON.stringify(got).slice(0, 160));
+
+  /* ---- A PATCH TOO BIG FOR ONE FRAME ------------------------------------------
+   *
+   * API Gateway closes a connection that sends a frame over 32KB, and a browser sends each
+   * message as one frame. The snapshot of every annotated slide crossed that within a few
+   * handwritten words, and cut the educator's socket after every stroke. So a big patch goes
+   * in parts, the Lambda relays each as `of: 'decked'`, and live.js puts them back together
+   * before anything above it looks - in whatever order they arrive. */
+  got.length = 0;
+  const big = Array.from({ length: 6 }, (_, i) =>
+    `<path d="M${100 + i} 1 ${'C 2 2 3 3 4 4 '.repeat(500)}"/>`);
+  const inner = { channel: CHANNEL, to: 'room', origin: 'tab-e', seq: 4,
+                  data: { 3: { keep: 0, add: big, full: true } } };
+  const parts = player.split(JSON.stringify({ type: 'deck', ...inner }),
+                             { type: 'part', of: 'decked', to: 'room' }, 'tab-e-1');
+  for (const p of [...parts].reverse()) player.emitLocal(p);
+  await settle(250);
+  check('a patch too big for one frame arrives in parts, out of order, and reaches the deck whole',
+        parts.length > 1 && /M100 1/.test(last() || '') && /M105 1/.test(last() || ''),
+        `${parts.length} parts; ${String(last()).slice(0, 80)}`);
+
+  /* AND THE SENDING HALF: nothing that leaves this tab is over one frame. */
+  player.outbox.on = true;
+  player.outbox.sent.length = 0;
+  player.send('deck', { ...inner, seq: 5 });
+  const wire = player.outbox.sent.map(m => new TextEncoder().encode(JSON.stringify(m)).length);
+  check('a big deck patch leaves as parts, every one under the frame',
+        player.outbox.sent.length > 1 && player.outbox.sent.every(m => m.type === 'part')
+        && wire.every(n => n <= 28 * 1024), JSON.stringify(wire));
+  player.outbox.sent.length = 0;
+  player.send('push', { at: '101', code: 'y'.repeat(40_000) });
+  check('any other message that big is refused rather than sent to cut the connection',
+        player.outbox.sent.length === 0, JSON.stringify(player.outbox.sent).slice(0, 80));
+  player.delivery.pushEditor('101', 'x'.repeat(60_000), 0, null, 0);
+  check("an editor's text is capped where it is sent, at the Lambda's own limit",
+        player.outbox.sent.length === 1 && player.outbox.sent[0].code.length === 20_000,
+        `${player.outbox.sent[0]?.code?.length}`);
+  player.outbox.on = false;
+  player.outbox.sent.length = 0;
 }
 
 // ------------------------------------------------------------- where Python comes from

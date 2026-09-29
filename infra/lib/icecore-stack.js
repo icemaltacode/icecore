@@ -448,10 +448,15 @@ export class IcecoreStack extends Stack {
      * Fifteen seconds rather than ten: a fan-out is one query plus a post per connection,
      * and the slow case is a room where several sockets have gone stale at once and each
      * post has to fail before its row can be deleted.
+     *
+     * A GIGABYTE, FOR THE CPU. Lambda allocates processor in proportion to memory, and 256MB
+     * is about a seventh of one - while a fan-out is CPU work, every post serialised, signed
+     * and encrypted. The memory itself is not needed. Roughly a cent a lesson; see
+     * LIVE-RELIABILITY.md.
      */
-    const live = fn('Live', 'live', {}, { timeout: Duration.seconds(15) });
+    const live = fn('Live', 'live', {}, { timeout: Duration.seconds(15), memorySize: 1024 });
     table.grantReadWriteData(live);
-    const liveApi = fn('LiveApi', 'live', {}, { timeout: Duration.seconds(15) });
+    const liveApi = fn('LiveApi', 'live', {}, { timeout: Duration.seconds(15), memorySize: 1024 });
     table.grantReadWriteData(liveApi);
 
     const api = new HttpApi(this, 'Api', {
@@ -720,7 +725,7 @@ export class IcecoreStack extends Stack {
 
     // A function that throws is a bug: these all answer their own error cases with a
     // status code, so Errors > 0 means something unhandled.
-    for (const [name, f] of Object.entries({ session, progress, admin, hint })) {
+    for (const [name, f] of Object.entries({ session, progress, admin, hint, live, liveApi })) {
       notify(f.metricErrors({ period: Duration.minutes(5) }).createAlarm(this, `${name}Errors`, {
         alarmDescription: `${name} Lambda threw`,
         threshold: 1,
@@ -728,6 +733,27 @@ export class IcecoreStack extends Stack {
         treatMissingData: cw.TreatMissingData.NOT_BREACHING,
       }));
     }
+
+    /* THE LIVE CHANNEL'S FAILURES NEVER REACH `Errors`, and that is by design rather than a
+     * gap in the loop above: `emit` catches a failed post, logs it and carries on, because one
+     * unreachable student must not stop the rest of the room hearing. The cost was that when
+     * EVERY post started failing - a leak that cost 2,850 deliveries in one lesson - no metric
+     * moved at all. So the log lines are counted instead. `GoneException` is routine and is
+     * not logged, which is what makes a handful in five minutes worth an email. */
+    const deliveryFailures = new logs.MetricFilter(this, 'LiveDeliveryFailures', {
+      logGroup: this.node.findChild('LiveLogs'),
+      filterPattern: logs.FilterPattern.anyTerm('post failed', 'reply failed'),
+      metricNamespace: 'icecore',
+      metricName: 'LiveDeliveryFailures',
+      metricValue: '1',
+    });
+    notify(deliveryFailures.metric({ period: Duration.minutes(5), statistic: 'Sum' })
+      .createAlarm(this, 'LiveDeliveryFailuresAlarm', {
+        alarmDescription: 'The live channel is failing to deliver messages to a class',
+        threshold: 10,
+        evaluationPeriods: 1,
+        treatMissingData: cw.TreatMissingData.NOT_BREACHING,
+      }));
 
     // Students seeing 5xx from the CDN itself - origin trouble, not a bad request.
     notify(distribution.metric5xxErrorRate({ period: Duration.minutes(5) })

@@ -921,8 +921,14 @@ Don't re-strip it.
 ## Tests
 
 `npm test` is the whole local suite and takes about six seconds: `setup-checks`, `csv`,
-`walk`, `room`, `player`. `test:python` (real Pyodide, minutes) and `test:live` (real AWS,
-typed credentials) are deliberately out of it and run by name.
+`walk`, `relay`, `parts`, `room`, `player` and the rest. `test:python` (real Pyodide, minutes)
+and `test:live` (real AWS, typed credentials) are deliberately out of it and run by name.
+
+**The live channel is measured, not assumed.** `test:classroom` plays a lesson's traffic through
+the real API Gateway and Lambda with forged tickets and counts what each synthetic student
+receives; `test:rig` drives the real player in two signed-in debug Chromiums (ports 9222 and
+9223). Both run against production, both refuse to start during a real lesson, and both clean up
+after themselves. See LIVE-RELIABILITY.md, Phase 0, for what each measures and the numbers.
 
 **Nothing in this repo executed the app until `test/harness.mjs` existed**, and it cost a
 day: `nextTick` was never imported so every `applied()` threw and following only *appeared*
@@ -987,6 +993,27 @@ debugging browser to find.
   sees it.
 
 ## Gotchas
+
+- **An AWS SDK client is created ONCE per container, at module scope, never per call.** The
+  live Lambda built a new `ApiGatewayManagementApiClient` for every message it sent. Each client
+  brings its own keep-alive connection pool, so every post to every student opened a new HTTPS
+  connection (a DNS lookup and a TLS handshake) and left it open in a pool nothing would use
+  again. Warm containers climbed to their memory limit and then failed DNS with
+  `getaddrinfo EBUSY`: 2,850 lost deliveries in one lesson, and half of all deliveries in a
+  synthetic one. `emit` swallows post failures by design, so the Errors metric read zero
+  throughout; `LiveDeliveryFailures` now counts the log lines instead. A container that has
+  degraded STAYS degraded while it is kept warm, which is why stopping and restarting a share in
+  class never helped. `test/relay.mjs` counts connections at a local server and fails if the
+  pattern comes back.
+- **Nothing a client sends on the live socket may exceed 28KB in one piece.** Three limits, and
+  the smallest decides. The Lambda drops a deck patch over 32KB (`DECK_LIMIT`) without a word,
+  so the snapshot of every annotated slide, which passes that within a few handwritten words,
+  reached nobody and a student who missed a stroke never got it back. API Gateway cuts the
+  SENDER's connection with 1009 over its own limits: measured, Node's client at 40KB and
+  Chromium at 130KB (126KB survives). AWS also documents a 32KB frame limit, which how a browser
+  frames a message decides. `send()` in live.js is the one enforcement: a `deck` message that
+  big goes as parts (`parts.js`, reassembled by the receiving live.js), anything else that big
+  is refused, and editor text is capped at 20,000 characters where it is sent.
 
 - **`content/data/` holds two unrelated kinds of thing, and the NAME says which.** A SQL
   dataset is `<name>.sql` or a `<name>/` directory of `.sql`; a `module-<n>/` directory is

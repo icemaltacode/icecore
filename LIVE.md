@@ -158,6 +158,10 @@ The management endpoint is built **from the event** — `requestContext.apiId` a
 rather than from an environment variable. Passing it in would make the function depend on
 the stage, which depends on the API, which depends on the function: a CloudFormation cycle.
 
+**The client that posts is built once per container and reused.** It was built per message,
+which leaked a connection per delivery until DNS failed and half of every lesson's messages went
+nowhere, silently. See [LIVE-RELIABILITY.md](LIVE-RELIABILITY.md) and the gotcha in CLAUDE.md.
+
 ### Two limits that are not ours
 
 **API Gateway closes an idle socket after ten minutes, and any socket after two hours**,
@@ -168,6 +172,11 @@ client that has backed off to five minutes is a student who misses the rest of i
 
 **A ticket is single-use, so every reconnection mints a fresh one.** That is not an
 inefficiency to optimise away: it is what makes a ticket in a log worth nothing.
+
+**Nor may a message from a client be large**, which makes three. API Gateway cuts the
+sender's connection over its limits (Chromium at 130KB, measured), and the Lambda drops a deck
+patch over 32KB without a word. `send()` in live.js splits a deck patch over 28KB into parts and
+refuses anything else that big. See LIVE-RELIABILITY.md, fault 1.
 
 ## The rows
 

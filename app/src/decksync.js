@@ -74,11 +74,18 @@ const MESSAGE = 'ice:deck-sync';
  * handwriting did not, which is not a size anybody would have guessed at.
  *
  * What actually fixed it is that a message is now a DELTA - see `chunked` - so what travels is
- * the stroke being drawn rather than the history of the slide. This number is what is left
- * over: a single stroke larger than it is a real limit rather than an accumulation, and API
- * Gateway closes a connection carrying a frame over its own limit without saying so, which
- * reads as the room going quiet rather than as a message being too big. */
-const CAP = 96 * 1024;
+ * the stroke being drawn rather than the history of the slide.
+ *
+ * THIS WAS 96KB, AND IT WAS NEVER THE LIMIT THAT MATTERED. The Lambda drops a deck patch over
+ * 32KB without a word, so every patch between that and this number left the educator's tab and
+ * reached nobody - and the one that crossed it first was the SNAPSHOT below, which holds every
+ * annotated slide and grows all lesson. A few handwritten words in, the snapshot that exists to
+ * give a student back a stroke they missed had stopped arriving, and that slide stopped updating
+ * for them for the rest of the lesson.
+ *
+ * The size of a message is live.js's business now - a patch too big goes as parts, see
+ * parts.js - so this is only a ceiling on what a lesson could plausibly draw. */
+const CAP = 512 * 1024;
 /* Coalesced. Slidev watches its state deeply, so a stroke is many changes; ten a second is
  * far more than an annotation needs and is a tenth of what the pointer already costs. */
 const EVERY = 100;

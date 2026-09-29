@@ -272,10 +272,17 @@ const report = (force = false) => {
    * dropped. */
   const moved = at?.at !== lastAt || slide !== lastSlide;
   if (!force && !moved && Date.now() - lastReport < REPORT_EVERY) return;
+  /* RECORDED ONLY ONCE IT HAS GONE. This wrote `lastAt` first and then sent, ignoring the
+   * answer - so a Next pressed while the socket was between connections was recorded as
+   * reported, never sent, and never tried again: the class stayed on the old slide until the
+   * educator moved a second time. A socket is between connections more often than it looks:
+   * the two-hour cap, a wifi blip, a heartbeat that gave up on a channel dropping its replies.
+   * A move that could not go now stays unrecorded, and goes with the next activity or the
+   * reopen. */
+  if (!send('active', { at: at?.at ?? null, title: at?.title || '', slide })) return;
   lastReport = Date.now();
   lastAt = at?.at;
   lastSlide = slide;
-  send('active', { at: at?.at ?? null, title: at?.title || '', slide });
 };
 
 const onActivity = () => report();
@@ -487,7 +494,14 @@ for (const [type, fn] of Object.entries(HANDLERS)) on(type, fn);
  * reconnection, because everything that happened during the gap happened to a client that
  * was not listening. The server cannot push it from `$connect`: the connection does not
  * exist until that handler returns, so a post from inside it is a GoneException. */
-on('open', () => send('roster'));
+on('open', () => {
+  send('roster');
+  /* AND SAY WHERE WE ARE, whatever the throttle thinks. A reopened socket is a NEW connection
+   * row with no position on it, so after any reconnection - the two-hour cap, a wifi blip, a
+   * heartbeat that gave up - the room had nobody to follow until the educator next moved. The
+   * first thing a connection says is where it is. */
+  report(true);
+});
 
 function record(sub, mark) {
   if (!sub || mark?.exercise == null) return;
@@ -594,10 +608,17 @@ export function setSync(on) {
   if (previewRole()) emitLocal({ type: 'syncing', on: !!on });
 }
 
+/* AN EDITOR'S TEXT IS CAPPED WHERE IT IS SENT, at the Lambda's own EDITOR_LIMIT - which trims
+ * it on arrival anyway, so nothing past this was ever delivered. What the cap buys is the
+ * FRAME: an uncapped buffer could pass 32KB, and API Gateway answers that by cutting the
+ * sender's connection. Chat has capped at the same number all along. */
+const EDITOR_CHARS = 20000;
+const capped = code => String(code ?? '').slice(0, EDITOR_CHARS);
+
 /** What the educator has in their editor, on its way to everybody following. */
 export const pushEditor = (at, code, cursor, anchor, step) => send('push', {
   at: at ?? null,
-  code: String(code ?? ''),
+  code: capped(code),
   cursor: cursor ?? null,
   anchor: anchor ?? null,
   /* THE STEP TRAVELS WITH THE BUFFER, for the reason the caret does: a buffer belongs to a
@@ -614,7 +635,7 @@ export const drive = where => send('drive', {
   slide: where?.slide ?? null,
   /* Undefined rather than empty when there is nothing to send: a drive that is only a
    * navigation must not blank an editor the student is looking at. */
-  code: typeof where?.code === 'string' ? where.code : undefined,
+  code: typeof where?.code === 'string' ? capped(where.code) : undefined,
   cursor: where?.cursor ?? undefined,
   /* The far end of the selection, travelling with the caret it belongs to. `undefined` for a
    * drive that is only a navigation, for `code`'s reason - see above. */
@@ -675,7 +696,7 @@ export const sendDeck = (channel, data, to, meta = {}) =>
 
 /** What the driven screen currently has in its editor. Sent once, when control begins. */
 export const sendBuffer = (at, code) =>
-  send('buffer', { at: at ?? null, code: String(code ?? '') });
+  send('buffer', { at: at ?? null, code: capped(code) });
 
 /** Follow again, from wherever they are now. */
 /* NOT `catchUp`, AND THE WORD IS THE POINT. A student who has stopped following may be
