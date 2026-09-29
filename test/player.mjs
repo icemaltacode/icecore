@@ -37,7 +37,9 @@ const COURSE = {
         { id: 102, title: 'Second', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 2' }] },
       ] },
     { topic: '1.1.2', title: 'Topic Two', exercises: [
-      { id: 103, title: 'Third', type: 'coding', xp: 20, prompt: 'p', steps: [{ sample: 'SELECT 3' }] } ] },
+      /* A setup, so the fold above the editor has something to show - see CodeEditor.vue. */
+      { id: 103, title: 'Third', type: 'coding', xp: 20, prompt: 'p',
+        setup: 'CREATE VIEW recent AS SELECT 3;', steps: [{ sample: 'SELECT 3' }] } ] },
   ] }] }],
 };
 
@@ -399,6 +401,34 @@ check('a drive that moves them to another exercise carries its code with it',
   await settle(200);
   numbered('SELECT the_older_drive;', 6);
   await settle(200);
+  /* ---- THE SETUP, FOLDED ABOVE THE CODE ------------------------------------
+   *
+   * Students started exercises confused that a table or a variable already existed, because
+   * the setup that made it runs first and was shown nowhere. It is drawn above line 1 now,
+   * folded by default - and it is NOT in the document, so it is never run twice, never
+   * submitted, and moves no line number and no caret. */
+  {
+    const fold = () => document.querySelector('.cm-preamble');
+    const lines = () => [...document.querySelectorAll('.cm-content')][0]
+      ?.querySelectorAll('.cm-line') || [];
+    const doc = () => [...lines()].map(l => l.textContent).join('\n');
+    check('the setup is shown above the code, folded',
+          !!fold() && !fold().classList.contains('open') && !document.querySelector('.cm-preamble-code')
+            && /Setup code/.test(fold().textContent)
+            && /1 line/.test(fold().textContent),
+          fold()?.textContent || 'no fold');
+    fold().querySelector('.cm-preamble-head').click();
+    await settle(120);
+    check('and opens to the code that runs first',
+          document.querySelector('.cm-preamble-code')?.textContent === 'CREATE VIEW recent AS SELECT 3;',
+          document.querySelector('.cm-preamble-code')?.textContent || 'still folded');
+    check('without becoming part of what they wrote',
+          !/CREATE VIEW/.test(doc()) && /^SELECT /.test(doc()), doc());
+    fold().querySelector('.cm-preamble-head').click();
+    await settle(120);
+    check('and folds again', !document.querySelector('.cm-preamble-code'));
+  }
+
   check('an older drive arriving late does not replace a newer one on the driven screen',
         /the_newer_drive/.test(editorText()) && !/the_older_drive/.test(editorText()),
         editorText());

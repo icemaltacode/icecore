@@ -469,6 +469,7 @@ const ranQuietly = computed(() =>
     <section class="work">
       <div class="editor-pane">
         <EditorPane v-model="code" name="script.py" language="python" :readonly="frozen"
+                    :preamble="exercise.setup || ''"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"

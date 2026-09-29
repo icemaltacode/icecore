@@ -40,6 +40,10 @@ const props = defineProps({
   shared: Object,
   /** Whether it is arriving RIGHT NOW, as opposed to being read back from a past lesson. */
   live: Boolean,
+  /* The exercise's setup, shown folded above their own code. Theirs only: the tab beside it
+   * is somebody else's version of the same exercise, and one fold per screen is enough to
+   * say what has already run. */
+  preamble: { type: String, default: '' },
   /* Somebody else's caret IN THIS STUDENT'S BUFFER - remote control, and nothing else. */
   peerAt: { type: Number, default: null },
   peerAnchor: { type: Number, default: null },
@@ -202,6 +206,7 @@ function take() {
            history and the scroll position, and the split flips this twice on a resize. -->
       <div v-show="split || showing === 'mine'" class="one">
         <CodeEditor v-model="mine" :language="language" :readonly="readonly"
+                    :preamble="preamble"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="moved('mine', $event)" @run="emit('run')" />
       </div>

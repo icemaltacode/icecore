@@ -6,7 +6,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
-import { tags } from '@lezer/highlight';
+import { tags, highlightTree } from '@lezer/highlight';
 
 /* CodeMirror's default highlight style is built for a light background, which was fine
  * while there was only one theme and less so now. Written in tokens instead: a
@@ -114,6 +114,90 @@ const peer = StateField.define({
   }),
 });
 
+/* THE EXERCISE'S SETUP, ABOVE THE CODE AND NEVER PART OF IT.
+ *
+ * Students were starting exercises confused that `homelessness` already existed: the setup
+ * that defines it runs before their code and was shown nowhere. So it is drawn at the top of
+ * the editor, folded to one line by default, and opens on a click.
+ *
+ * A BLOCK WIDGET, NOT FOLDED TEXT, and that is the whole design. Put in the document, the
+ * setup would be submitted by Check and run twice by Run, every error's line number would be
+ * off by its length, and every caret offset that crosses the channel - remote control, a
+ * shared screen - would point at the wrong character. Drawn above line 1, it is visible in
+ * exactly the place a fold would be and absent from everything that reads the code.
+ *
+ * Highlighted by the editor's own style, so it reads as the same language as the code under
+ * it, and dimmed, so it reads as not theirs to edit. A field rather than a plugin because
+ * CodeMirror only accepts block decorations from state. */
+const togglePreamble = StateEffect.define();
+
+class Preamble extends WidgetType {
+  constructor(code, language, open) {
+    super();
+    this.code = code; this.language = language; this.open = open;
+  }
+  eq(other) {
+    return other.code === this.code && other.language === this.language && other.open === this.open;
+  }
+  toDOM(view) {
+    const wrap = document.createElement('div');
+    wrap.className = `cm-preamble${this.open ? ' open' : ''}`;
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'cm-preamble-head';
+    head.setAttribute('aria-expanded', String(this.open));
+    const lines = this.code.split('\n').length;
+    const mark = document.createElement('span');
+    mark.className = 'cm-preamble-mark';
+    mark.textContent = '\u25B8';
+    const what = document.createElement('span');
+    what.textContent = 'Setup code';
+    const count = document.createElement('span');
+    count.className = 'cm-preamble-count';
+    count.textContent = `${lines} line${lines === 1 ? '' : 's'}`;
+    head.append(mark, what, count);
+    // Kept off the editor's own selection: pressing it must not move anybody's caret.
+    head.addEventListener('mousedown', e => e.preventDefault());
+    head.addEventListener('click', () => view.dispatch({ effects: togglePreamble.of(null) }));
+    wrap.append(head);
+    if (this.open) {
+      const pre = document.createElement('pre');
+      pre.className = 'cm-preamble-code';
+      const parser = (LANGUAGES[this.language] || LANGUAGES.sql)().language.parser;
+      let at = 0;
+      highlightTree(parser.parse(this.code), highlight, (from, to, classes) => {
+        if (from > at) pre.append(this.code.slice(at, from));
+        const span = document.createElement('span');
+        span.className = classes;
+        span.textContent = this.code.slice(from, to);
+        pre.append(span);
+        at = to;
+      });
+      if (at < this.code.length) pre.append(this.code.slice(at));
+      wrap.append(pre);
+    }
+    return wrap;
+  }
+  // Its own clicks only: the editor must not read them as placing a caret in the code.
+  ignoreEvent() { return true; }
+}
+
+const preamble = (code, language) => {
+  const text = String(code || '').replace(/\s+$/, '');
+  if (!text.trim()) return [];
+  return StateField.define({
+    create: () => false,
+    update(open, tr) {
+      for (const e of tr.effects) if (e.is(togglePreamble)) return !open;
+      return open;
+    },
+    provide: f => EditorView.decorations.from(f, open => Decoration.set([
+      Decoration.widget({ widget: new Preamble(text, language, open), block: true, side: -1 })
+        .range(0),
+    ])),
+  });
+};
+
 const props = defineProps({
   modelValue: String,
   language: { type: String, default: 'sql' },
@@ -126,6 +210,8 @@ const props = defineProps({
   /** The other end of their selection, when they have one. Null means a bare caret. */
   peerAnchor: { type: Number, default: null },
   peerName: String,
+  /** Code that runs before this editor's, shown folded above it - see `Preamble`. */
+  preamble: { type: String, default: '' },
 });
 const emit = defineEmits(['update:modelValue', 'run', 'cursor']);
 const host = ref(null);
@@ -133,6 +219,7 @@ let view = null;
 /* A compartment rather than a rebuild: control starts and stops mid-lesson, and recreating
  * the view would throw away the undo history and the scroll position each time. */
 const editable = new Compartment();
+const preambled = new Compartment();
 
 onMounted(() => {
   view = new EditorView({
@@ -141,6 +228,7 @@ onMounted(() => {
       doc: props.modelValue || '',
       extensions: [
         editable.of(EditorView.editable.of(!props.readonly)),
+        preambled.of(preamble(props.preamble, props.language)),
         peer,
         lineNumbers(), history(), highlightActiveLine(),
         syntaxHighlighting(highlight, { fallback: true }),
@@ -229,6 +317,27 @@ onMounted(() => {
             pointerEvents: 'none', userSelect: 'none',
             boxShadow: '0 1px 4px rgb(0 0 0 / .25)',
           },
+          /* Folded, one quiet line; open, the code under a rule. Dimmed either way, so it
+             never reads as the student's own. */
+          '.cm-preamble': {
+            margin: '2px 0 6px', borderLeft: '2px solid var(--ice-border)',
+            background: 'var(--ice-raise)', borderRadius: '0 6px 6px 0',
+          },
+          '.cm-preamble-head': {
+            display: 'flex', alignItems: 'baseline', gap: '8px', width: '100%',
+            padding: '3px 10px', background: 'none', border: '0', cursor: 'pointer',
+            fontFamily: 'var(--ice-font-sans, inherit)', fontSize: '12px', lineHeight: '1.6',
+            color: 'var(--ice-fg-muted)', textAlign: 'left',
+          },
+          '.cm-preamble-head:hover': { color: 'var(--ice-fg)' },
+          '.cm-preamble-mark': { display: 'inline-block', transition: 'transform .12s' },
+          '.cm-preamble.open .cm-preamble-mark': { transform: 'rotate(90deg)' },
+          '.cm-preamble-count': { opacity: '.75' },
+          '.cm-preamble-code': {
+            margin: '0', padding: '0 10px 6px 26px', whiteSpace: 'pre', overflowX: 'auto',
+            fontFamily: 'var(--ice-font-mono)', fontSize: '13px', lineHeight: '1.6',
+            opacity: '.8',
+          },
           '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--ice-fg)' },
           '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection': {
             background: 'var(--ice-primary-soft)',
@@ -259,6 +368,10 @@ const applyPeer = () => view?.dispatch({
   }),
 });
 watch(() => [props.peerAt, props.peerAnchor, props.peerName], applyPeer);
+
+watch(() => [props.preamble, props.language], () => {
+  view?.dispatch({ effects: preambled.reconfigure(preamble(props.preamble, props.language)) });
+});
 
 watch(() => props.readonly, ro => {
   view?.dispatch({ effects: editable.reconfigure(EditorView.editable.of(!ro)) });
