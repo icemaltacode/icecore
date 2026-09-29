@@ -31,10 +31,36 @@ import { on, send, emitLocal } from './live.js';
 import { previewRole } from './preview.js';
 import { delivery, FRESHER } from './delivery.js';
 
-/** What the educator is offered, in minutes. Long enough to cover an exercise, short enough
- *  that the list is read rather than scanned. Anything else is what Reset and a second press
- *  are for. */
-export const DURATIONS = [1, 2, 5, 10, 15, 20, 30];
+/** What the educator is offered, in minutes: the lengths a room is actually given, short
+ *  enough that the list is read rather than scanned. Anything else is typed - see
+ *  `lengthOf`. */
+export const DURATIONS = [1, 2, 3, 5, 10, 15];
+
+/* THE LONGEST A TYPED LENGTH MAY BE, which is the live function's own cap (`TIMER_MAX`).
+ * Stated here as well so that 200 is refused where it is typed: the server would otherwise
+ * clamp it to 120 without a word, and a timer that is not the length somebody asked for is
+ * worse than a button that will not start. */
+export const LONGEST = 120 * 60;
+
+/**
+ * A typed length, in seconds, or null when it is not one: `7` is seven minutes and `2:30`
+ * is two and a half. Minutes rather than seconds for a bare number because that is the unit
+ * every preset beside the field is in - `5` meaning five seconds would be a trap laid by the
+ * field for anybody who has just read the buttons.
+ */
+export function lengthOf(text) {
+  const m = String(text ?? '').trim().match(/^(\d{1,3})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const secs = m[2] === undefined ? 0 : Number(m[2]);
+  if (secs > 59) return null;
+  const total = Number(m[1]) * 60 + secs;
+  return total >= 1 && total <= LONGEST ? total : null;
+}
+
+/** A length as the educator would say it: `5 minutes`, `1 minute`, `2:30`. */
+export const spoken = seconds => (seconds % 60
+  ? clock(seconds * 1000)
+  : `${seconds / 60} minute${seconds === 60 ? '' : 's'}`);
 
 export const timer = reactive({
   /** Is there a timer in this lesson at all. */

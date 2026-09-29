@@ -219,6 +219,67 @@ await settle(100);
 check('and a roster that changes nothing leaves it on screen',
       /Somebody else is helping them/.test(refusal()), refusal());
 
+/* ---- the timer's lengths ----------------------------------------------------
+ *
+ * The presets are what a room is actually given, and anything else is typed - `7` or `2:30`.
+ * What is asserted is what the button SENDS, and what the popover says about the timer
+ * afterwards: a typed 2:30 must not read back as the "3 min" preset it rounds to.
+ */
+{
+  const openTimer = async () => {
+    if (!document.querySelector('.ltpop')) document.querySelector('.livetimer .ltbtn.more')?.click();
+    await settle(120);
+  };
+  const presets = () => [...document.querySelectorAll('.ltmins .ltmin')];
+  const field = () => document.querySelector('.ltcustom input');
+  const start = () => document.querySelector('.ltcustom button');
+  const type = async v => {
+    field().value = v;
+    field().dispatchEvent(new window.Event('input'));
+    await settle(40);
+  };
+  const submit = async () => {
+    field().closest('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+    await settle(200);
+  };
+
+  await openTimer();
+  check('the presets are the lengths a room is given',
+        presets().map(b => parseInt(b.textContent, 10)).join(',') === '1,2,3,5,10,15',
+        presets().map(b => b.textContent.trim()).join(','));
+
+  const refused = [];
+  for (const bad of ['0', '0:00', '2:75', '1:5', '121', 'ten']) {
+    await type(bad);
+    if (!start()?.disabled) refused.push(bad);
+  }
+  check('anything that is not a length leaves Start waiting', refused.length === 0,
+        `Start was offered for ${refused.join(', ')}`);
+  check('and says what it wants', /minutes:seconds/.test(text()), text().slice(-200));
+
+  await type('2:30');
+  check('a typed length can be started', start() && !start().disabled);
+  player.outbox.sent.length = 0;
+  await submit();
+  const set = out('timer').at(-1);
+  check('and the class is given exactly that', set?.do === 'set' && set?.seconds === 150,
+        JSON.stringify(set));
+
+  const reset = [...document.querySelectorAll('.livetimer .ltbtn')]
+    .find(b => /again/.test(b.getAttribute('title') || ''));
+  check('Reset offers the length that was set, not a rounding of it',
+        reset?.getAttribute('title') === 'Start the 2:30 again', reset?.getAttribute('title'));
+  await openTimer();
+  check('and no preset claims to be the one running',
+        !presets().some(b => b.classList.contains('on')),
+        presets().filter(b => b.classList.contains('on')).map(b => b.textContent.trim()));
+
+  await type('7');
+  await submit();
+  check('a bare number is minutes, like the buttons beside it',
+        out('timer').at(-1)?.seconds === 420, JSON.stringify(out('timer').at(-1)));
+}
+
 player.outbox.on = false;
 player.outbox.sent.length = 0;
 app.unmount();

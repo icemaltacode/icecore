@@ -26,7 +26,7 @@
  * `role="timer"` is what this actually is.
  */
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { timer, label, done, urgent, DURATIONS,
+import { timer, label, done, urgent, DURATIONS, lengthOf, spoken,
          setTimer, pauseTimer, resumeTimer, showTimer, clearTimer } from '../timer.js';
 import Icon from './Icon.vue';
 
@@ -46,7 +46,10 @@ const prominent = computed({
   set: v => { wanted.value = !!v; if (timer.on) showTimer(!!v); },
 });
 
-const minutes = computed(() => Math.round(timer.seconds / 60));
+/* THE LENGTH AS SET, NOT ROUNDED. Once a length can be typed, 2:30 rounds to 3 - which lit
+ * the "3 min" preset as though that were the one running and had Reset offer to start "the 3
+ * minutes" again. */
+const length = computed(() => spoken(timer.seconds));
 
 /* Closed by a click anywhere else. Its own listener rather than a shared one - the pair in
  * TopBar share one because each would otherwise close on the gesture that opened the other,
@@ -62,6 +65,17 @@ watch(open, v => {
 onUnmounted(() => { clearTimeout(arming); document.removeEventListener('pointerdown', away); });
 
 const pick = m => { open.value = false; setTimer(m * 60, prominent.value); };
+
+/* ANY OTHER LENGTH, typed. Minutes, or minutes and seconds - see `lengthOf`. Start stays
+ * disabled until what is typed is a length, so nothing is guessed at on the way through. */
+const custom = ref('');
+const customSeconds = computed(() => lengthOf(custom.value));
+const pickCustom = () => {
+  if (!customSeconds.value) return;
+  open.value = false;
+  setTimer(customSeconds.value, prominent.value);
+  custom.value = '';
+};
 </script>
 
 <template>
@@ -86,7 +100,7 @@ const pick = m => { open.value = false; setTimer(m * 60, prominent.value); };
           <Icon :name="timer.running ? 'pause' : 'run'" :size="13" />
         </button>
         <button class="ltbtn" type="button"
-                :title="`Start the ${minutes} minutes again`"
+                :title="`Start the ${length} again`"
                 @click="setTimer(timer.seconds)">
           <Icon name="undo" :size="13" />
         </button>
@@ -107,10 +121,21 @@ const pick = m => { open.value = false; setTimer(m * 60, prominent.value); };
         <p class="ltlead">{{ timer.on ? 'Start again with' : 'The class gets' }}</p>
         <div class="ltmins">
           <button v-for="m in DURATIONS" :key="m" type="button" class="ltmin"
-                  :class="{ on: timer.on && minutes === m }" @click="pick(m)">
+                  :class="{ on: timer.on && timer.seconds === m * 60 }" @click="pick(m)">
             {{ m }}<small>min</small>
           </button>
         </div>
+        <form class="ltcustom" @submit.prevent="pickCustom">
+          <input v-model="custom" type="text" inputmode="numeric" autocomplete="off"
+                 placeholder="Other: 7 or 2:30"
+                 aria-label="Another length, in minutes or minutes:seconds">
+          <button type="submit" class="ltmin" :disabled="!customSeconds">Start</button>
+        </form>
+        <!-- Said only once something has been typed that is not a length. Before that the
+             placeholder already shows both forms. -->
+        <p v-if="custom.trim() && !customSeconds" class="ltbad">
+          Minutes or minutes:seconds, up to 120 minutes.
+        </p>
         <!-- A property of the timer, not of each screen: it is the educator deciding how
              loudly the room is being asked to look at the clock. -->
         <label class="ltprom">
@@ -175,6 +200,13 @@ const pick = m => { open.value = false; setTimer(m * 60, prominent.value); };
 .ltmin small { font-size: 9.5px; font-weight: 400; color: var(--ice-fg-muted); }
 .ltmin:hover { border-color: var(--ice-primary); }
 .ltmin.on { background: var(--ice-primary-soft); border-color: var(--ice-primary); }
+.ltcustom { display: flex; gap: 6px; margin-top: 8px; }
+.ltcustom input { flex: 1; min-width: 0; padding: 5px 9px; font: inherit; font-size: 13px;
+                  color: var(--ice-fg); background: var(--ice-bg);
+                  border: 1px solid var(--ice-border); border-radius: 8px; }
+.ltcustom input:focus { outline: none; border-color: var(--ice-primary); }
+.ltmin:disabled { cursor: default; opacity: .5; border-color: var(--ice-border); }
+.ltbad { margin: 6px 0 0; font-size: 11.5px; color: var(--ice-bad); }
 .ltprom { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; cursor: pointer;
           font-size: 12px; line-height: 1.35; color: var(--ice-fg-muted); }
 .ltprom input { margin: 1px 0 0; }
