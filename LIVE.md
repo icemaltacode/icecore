@@ -448,6 +448,16 @@ LIVE-RELIABILITY.md, both about moves that were lost rather than made:
   round, and a roster read a moment before a move can land a moment after it; applied as they
   came, either leaves the class one slide behind.
 
+**AND EVERY THIRTY SECONDS THE ROOM IS ASKED AGAIN.** Every discrete message on the channel is
+sent once, so a client that missed a move, the editor switch, control, the timer or the end of
+the lesson, with its socket still up, never heard it again: the roster was only asked for when
+a socket opened. Each client in a session now also asks for a light roster every thirty seconds
+(`keepUp` in delivery.js). The server leaves out the members, which cannot change, and the
+board's drawing, which must not be put back under an educator's pen on a timer; it says only
+whether a board is up, and a client that disagrees asks for the full roster. A light roster never
+overrules a broadcast of the same kind heard in the last five seconds, because a roster read just
+before a broadcast can arrive just after it. See LIVE-RELIABILITY.md, Phase 4.
+
 ## Class results
 
 **This step's one-line description in the build order was wrong, and the error is the

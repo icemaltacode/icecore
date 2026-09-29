@@ -42,7 +42,11 @@ if (!existsSync(SDK)) {
  * just enough of DynamoDB's protocol to record deletes and queries and find nothing. */
 let accepted = 0, open = 0;
 const gone = new Set();
-const closedIds = [], deleted = [], queries = [];
+const closedIds = [], deleted = [], queries = [], posts = [];
+/* The one connection the stand-in has a row for, so a message from it is handled rather than
+ * closed. In DynamoDB's own wire format, which is what the SDK unpacks. */
+const TESTER = { pk: { S: 'CONN#tester' }, sk: { S: 'LIVECONN#relay' }, sub: { S: 'tester' },
+                 role: { S: 'student' }, cohort: { S: 'relay' }, name: { S: 'Tester' } };
 const server = http.createServer((req, res) => {
   let body = '';
   req.on('data', c => { body += c; });
@@ -52,11 +56,16 @@ const server = http.createServer((req, res) => {
       const input = JSON.parse(body || '{}');
       res.setHeader('content-type', 'application/x-amz-json-1.0');
       if (target.endsWith('.DeleteItem')) deleted.push(input.Key?.pk?.S);
-      if (target.endsWith('.Query')) queries.push(input);
-      return res.end(target.endsWith('.Query') ? '{"Items":[],"Count":0}' : '{}');
+      if (target.endsWith('.Query')) {
+        queries.push(input);
+        const mine = input.ExpressionAttributeValues?.[':pk']?.S === 'CONN#tester';
+        return res.end(JSON.stringify(mine ? { Items: [TESTER], Count: 1 } : { Items: [], Count: 0 }));
+      }
+      return res.end('{}');
     }
     const id = decodeURIComponent((/@connections\/([^/?]+)/.exec(req.url) || [])[1] || '');
     if (req.method === 'DELETE') { closedIds.push(id); return res.end(''); }
+    posts.push({ id, body });
     if (gone.has(id)) {
       res.statusCode = 410;
       res.setHeader('x-amzn-errortype', 'GoneException');
@@ -140,6 +149,35 @@ check('a later invocation in the same container opens nothing new', accepted - b
         JSON.stringify(queries.at(-1)));
   check('a socket with no row is closed, so the client reconnects', closedIds.includes('ghost'),
         JSON.stringify(closedIds));
+}
+
+/* ---- THE LIGHT ROSTER -------------------------------------------------------
+ *
+ * Asked for every thirty seconds by every client in a lesson, to repair any discrete message it
+ * missed. It leaves out the members, which cannot change and are the costliest part, and the
+ * board's drawing, which a client must not re-apply on a timer - saying only whether a board
+ * is up. A full roster still carries both.
+ */
+{
+  const ask = async light => {
+    posts.length = 0;
+    await handler({
+      requestContext: { routeKey: '$default', connectionId: 'tester', apiId: 'relay', stage: 'test' },
+      body: JSON.stringify(light ? { type: 'roster', light: true } : { type: 'roster' }),
+    });
+    const p = posts.find(x => x.id === 'tester');
+    return p ? JSON.parse(p.body) : null;
+  };
+  const lightOne = await ask(true);
+  check('a light roster says it is one, and whether a board is up',
+        lightOne?.light === true && typeof lightOne.boardOn === 'boolean',
+        JSON.stringify(lightOne)?.slice(0, 200));
+  check('and leaves out the members and the drawing',
+        lightOne && !('members' in lightOne) && !('board' in lightOne),
+        JSON.stringify(lightOne)?.slice(0, 200));
+  const full = await ask(false);
+  check('a full roster still carries both', full && 'members' in full && 'board' in full,
+        JSON.stringify(full)?.slice(0, 200));
 }
 
 managementFor(event).destroy();

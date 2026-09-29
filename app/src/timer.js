@@ -29,7 +29,7 @@
 import { reactive, computed, ref, watch } from 'vue';
 import { on, send, emitLocal } from './live.js';
 import { previewRole } from './preview.js';
-import { delivery } from './delivery.js';
+import { delivery, FRESHER } from './delivery.js';
 
 /** What the educator is offered, in minutes. Long enough to cover an exercise, short enough
  *  that the list is read rather than scanned. Anything else is what Reset and a second press
@@ -127,7 +127,9 @@ function applyTimer(t) {
   now.value = Date.now();
 }
 
-on('timing', m => applyTimer(m.timer || null));
+/* When a `timing` was last heard - see the roster below, and FRESHER in delivery.js. */
+let timingAt = 0;
+on('timing', m => { timingAt = Date.now(); applyTimer(m.timer || null); });
 
 /* Off the roster too, like control, the editor switch and the board: a client that has just
  * connected, or just come back from a tunnel, would otherwise sit under a clock that stopped
@@ -137,7 +139,13 @@ on('timing', m => applyTimer(m.timer || null));
  * Only when the roster says something about it. Absent from an older deployment and null
  * from a lesson with no timer, and reading the first as the second would take a live
  * countdown off every screen each time anything reconnected. */
-on('roster', m => { if ('timer' in m) applyTimer(m.timer || null); });
+/* A light roster arrives every thirty seconds (see delivery.js), and one read just before the
+ * educator set or paused the clock must not undo it on this screen. */
+on('roster', m => {
+  if (!('timer' in m)) return;
+  if (m.light && Date.now() - timingAt < FRESHER) return;
+  applyTimer(m.timer || null);
+});
 
 /* A different session is a different lesson, and nobody carries a deadline into one. Watched
  * rather than told, so that delivery.js goes on having no idea this file exists - chat.js's

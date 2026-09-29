@@ -252,6 +252,7 @@ export function forget() {
   settled();
   sync.stuck = false;
   heardPush = { origin: null, seq: -1 };
+  clearInterval(catching); catching = null;
   stopPreviewRoom();
   stopReporting();
   closeChannel();
@@ -385,6 +386,42 @@ function setControl(c) {
   control.refused = '';
 }
 
+const dropBuffer = () => { sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null; };
+
+const sameControl = c => (c?.sub || null) === control.sub && (c?.by || null) === control.by
+  && !!c?.sharing === control.sharing && (c?.at || null) === control.at;
+
+/* ---- catching up ------------------------------------------------------------
+ *
+ * EVERY DISCRETE MESSAGE ON THIS CHANNEL IS SENT ONCE: a move, the editor switch, control, the
+ * timer, the end of the lesson. The roster restores all of them, but it was only asked for when
+ * a socket opened, so a client that missed one with its socket still up never heard it again:
+ * a student left on the old slide, or sitting in a lesson that had ended. Measured by making the
+ * server's state change without its broadcast - three of three never caught up.
+ *
+ * So every client asks again every thirty seconds, LIGHT: the server leaves out the members,
+ * which cannot change, and the board's drawing, which must not be put back under an educator's
+ * pen on a timer (see board.js). Whatever was missed is back within thirty seconds. The cost is
+ * one small invocation per client per thirty seconds - for a class of thirty, one a second.
+ */
+export const CATCH_UP = 30 * 1000;
+
+/* A LIGHT ROSTER NEVER OVERRULES A BROADCAST HEARD IN THE LAST FEW SECONDS. The server reads a
+ * roster at one moment, so one read just before the educator threw a switch can arrive just
+ * after the broadcast that says so - and would switch it back on that screen until the next
+ * roster, thirty seconds later. A broadcast that recent is newer than anything a roster can
+ * say; one that was genuinely missed is repaired by the next tick. Moves do not need this:
+ * they carry the server's clock and are ordered by it. */
+export const FRESHER = 5000;
+const heardAt = { sync: 0, control: 0 };
+const lately = (m, kind) => !!m.light && Date.now() - heardAt[kind] < FRESHER;
+
+let catching = null;
+function keepUp() {
+  clearInterval(catching);
+  catching = setInterval(() => { if (delivery.cohort) send('roster', { light: true }); }, CATCH_UP);
+}
+
 const HANDLERS = {
   roster(m) {
     /* IT ENDED WHILE WE WERE AWAY. `ended` is a broadcast and a client that was between
@@ -396,7 +433,9 @@ const HANDLERS = {
      * Explicitly false only: an older deployment omits the field, and not being told must
      * not be read as being over. */
     if (m.session === false) { emitLocal({ type: 'ended' }); return; }
-    room.members = m.members || [];
+    /* ABSENT MEANS UNCHANGED: a light roster (see `keepUp`) leaves the members out, because they
+     * cannot change during a lesson, and an empty list would empty the panel every 30 seconds. */
+    if ('members' in m) room.members = m.members || [];
     const before = room.here;
     room.here = {};
     for (const c of m.here || []) { add(c); record(c.sub, c.mark); }
@@ -418,11 +457,19 @@ const HANDLERS = {
      * by an older deployment and null from one where nobody is being driven, and the two
      * must not be the same thing here - clearing on absence would drop a live control every
      * time a client reconnected. */
-    if ('control' in m) setControl(m.control);
+    /* AND NOT WHEN IT IS THE SAME, because setting it clears `refused` - and a roster now arrives
+     * every thirty seconds, which would take a refusal off an admin's screen before they had
+     * read it. Nor from a light roster just after a `controlling`: see `lately`. */
+    if ('control' in m && !lately(m, 'control') && !sameControl(m.control)) setControl(m.control);
     // Same rule for the same reason: absent from an older deployment, false from a room
     // where nothing is being shown, and the two must not be one thing here.
-    if ('sync' in m) {
+    if ('sync' in m && !lately(m, 'sync')) {
+      const was = sync.on;
       sync.on = !!m.sync;
+      /* A roster is how a student who MISSED `syncing` off finds out, so it clears the buffer
+       * exactly as that message would have - or switching on again later could flash the
+       * last thing the educator wrote before. */
+      if (was && !sync.on) dropBuffer();
       /* The roster is the authoritative read of the flag, so it confirms what was asked for as
        * well as a `syncing` would: the write landed, and it was the answer that got lost. */
       if (sync.pending === sync.on) settled();
@@ -449,8 +496,8 @@ const HANDLERS = {
      * BOTH WAYS NOW. It only ever put sharing back on; a Stop pressed while the socket was
      * between connections was discarded, and the room went on being shown the editor. Asked
      * through `request`, so it is confirmed and retried like a press. */
-    if ('sync' in m && delivery.mine && intent !== null && sync.on !== intent
-        && sync.pending !== intent) {
+    if ('sync' in m && !lately(m, 'sync') && delivery.mine && intent !== null
+        && sync.on !== intent && sync.pending !== intent) {
       request(intent);
     }
   },
@@ -476,10 +523,11 @@ const HANDLERS = {
     p.seen = m.at;
     p.posAt = m.at || p.posAt;
   },
-  controlling(m) { setControl(m.control); },
+  controlling(m) { heardAt.control = Date.now(); setControl(m.control); },
   /* The switch. Cleared of its buffer on the way down so that turning it on again cannot
    * momentarily show the last thing the educator wrote half an hour ago. */
   syncing(m) {
+    heardAt.sync = Date.now();
     sync.on = !!m.on;
     if (sync.pending === sync.on) settled();
     /* AN ANSWER THIS TAB DID NOT ASK FOR, disagreeing with what it last asked for: another tab
@@ -489,7 +537,7 @@ const HANDLERS = {
      * each re-asserted what they wanted would argue at network speed. */
     else if (sync.pending === null && intent !== null) intent = sync.on;
     if (intent === sync.on) sync.stuck = false;
-    if (!m.on) { sync.at = null; sync.code = null; sync.cursor = null; sync.anchor = null; }
+    if (!m.on) dropBuffer();
   },
   /* THE NEWEST PUSH WINS, NOT THE LAST TO ARRIVE. Each push is its own concurrent invocation,
    * so an older one can land after a newer one, and applied as it came it puts older code on
@@ -959,6 +1007,7 @@ export async function start(cohort, course) {
   remember(r.session, true);
   live.running[cohort] = r.session;
   openChannel(cohort);
+  keepUp();
   if (previewRole()) previewRoom(r.session, emitLocal, rowsForPreview, () => here?.(), simulateLoss);
   return r.session;
 }
@@ -967,6 +1016,7 @@ export async function start(cohort, course) {
 export function join(s) {
   remember(s, s.by === session.sub);
   openChannel(s.cohort);
+  keepUp();
   /* No socket in preview - `socketUrl()` is null without an auth.json - so the room would
    * be permanently empty and the panel, its four states and the band's count would all be
    * things nobody sees before shipping. The script plays real messages at `emitLocal`,

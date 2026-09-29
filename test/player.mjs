@@ -609,6 +609,87 @@ check('a drive that moves them to another exercise carries its code with it',
         at() === before, `${at()} was ${before}`);
 }
 
+// ------------------------------------------ catching up, every thirty seconds
+/* THE LIGHT ROSTER. Every discrete message is sent once, and a client that missed one with its
+ * socket still up never heard it again - measured on the deployment, three of three never
+ * caught up. So every client asks every thirty seconds, and the server answers without the
+ * members, which cannot change, and without the board's drawing, which must not be put back
+ * under an educator's pen on a timer. What arrives has to repair what was missed and leave
+ * everything else exactly as it was.
+ */
+{
+  const wb = () => document.querySelector('.whiteboard');
+  const ink = () => wb()?.querySelector('.wbsurface')?.innerHTML || '';
+  const band = () => document.querySelector('.band')?.textContent.replace(/\s+/g, ' ') || '';
+  const place = (exercise, title) => ({ exercise, title, slide: null });
+  const now = () => new Date().toISOString();
+  [...document.querySelectorAll('button')].find(b => /Follow again/.test(b.textContent))?.click();
+  await settle(150);
+  /* Past the freshness window of the whiteboard test above: a light roster deliberately defers
+   * to a `boarding` heard in the last five seconds. */
+  await settle(5200);
+
+  player.emitLocal({ type: 'roster', members: [{ sub: 'member-1', name: 'Member One' }],
+                     here: [{ ...tutor, position: place('101', 'First'), posAt: now() }] });
+  await settle(250);
+  await settle(20);
+  player.emitLocal({ type: 'roster', light: true, boardOn: false,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(250);
+  check('a light roster moves a following student to where the educator is', at() === '3 / 4',
+        at());
+  /* Read from the state, because a student is never shown the member list: it is the educator's
+   * panel that would empty every thirty seconds. */
+  check('and leaves the member list as it was', player.delivery.room.members.length === 1,
+        JSON.stringify(player.delivery.room.members));
+
+  player.emitLocal({ type: 'roster', members: [{ sub: 'member-1', name: 'Member One' }],
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }],
+                     board: { on: true, page: 0, svg: '<path d="M1,1 L2,2"/>' } });
+  await settle(200);
+  check('a full roster puts up the board a student arrived under', !!wb() && /M1,1/.test(ink()),
+        ink().slice(0, 80));
+  player.emitLocal({ type: 'roster', light: true, boardOn: true,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(200);
+  check('a light roster leaves an open board, and its drawing, as they were',
+        !!wb() && /M1,1/.test(ink()), ink().slice(0, 80));
+  player.emitLocal({ type: 'roster', light: true, boardOn: false,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(200);
+  check('a board the student missed being put away is put away', !wb());
+
+  player.outbox.on = true;
+  player.outbox.sent.length = 0;
+  player.emitLocal({ type: 'roster', light: true, boardOn: true,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(100);
+  check('a board the student missed going up is asked for in full, drawing and all',
+        player.outbox.sent.some(m => m.type === 'roster' && !m.light),
+        JSON.stringify(player.outbox.sent));
+  player.outbox.on = false;
+  player.outbox.sent.length = 0;
+
+  /* A ROSTER READ JUST BEFORE A BROADCAST CAN ARRIVE JUST AFTER IT, and must not undo it. */
+  player.emitLocal({ type: 'boarding', on: true, page: 0 });
+  await settle(100);
+  player.emitLocal({ type: 'roster', light: true, boardOn: false,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(150);
+  check('a light roster does not take down a board put up a moment ago', !!wb());
+  player.emitLocal({ type: 'boarding', on: false, page: 0 });
+
+  player.emitLocal({ type: 'syncing', on: true });
+  await settle(100);
+  player.emitLocal({ type: 'roster', light: true, sync: false,
+                     here: [{ ...tutor, position: place('102', 'Second'), posAt: now() }] });
+  await settle(150);
+  check('nor switch off a demonstration switched on a moment ago',
+        /writing in a tab of their own/.test(band()), band().slice(0, 160));
+  player.emitLocal({ type: 'syncing', on: false });
+  await settle(150);
+}
+
 // ------------------------------------------ the class is given five minutes
 /* THE COUNTDOWN, from the side that receives one.
  *

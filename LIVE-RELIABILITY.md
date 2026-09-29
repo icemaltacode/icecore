@@ -8,8 +8,9 @@ reconnects. After that it makes the shared editor, and then the rest of the chan
 a message lost for any other reason, so that one dropped message can never again leave a student
 behind.
 
-Status: **Phases 0 to 3 are built, deployed and measured** (2026-09-29), and so is the fix found
-after them (a student arriving is not a student gone). Phase 4 is not started. Diagnosed on 2026-09-29 from the live function's logs and
+Status: **all four phases are built, deployed and measured** (2026-09-29), and so is the fix found
+after Phase 3 (a student arriving is not a student gone). What is left is the next real lesson,
+read against **Proving it**. Diagnosed on 2026-09-29 from the live function's logs and
 metrics, during a lesson, without touching the deployment. Keith confirmed two things since:
 the stalls he saw that morning fell in the stretch the logs show failing, and he writes by hand
 on slides in most lessons and has seen the "Connection lost" band flash just after a stroke.
@@ -682,6 +683,43 @@ Deployed 2026-09-29 13:58 UTC. In the log since: three `rowless` lines (the prob
 
 ## Phase 4: a room that catches up
 
+**As built**, where it differs from step 16:
+- **The board is healed too, not only left alone.** The light roster carries `boardOn` instead
+  of the drawing. A client whose board disagrees closes it, or asks for the full roster (the one
+  place the drawing comes from) when the room has one up that it does not.
+- **A light roster never overrules a broadcast heard in the last 5 seconds** (`FRESHER`), for
+  the editor switch, control, the board and the timer. A roster read just before a broadcast can
+  arrive just after it, and would otherwise undo it on that screen for thirty seconds; with a
+  roster per client every thirty seconds that would happen somewhere in most lessons. Moves need
+  no such rule: they are ordered by the server's clock (step 14).
+- **Control is only re-applied when it has changed**, because applying it clears `refused`, and
+  a refusal is the only place an admin is told why they could not take control.
+- **A roster that says sharing is off clears the buffer**, as `syncing` off does, so a student who
+  missed that message cannot later flash an old demonstration.
+
+**Measured.** The rig's `drift` scenario changes the server's state without the broadcast that
+normally goes with it, which is exactly what a lost message leaves: the educator's position one
+slide on (twice), then the session deleted. It waits 45 seconds for the student to catch up.
+
+| | Before Phase 4 | After Phase 4 |
+|---|---|---|
+| Student follows a move whose `moved` never arrived | **never, 2 of 2** | **2 of 2**, in 18s and 30s |
+| Student leaves a lesson whose `ended` never arrived | **never** | **yes**, in 30s |
+
+The same full run, every scenario, after Phase 4: 22 of 22 moves followed, 6 of 6 Nexts during a
+reconnection, a typed line on the student's screen in 0.12s with 24 to 43 updates a line, 143 of
+143 pushes within 300ms, Share on written code shown in 0.18s, a student back from a network drop
+caught up in 1.2s, the button confirmed in 94ms, 12 of 12 big snapshots whole. The student was
+sent 9 light rosters in the five minutes, one every thirty seconds as designed. The 8-student
+synthetic class alongside, 12 minutes: nothing missing, every heartbeat answered, no row lost,
+no failed post in 5,022 invocations (p50 29ms, p99 108ms).
+
+**One unexplained "Connection lost" on the educator's tab**, during that run's network-drop
+scenario: the tab closed its own socket (the Lambda logs `closed tutor 1005`), with no server-side
+cause and no `rowless`. It did not recur in three more runs of the same scenario (nine trials).
+The rig now records each tab's console warnings, where live.js says why it gives a socket up, and
+the browser's own offline and online events, so a recurrence will say which it was.
+
 ### 16. A light roster, every 30 seconds
 
 Every discrete message on the channel is sent once: `moved`, `syncing`, `controlling`, `ended`.
@@ -800,9 +838,12 @@ filter @message like /\tclosed / | parse @message /closed (?<role>\S+) (?<code>\
     within 1.2s of the network returning.*
   - The Share editor button either confirms within a second or says what it is waiting for.
     *Moves in 4ms, confirmed in 93ms.*
-- **Phase 4:**
+- **Phase 4** (met on 2026-09-29):
   - The player tests pass.
-  - The logs show the light roster costing what the estimate says.
+  - The logs show the light roster costing what the estimate says. *One per client per thirty
+    seconds: 9 to the rig's student in five minutes.*
+  - In the rig, a missed move and a missed end are both caught up within 45 seconds. *18 to
+    30 seconds.*
 
 ## Considered and not doing
 

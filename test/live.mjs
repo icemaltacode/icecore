@@ -937,6 +937,14 @@ try {
       check('and says when each position in it was written',
             placed.length > 0 && placed.every(c => typeof c.posAt === 'string'),
             JSON.stringify(withSync?.here));
+      /* THE LIGHT ONE, asked for every thirty seconds (Phase 4): no members, no drawing, and
+       * whether a board is up instead. */
+      B.ws.send(JSON.stringify({ type: 'roster', light: true }));
+      const lighter = await heardB.next('roster');
+      check('a light roster leaves out the members and the drawing',
+            lighter?.light === true && typeof lighter.boardOn === 'boolean'
+              && !('members' in lighter) && !('board' in lighter) && lighter.sync === true,
+            JSON.stringify(lighter)?.slice(0, 200));
 
       /* A STUDENT MAY NOT FREEZE THE ROOM. `tutor` is the gate on the switch itself, and it
        * is the one that keeps a demonstration something an educator does rather than

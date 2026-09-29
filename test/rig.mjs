@@ -1,7 +1,7 @@
 /* Real browsers, scripted, against the live site.
  *
  *   AWS_PROFILE=ice npm run test:rig -- [--label before] [--out results.json]
- *                                       [--only follow,cut,editor,start,dropout,share,draw]
+ *                                       [--only follow,cut,editor,start,dropout,share,draw,drift]
  *
  * Phase 0c of LIVE-RELIABILITY.md. The synthetic classroom speaks the protocol, so it cannot see
  * the CLIENT's faults: a move recorded as sent while the socket was down, a Share editor button
@@ -40,7 +40,7 @@ const arg = (name, fallback) => {
 };
 const LABEL = String(arg('label', 'run'));
 const OUT = arg('out', null);
-const ONLY = String(arg('only', 'follow,cut,editor,start,dropout,share,draw')).split(',');
+const ONLY = String(arg('only', 'follow,cut,editor,start,dropout,share,draw,drift')).split(',');
 const COURSE = 'icex-python-oney';
 const EXERCISE = 'Your First NumPy Array';   // topic 1.1.1's first exercise; its slides row is just before it
 
@@ -176,9 +176,25 @@ student.page.on('websocket', ws => {
   ws.on('close', () => wire.closes.push({ who: 'student', t: Date.now() }));
 });
 
+/* WHAT EACH TAB SAID ABOUT ITS OWN CONNECTION. live.js warns, with the reason, whenever it gives
+ * a socket up - the heartbeat's silence, a probe unanswered - and a flash of "Connection lost"
+ * that the server did not cause can only be explained from here. Warnings and errors only. */
+const consoleLog = [];
+for (const [who, page] of [['educator', educator.page], ['student', student.page]]) {
+  page.on('console', m => {
+    if (m.type() === 'warning' || m.type() === 'error') {
+      consoleLog.push({ who, t: new Date().toISOString(), type: m.type(), text: m.text().slice(0, 200) });
+    }
+  });
+}
+
 /* How often the educator was shown "Connection lost". Counted in the page, because the band can
  * come and go between two polls. */
 const watchBand = page => page.evaluate(() => {
+  /* The browser's own word on the network, which live.js acts on without logging: an `offline`
+   * drops the socket at once. Said to the console so the rig's capture sees it. */
+  addEventListener('offline', () => console.warn('rig: the browser said offline'));
+  addEventListener('online', () => console.warn('rig: the browser said online'));
   window.__away = 0;
   let was = false;
   new MutationObserver(() => {
@@ -704,11 +720,47 @@ async function draw() {
   };
 }
 
+/* A MESSAGE THAT NEVER ARRIVED, made on demand. Phase 1 stopped the channel losing them, so a
+ * lost `moved` or `ended` cannot be caused any more - but a client that misses one for any reason
+ * still never hears it again, and Phase 4 is the repair. So the SERVER's state is changed without
+ * the broadcast that would normally go with it, which is exactly the state a lost message
+ * leaves: the educator's position one slide on, then the session gone. Does the student catch
+ * up, and how long does it take? Last, because it ends the session. */
+async function drift() {
+  const ids = await educatorConnections(COHORT);
+  const rows = [];
+  for (const id of ids) {
+    const r = await ddb.send(new sdk.GetCommand({
+      TableName: TABLE, Key: { pk: `CONN#${id}`, sk: `LIVECONN#${COHORT}` } }));
+    if (r.Item?.position) rows.push(r.Item);
+  }
+  const mine = rows[0];
+  if (!mine) throw new Error('the educator has no position on the server');
+  const home = mine.position;
+  const trials = [];
+  for (const step of [1, 2]) {
+    if (home.slide == null) break;
+    const want = home.slide + step;
+    await ddb.send(new sdk.UpdateCommand({
+      TableName: TABLE, Key: { pk: mine.pk, sk: mine.sk },
+      UpdateExpression: 'SET #p = :p, posAt = :now',
+      ExpressionAttributeNames: { '#p': 'position' },
+      ExpressionAttributeValues: { ':p': { ...home, slide: want }, ':now': new Date().toISOString() },
+    }));
+    const ms = await until(async () => (await slideOf(student.page)) === want, 45_000, 250);
+    trials.push({ missed: 'moved', to: want, caughtUpMs: ms });
+  }
+  await ddb.send(new sdk.DeleteCommand({ TableName: TABLE, Key: { pk: 'COHORTS', sk: `LIVE#${COHORT}` } }));
+  const gone = await until(async () => (await student.page.locator('.band').count()) === 0, 45_000, 250);
+  trials.push({ missed: 'ended', caughtUpMs: gone });
+  return { trials, neverCaughtUp: trials.filter(t => t.caughtUpMs == null).length };
+}
+
 // ---------------------------------------------------------------- run
-const SCENARIOS = { follow, cut: cutThenMove, editor, start, dropout, share, draw };
+const SCENARIOS = { follow, cut: cutThenMove, editor, start, dropout, share, draw, drift };
 try {
   await setup();
-  for (const name of ['follow', 'cut', 'editor', 'start', 'dropout', 'share', 'draw']) {
+  for (const name of ['follow', 'cut', 'editor', 'start', 'dropout', 'share', 'draw', 'drift']) {
     if (!ONLY.includes(name)) continue;
     console.log(`-- ${name}`);
     try {
@@ -724,7 +776,12 @@ try {
   results.pushesNumbered = `${got.filter(m => m.type === 'synced' && Number.isInteger(m.seq)).length}`
     + ` of ${got.filter(m => m.type === 'synced').length}`;
   results.rosterSaysWhen = got.some(m => m.type === 'roster' && (m.here || []).some(c => c.posAt));
+  /* Phase 4: rosters the student was sent without asking because a socket opened. */
+  results.lightRosters = got.filter(m => m.type === 'roster' && m.light).length;
   if (disagreements.length) results.disagreements = disagreements.slice(0, 6);
+  results.console = consoleLog.slice(0, 40);
+  results.educatorCloses = wire.closes.filter(c => c.who === 'educator')
+    .map(c => new Date(c.t).toISOString());
   results.educatorSocketsLost = wire.closes.filter(c => c.who === 'educator').length;
   results.educatorSocketsOpened = wire.opened.filter(o => o.who === 'educator').length;
 } catch (e) {

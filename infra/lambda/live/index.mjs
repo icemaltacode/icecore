@@ -2116,11 +2116,26 @@ async function tallied(cohort, mark, seeded = false) {
 
     /* Ask again. A client that has just reconnected - a lid, a tunnel, API Gateway's
      * two-hour cap - has a roster from before it went away, and every join and leave in
-     * between happened to somebody who was not listening. */
+     * between happened to somebody who was not listening.
+     *
+     * AND EVERY THIRTY SECONDS, LIGHT. Every discrete message here is sent once - a move, the
+     * editor switch, control, the timer, the end of the lesson - and a client that missed one
+     * for any reason never heard it again. So each client asks on a timer too, with `light`,
+     * and this answers everything except the two things that do not need repeating and one
+     * that must not be:
+     *  - `members` cannot change during a lesson, and is the costliest part of the answer;
+     *  - the BOARD'S DRAWING must not be re-applied on a timer - board.js loads the roster's
+     *    page, and doing that under an educator's pen would put back a copy a stroke behind.
+     *    So the light answer says only whether a board is up (`boardOn`), and a client that
+     *    disagrees asks for the full roster, which is the one place the drawing comes from.
+     * An absent field means unchanged on the other side, which is how `control`, `sync` and
+     * `timer` were already read. */
     case 'roster': {
       const held = await sessionFor(row.cohort);
+      const light = msg.light === true;
       await to(event, id, {
         type: 'roster',
+        ...(light ? { light: true, boardOn: !!held?.board } : {}),
         /* WHETHER THERE IS STILL A LESSON AT ALL, and it is the one field here that is not
          * about the room.
          *
@@ -2152,10 +2167,12 @@ async function tallied(cohort, mark, seeded = false) {
         /* And the board, in full. Same reason again, and the one case where the answer is
          * not a flag: a student arriving mid-lesson has to see what is ALREADY drawn, not
          * only be told that a board is up. `nodes` joins back into the page it came from. */
-        board: held?.board
-          ? { on: true, page: held.board.page || 0, svg: (held.board.nodes || []).join('') }
-          : null,
-        members: await membersOf(row.cohort),
+        ...(light ? {} : {
+          board: held?.board
+            ? { on: true, page: held.board.page || 0, svg: (held.board.nodes || []).join('') }
+            : null,
+          members: await membersOf(row.cohort),
+        }),
         here: (await connectionsIn(row.cohort)).map(c => ({
           sub: c.sub, name: c.name, role: c.role, seen: c.seen, position: c.position || null,
           /* WHEN THAT POSITION WAS WRITTEN, by this function's clock - the same clock that

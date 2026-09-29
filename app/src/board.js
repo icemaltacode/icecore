@@ -36,7 +36,7 @@ import { reactive, watch } from 'vue';
 import { on, send, emitLocal } from './live.js';
 import { previewRole } from './preview.js';
 import { api } from './auth.js';
-import { delivery } from './delivery.js';
+import { delivery, FRESHER } from './delivery.js';
 
 /** The stage. 16:9 because that is what a slide is and what most screens are. */
 export const STAGE = { w: 1600, h: 900 };
@@ -148,7 +148,9 @@ function applyStroke(page, node) {
   board.pages = pages;
 }
 
-on('boarding', m => applyBoarding(m.on, m.page));
+/* When a `boarding` was last heard - see the light roster below, and FRESHER in delivery.js. */
+let boardingAt = 0;
+on('boarding', m => { boardingAt = Date.now(); applyBoarding(m.on, m.page); });
 on('paged', m => applyPage(m.page, m.svg));
 on('stroked', m => applyStroke(m.page, m.node));
 /* The row cannot take another stroke on this page. Told to the educator rather than
@@ -170,6 +172,18 @@ on('kept', m => { if (saved.course && saved.course === m.course) loadSaved(saved
  * This is also the only message that carries what is ALREADY DRAWN, because a joiner needs
  * the page rather than the news that there is one. */
 on('roster', m => {
+  /* THE LIGHT ONE, every thirty seconds, says only whether a board is up - see the Lambda. It
+   * must not carry the drawing: applying the roster's page on a timer would put the server's
+   * copy back under an educator's pen, a stroke behind. So a board that should be gone is
+   * closed here, and one that should be up is asked for in full - the one place the drawing
+   * comes from. Nothing at all when the two agree, which is every tick but the one after a
+   * missed `boarding`. */
+  if (m.light) {
+    if (!('boardOn' in m) || Date.now() - boardingAt < FRESHER) return;
+    if (m.boardOn && !board.on) send('roster');
+    else if (!m.boardOn && board.on) applyBoarding(false);
+    return;
+  }
   if (!m.board?.on) { if (board.on) applyBoarding(false); return; }
   applyBoarding(true, m.board.page);
   applyPage(m.board.page, m.board.svg);

@@ -203,6 +203,22 @@ await settle(100);
 check('until the room confirms it', label() === 'Share editor', label());
 player.previewHold.sync = false;
 
+/* ---- a roster every thirty seconds must not wipe what the educator is reading -------------
+ *
+ * A refusal to take control says why - somebody else is helping that student - and it is the
+ * only place that is said. Setting control clears it, and a roster set control whether or not
+ * anything had changed, so a light roster every thirty seconds would take the reason off the
+ * screen before it had been read. */
+player.emitLocal({ type: 'refused', what: 'control', why: 'Somebody else is helping them.' });
+await settle(100);
+const refusal = () => document.querySelector('.livegone')?.textContent || '';
+check('a refusal to take control says why', /Somebody else is helping them/.test(refusal()),
+      refusal());
+player.emitLocal({ type: 'roster', light: true, control: null, sync: false, here: [] });
+await settle(100);
+check('and a roster that changes nothing leaves it on screen',
+      /Somebody else is helping them/.test(refusal()), refusal());
+
 player.outbox.on = false;
 player.outbox.sent.length = 0;
 app.unmount();
