@@ -150,8 +150,14 @@ class Preamble extends WidgetType {
     return other.code === this.code && other.language === this.language && other.open === this.open;
   }
   toDOM(view) {
+    /* PADDING OUTSIDE, THE BOX INSIDE, AND NO MARGIN ANYWHERE. CodeMirror measures a block
+     * widget without its vertical margins, so a margin here made the line-number column that
+     * much shorter than the code beside it - every number sat half a line above its line. */
     const wrap = document.createElement('div');
     wrap.className = `cm-preamble${this.open ? ' open' : ''}`;
+    const box = document.createElement('div');
+    box.className = 'cm-preamble-box';
+    wrap.append(box);
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'cm-preamble-head';
@@ -169,7 +175,7 @@ class Preamble extends WidgetType {
     // Kept off the editor's own selection: pressing it must not move anybody's caret.
     head.addEventListener('mousedown', e => e.preventDefault());
     head.addEventListener('click', () => view.dispatch({ effects: togglePreamble.of(null) }));
-    wrap.append(head);
+    box.append(head);
     if (this.open) {
       const pre = document.createElement('pre');
       pre.className = 'cm-preamble-code';
@@ -184,7 +190,7 @@ class Preamble extends WidgetType {
         at = to;
       });
       if (at < this.code.length) pre.append(this.code.slice(at));
-      wrap.append(pre);
+      box.append(pre);
     }
     return wrap;
   }
@@ -368,8 +374,9 @@ onMounted(() => {
           },
           /* Folded, one quiet line; open, the code under a rule. Dimmed either way, so it
              never reads as the student's own. */
-          '.cm-preamble': {
-            margin: '2px 0 6px', borderLeft: '2px solid var(--ice-border)',
+          '.cm-preamble': { padding: '2px 0 6px' },
+          '.cm-preamble-box': {
+            borderLeft: '2px solid var(--ice-border)',
             background: 'var(--ice-raise)', borderRadius: '0 6px 6px 0',
           },
           '.cm-preamble-head': {
