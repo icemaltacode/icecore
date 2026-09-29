@@ -221,9 +221,10 @@ check('and a roster that changes nothing leaves it on screen',
 
 /* ---- the timer's lengths ----------------------------------------------------
  *
- * The presets are what a room is actually given, and anything else is typed - `7` or `2:30`.
- * What is asserted is what the button SENDS, and what the popover says about the timer
- * afterwards: a typed 2:30 must not read back as the "3 min" preset it rounds to.
+ * The presets are what a room is actually given; anything else goes in three boxes, h : m : s,
+ * where an empty box is a zero. What is asserted is what the button SENDS, and what the
+ * popover says about the timer afterwards: 2:30 must not read back as the "3 min" preset it
+ * rounds to.
  */
 {
   const openTimer = async () => {
@@ -231,15 +232,19 @@ check('and a roster that changes nothing leaves it on screen',
     await settle(120);
   };
   const presets = () => [...document.querySelectorAll('.ltmins .ltmin')];
-  const field = () => document.querySelector('.ltcustom input');
-  const start = () => document.querySelector('.ltcustom button');
-  const type = async v => {
-    field().value = v;
-    field().dispatchEvent(new window.Event('input'));
+  const box = name => document.querySelector(`.ltbox[aria-label="${name}"]`);
+  const start = () => document.querySelector('.ltstart');
+  const hint = () => document.querySelector('.ltbad')?.textContent.trim() || '';
+  const fill = async (name, v) => {
+    box(name).value = v;
+    box(name).dispatchEvent(new window.Event('input'));
     await settle(40);
   };
+  const enter = async ({ h = '', m = '', s = '' }) => {
+    await fill('Hours', h); await fill('Minutes', m); await fill('Seconds', s);
+  };
   const submit = async () => {
-    field().closest('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
+    start().closest('form').dispatchEvent(new window.Event('submit', { cancelable: true }));
     await settle(200);
   };
 
@@ -247,18 +252,28 @@ check('and a roster that changes nothing leaves it on screen',
   check('the presets are the lengths a room is given',
         presets().map(b => parseInt(b.textContent, 10)).join(',') === '1,2,3,5,10,15',
         presets().map(b => b.textContent.trim()).join(','));
+  check('the length is entered in hours, minutes and seconds',
+        !!box('Hours') && !!box('Minutes') && !!box('Seconds'));
 
-  const refused = [];
-  for (const bad of ['0', '0:00', '2:75', '1:5', '121', 'ten']) {
-    await type(bad);
-    if (!start()?.disabled) refused.push(bad);
-  }
-  check('anything that is not a length leaves Start waiting', refused.length === 0,
-        `Start was offered for ${refused.join(', ')}`);
-  check('and says what it wants', /minutes:seconds/.test(text()), text().slice(-200));
+  check('nothing entered is not a length, and not an error either',
+        start().disabled && !hint(), hint());
+  await enter({ m: '75' });
+  check('minutes past 59 are refused, and it says so',
+        start().disabled && /59/.test(hint()), hint());
+  await enter({ h: '3' });
+  check('so is anything longer than the server will keep',
+        start().disabled && /2 hours/.test(hint()), hint());
 
-  await type('2:30');
-  check('a typed length can be started', start() && !start().disabled);
+  await enter({});
+  await fill('Minutes', 'a5');
+  check('a box takes digits and nothing else', box('Minutes').value === '5', box('Minutes').value);
+
+  await fill('Minutes', '15');
+  check('a full box hands the caret on', document.activeElement === box('Seconds'),
+        document.activeElement?.getAttribute('aria-label'));
+
+  await enter({ m: '2', s: '30' });
+  check('empty boxes are zeros, so 2 and 30 can be started', !start().disabled);
   player.outbox.sent.length = 0;
   await submit();
   const set = out('timer').at(-1);
@@ -273,11 +288,13 @@ check('and a roster that changes nothing leaves it on screen',
   check('and no preset claims to be the one running',
         !presets().some(b => b.classList.contains('on')),
         presets().filter(b => b.classList.contains('on')).map(b => b.textContent.trim()));
+  check('the boxes are empty again for the next one',
+        !box('Hours').value && !box('Minutes').value && !box('Seconds').value);
 
-  await type('7');
+  await enter({ h: '1', m: '', s: '5' });
   await submit();
-  check('a bare number is minutes, like the buttons beside it',
-        out('timer').at(-1)?.seconds === 420, JSON.stringify(out('timer').at(-1)));
+  check('hours count, and an empty minutes box is a zero',
+        out('timer').at(-1)?.seconds === 3605, JSON.stringify(out('timer').at(-1)));
 }
 
 player.outbox.on = false;

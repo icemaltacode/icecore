@@ -32,29 +32,32 @@ import { previewRole } from './preview.js';
 import { delivery, FRESHER } from './delivery.js';
 
 /** What the educator is offered, in minutes: the lengths a room is actually given, short
- *  enough that the list is read rather than scanned. Anything else is typed - see
- *  `lengthOf`. */
+ *  enough that the list is read rather than scanned. Anything else is entered in hours,
+ *  minutes and seconds - see `lengthFrom`. */
 export const DURATIONS = [1, 2, 3, 5, 10, 15];
 
-/* THE LONGEST A TYPED LENGTH MAY BE, which is the live function's own cap (`TIMER_MAX`).
- * Stated here as well so that 200 is refused where it is typed: the server would otherwise
- * clamp it to 120 without a word, and a timer that is not the length somebody asked for is
- * worse than a button that will not start. */
-export const LONGEST = 120 * 60;
+/* THE LONGEST AN ENTERED LENGTH MAY BE, which is the live function's own cap (`TIMER_MAX`).
+ * Stated here as well so that three hours is refused where it is entered: the server would
+ * otherwise clamp it to two without a word, and a timer that is not the length somebody
+ * asked for is worse than a button that will not start. */
+export const LONGEST = 2 * 60 * 60;
 
 /**
- * A typed length, in seconds, or null when it is not one: `7` is seven minutes and `2:30`
- * is two and a half. Minutes rather than seconds for a bare number because that is the unit
- * every preset beside the field is in - `5` meaning five seconds would be a trap laid by the
- * field for anybody who has just read the buttons.
+ * An entered length from its three boxes, as `{ seconds, why }`. `seconds` is null when it is
+ * not a length, and `why` says what is wrong once there is something to be wrong about.
+ *
+ * AN EMPTY BOX IS A ZERO, so `m` alone is minutes and `s` alone is seconds - nobody should
+ * have to type `0` into the hours to give a class five minutes. Nothing entered at all is not
+ * an error, only not yet a length.
  */
-export function lengthOf(text) {
-  const m = String(text ?? '').trim().match(/^(\d{1,3})(?::(\d{2}))?$/);
-  if (!m) return null;
-  const secs = m[2] === undefined ? 0 : Number(m[2]);
-  if (secs > 59) return null;
-  const total = Number(m[1]) * 60 + secs;
-  return total >= 1 && total <= LONGEST ? total : null;
+export function lengthFrom({ h = '', m = '', s = '' } = {}) {
+  const parts = [h, m, s].map(v => String(v ?? '').trim());
+  if (parts.some(p => p && !/^\d+$/.test(p))) return { seconds: null, why: 'Numbers only.' };
+  const [hh, mm, ss] = parts.map(p => (p ? Number(p) : 0));
+  if (mm > 59 || ss > 59) return { seconds: null, why: 'Minutes and seconds go up to 59.' };
+  const total = hh * 3600 + mm * 60 + ss;
+  if (total > LONGEST) return { seconds: null, why: 'Up to 2 hours.' };
+  return { seconds: total >= 1 ? total : null, why: '' };
 }
 
 /** A length as the educator would say it: `5 minutes`, `1 minute`, `2:30`. */

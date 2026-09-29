@@ -25,8 +25,8 @@
  * number over the top of the lesson forever. `aria-live="off"` on the way down stops it, and
  * `role="timer"` is what this actually is.
  */
-import { ref, computed, watch, onUnmounted } from 'vue';
-import { timer, label, done, urgent, DURATIONS, lengthOf, spoken,
+import { ref, reactive, computed, watch, onUnmounted } from 'vue';
+import { timer, label, done, urgent, DURATIONS, lengthFrom, spoken,
          setTimer, pauseTimer, resumeTimer, showTimer, clearTimer } from '../timer.js';
 import Icon from './Icon.vue';
 
@@ -66,15 +66,43 @@ onUnmounted(() => { clearTimeout(arming); document.removeEventListener('pointerd
 
 const pick = m => { open.value = false; setTimer(m * 60, prominent.value); };
 
-/* ANY OTHER LENGTH, typed. Minutes, or minutes and seconds - see `lengthOf`. Start stays
- * disabled until what is typed is a length, so nothing is guessed at on the way through. */
-const custom = ref('');
-const customSeconds = computed(() => lengthOf(custom.value));
+/* ANY OTHER LENGTH, in three boxes - hours, minutes, seconds - where an empty box is a zero,
+ * so the minutes alone are five minutes. See `lengthFrom`.
+ *
+ * DIGITS ONLY, AND A FULL BOX HANDS ON. Typing 1-5 into the minutes lands the caret in the
+ * seconds, a colon does the same, and Backspace in an empty box steps back: what the three
+ * boxes cost over one field is the moving between them, so they do it themselves. Start
+ * waits until the boxes hold a length, and says why once they hold something that is not. */
+const custom = reactive({ h: '', m: '', s: '' });
+const entered = computed(() => lengthFrom(custom));
+const WIDTH = { h: 1, m: 2, s: 2 };
+const ORDER = ['h', 'm', 's'];
+const boxes = { h: ref(null), m: ref(null), s: ref(null) };
+const hBox = boxes.h;
+const mBox = boxes.m;
+const sBox = boxes.s;
+const step = (k, by) => boxes[ORDER[ORDER.indexOf(k) + by]]?.value;
+/* Focused and THEN selected: `select()` alone does not move focus, so the caret would stay
+ * behind in the box that was just filled. Selected so that typing over a box replaces it. */
+const onTo = el => { el?.focus(); el?.select(); };
+
+const onBox = (k, e) => {
+  const digits = e.target.value.replace(/\D/g, '').slice(0, WIDTH[k]);
+  custom[k] = digits;
+  // Written back, because a filtered-out letter would otherwise stay on screen.
+  if (e.target.value !== digits) e.target.value = digits;
+  if (digits.length === WIDTH[k]) onTo(step(k, 1));
+};
+const onKey = (k, e) => {
+  if (e.key === ':') { e.preventDefault(); onTo(step(k, 1)); }
+  else if (e.key === 'Backspace' && !custom[k]) { e.preventDefault(); step(k, -1)?.focus(); }
+};
+
 const pickCustom = () => {
-  if (!customSeconds.value) return;
+  if (!entered.value.seconds) return;
   open.value = false;
-  setTimer(customSeconds.value, prominent.value);
-  custom.value = '';
+  setTimer(entered.value.seconds, prominent.value);
+  custom.h = ''; custom.m = ''; custom.s = '';
 };
 </script>
 
@@ -126,16 +154,22 @@ const pickCustom = () => {
           </button>
         </div>
         <form class="ltcustom" @submit.prevent="pickCustom">
-          <input v-model="custom" type="text" inputmode="numeric" autocomplete="off"
-                 placeholder="Other: 7 or 2:30"
-                 aria-label="Another length, in minutes or minutes:seconds">
-          <button type="submit" class="ltmin" :disabled="!customSeconds">Start</button>
+          <div class="ltboxes" role="group" aria-label="Another length">
+            <input ref="hBox" class="ltbox narrow" :value="custom.h" placeholder="h"
+                   inputmode="numeric" autocomplete="off" maxlength="1" aria-label="Hours"
+                   @input="onBox('h', $event)" @keydown="onKey('h', $event)">
+            <span class="ltsep" aria-hidden="true">:</span>
+            <input ref="mBox" class="ltbox" :value="custom.m" placeholder="m"
+                   inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Minutes"
+                   @input="onBox('m', $event)" @keydown="onKey('m', $event)">
+            <span class="ltsep" aria-hidden="true">:</span>
+            <input ref="sBox" class="ltbox" :value="custom.s" placeholder="s"
+                   inputmode="numeric" autocomplete="off" maxlength="2" aria-label="Seconds"
+                   @input="onBox('s', $event)" @keydown="onKey('s', $event)">
+          </div>
+          <button type="submit" class="ltmin ltstart" :disabled="!entered.seconds">Start</button>
         </form>
-        <!-- Said only once something has been typed that is not a length. Before that the
-             placeholder already shows both forms. -->
-        <p v-if="custom.trim() && !customSeconds" class="ltbad">
-          Minutes or minutes:seconds, up to 120 minutes.
-        </p>
+        <p v-if="entered.why" class="ltbad">{{ entered.why }}</p>
         <!-- A property of the timer, not of each screen: it is the educator deciding how
              loudly the room is being asked to look at the clock. -->
         <label class="ltprom">
@@ -188,7 +222,7 @@ const pickCustom = () => {
 .ltword { line-height: 1; }
 
 .ltpop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 50; width: max-content;
-         max-width: min(300px, calc(100vw - 32px)); padding: 12px;
+         max-width: min(440px, calc(100vw - 32px)); padding: 12px;
          background: var(--ice-bg); border: 1px solid var(--ice-border); border-radius: 10px;
          box-shadow: 0 12px 32px rgb(0 0 0 / .22); text-align: left; }
 .ltlead { margin: 0 0 8px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
@@ -200,11 +234,17 @@ const pickCustom = () => {
 .ltmin small { font-size: 9.5px; font-weight: 400; color: var(--ice-fg-muted); }
 .ltmin:hover { border-color: var(--ice-primary); }
 .ltmin.on { background: var(--ice-primary-soft); border-color: var(--ice-primary); }
-.ltcustom { display: flex; gap: 6px; margin-top: 8px; }
-.ltcustom input { flex: 1; min-width: 0; padding: 5px 9px; font: inherit; font-size: 13px;
-                  color: var(--ice-fg); background: var(--ice-bg);
-                  border: 1px solid var(--ice-border); border-radius: 8px; }
-.ltcustom input:focus { outline: none; border-color: var(--ice-primary); }
+.ltcustom { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.ltboxes { display: flex; align-items: center; gap: 4px; }
+.ltbox { width: 2.9em; padding: 5px 0; text-align: center; font: inherit; font-size: 15px;
+         font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ice-fg);
+         background: var(--ice-bg-soft); border: 1px solid var(--ice-border);
+         border-radius: 8px; }
+.ltbox.narrow { width: 2.3em; }
+.ltbox::placeholder { color: var(--ice-fg-muted); font-weight: 400; opacity: .7; }
+.ltbox:focus { outline: none; border-color: var(--ice-primary); background: var(--ice-bg); }
+.ltsep { color: var(--ice-fg-muted); font-weight: 600; }
+.ltstart { margin-left: auto; }
 .ltmin:disabled { cursor: default; opacity: .5; border-color: var(--ice-border); }
 .ltbad { margin: 6px 0 0; font-size: 11.5px; color: var(--ice-bad); }
 .ltprom { display: flex; align-items: flex-start; gap: 7px; margin-top: 10px; cursor: pointer;

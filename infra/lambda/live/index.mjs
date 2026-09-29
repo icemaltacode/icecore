@@ -139,7 +139,7 @@ const CHAT_BYTES = 140 * 1024;
  * bound on a number a client sends rather than a policy - an educator who wants forty-five
  * minutes gets forty-five minutes - and it exists so that a typo cannot put a deadline on
  * every screen in the room some time next year. */
-const TIMER_MAX = 2 * 60 * 60;   // timer.js's LONGEST says the same where it is typed
+const TIMER_MAX = 2 * 60 * 60;   // timer.js's LONGEST says the same where it is entered
 
 /* THE BOARD LIVES ON THE SESSION ROW, for the reason `sync` does: a student joining ten
  * minutes into a lesson has to arrive already knowing there is one, and a fact held only in
