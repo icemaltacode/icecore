@@ -16,7 +16,6 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
 import { gradePython, runPython, pythonReady, warmPython, completePython, pythonStarting,
          checkPython } from '../py.js';
-import { whenIdle } from '../idle.js';
 import { syntaxTree } from '@codemirror/language';
 import { askFor } from '../pycomplete.js';
 import { md } from '../md.js';
@@ -152,24 +151,19 @@ onBeforeUnmount(() => sendSoon.cancel());
  * DataFrame's methods and columns. Students were starting exercises unsure what already
  * existed; this answers it where they are typing.
  *
- * WARMED WHEN THE BROWSER IS IDLE, NEVER WAITED FOR. It needs the interpreter, which takes
- * seconds, so until it arrives this source answers nothing and the editor carries on with
- * what it had; the names join in from the next keystroke after. The same warm-up pays for
- * the interpreter a first Run used to wait on.
+ * WARMED AS THE EXERCISE OPENS. It needs the interpreter, which takes seconds; the same
+ * warm-up pays for the interpreter a first Run used to wait on, and brings the compiler the
+ * red lines below need - which is why every Python exercise warms, setup or not.
  *
- * IDLE, AND STILL ON THE MAIN THREAD. Pyodide runs here rather than in a worker, and
- * importing pandas holds the page for a second or two - scheduled for idle time it usually
- * lands while the instructions are being read. The timeout makes it happen on a page that is
- * never idle. A worker is the real fix, and a larger one. */
-/* Said beside the tabs while it happens, because the page may hold still for a moment and a
- * student typing into it deserves to know why. */
+ * AT ONCE, AND SAID OVER THE EDITOR. Pyodide runs on the main thread rather than in a worker,
+ * so importing pandas holds the page for a second or two. It was warmed at idle with a small
+ * badge by the tabs, which nobody saw - and at idle it could start a few seconds in, locking
+ * an editor somebody had begun typing into. Now it starts before the first paint, the editor
+ * opens covered and read-only (see EditorPane's `loading`), and is handed over once. When the
+ * interpreter is already warm nothing is covered at all. A worker is the real fix, and a
+ * larger one. */
 const startingPython = computed(() => pythonStarting.value);
-/* Nothing to offer without a setup, and nothing worth an interpreter for: a first exercise
- * with no setup still gets its Run warmed by the next one that has. */
-const cancelWarming = props.exercise.setup
-  ? whenIdle(() => { warmPython(props.courseId, props.exercise).catch(() => {}); })
-  : null;
-onBeforeUnmount(() => cancelWarming?.());
+warmPython(props.courseId, props.exercise).catch(() => {});
 
 /* ---- WHAT IS WRONG WITH IT, from Python's own compiler --------------------------------
  *
@@ -548,16 +542,11 @@ const ranQuietly = computed(() =>
         <EditorPane v-model="code" name="script.py" language="python" :readonly="frozen"
                     :preamble="exercise.setup || ''" :completions="liveCompletions"
                     :lint="lintPython" :lint-again="lintAgain"
+                    :loading="startingPython ? 'Loading Python…' : ''"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
-                    @cursor="onCursor" @active="active = $event" @run="doRun()">
-          <template #right>
-            <span v-if="startingPython" class="pyboot ice-boot" role="status">
-              <span class="ice-spin" aria-hidden="true"></span>Starting Python…
-            </span>
-          </template>
-        </EditorPane>
+                    @cursor="onCursor" @active="active = $event" @run="doRun()" />
         <div class="actions">
           <span v-if="booting" class="muted kbd">Starting Python…</span>
           <span v-else-if="verdict" class="verdict prose inline"
@@ -573,11 +562,11 @@ const ranQuietly = computed(() =>
                at the educator's tab who pressed a button labelled "Run code" would fairly
                expect their own. -->
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
-                  :disabled="busy">
+                  :disabled="busy || startingPython">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
           <button class="btn primary" data-show="check" data-label="Check answer"
-                  @click="doCheck" :disabled="busy">Check answer</button>
+                  @click="doCheck" :disabled="busy || startingPython">Check answer</button>
         </div>
       </div>
       <div class="result-pane" data-point="result">
@@ -674,8 +663,6 @@ const ranQuietly = computed(() =>
 .actions .btn { margin-left: 0; }
 .actions .btn.ghost { margin-left: auto; }
 .kbd { font-family: var(--ice-font-mono); font-size: 11px; }
-/* The badge itself is `.ice-boot` in styles.css, shared with the SQL exercise. */
-.pyboot { margin-left: auto; }
 .verdict { font-size: 12.5px; }
 .verdict.pass { color: var(--ice-good); }
 .verdict.fail { color: var(--ice-bad); }

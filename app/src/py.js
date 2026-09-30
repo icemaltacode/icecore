@@ -51,11 +51,11 @@ let grader = null;
 let graderKey = null;
 let building = null;
 
-/* WHETHER PYTHON IS STARTING RIGHT NOW, for the badge beside the editor's tabs. On while an
- * interpreter is being built, and while a freshly built one runs its first setup - which is
- * where pandas is imported, and the part that holds the page. Not on for the setup of every
- * later exercise: in an interpreter that already has its imports that takes a few
- * milliseconds, and a badge flashing on every Next is a badge nobody reads. */
+/* WHETHER PYTHON IS STARTING RIGHT NOW, for the overlay that covers the editor while it is.
+ * On while an interpreter is being built, and while a freshly built one runs its first setup -
+ * which is where pandas is imported, and the part that holds the page. Not on for the setup
+ * of every later exercise: in an interpreter that already has its imports that takes a few
+ * milliseconds, and an editor that locked for a blink on every Next would read as broken. */
 export const pythonStarting = ref(false);
 let startingFor = 0;
 const starting = async fn => {
@@ -205,23 +205,28 @@ export const pythonReady = () => !!grader;
  * interpreter since replaced would offer names that no longer exist. */
 let hinted = null;   // { grader, id } - whose names the editor may be offered
 
-export async function warmPython(course, exercise) {
-  const mod = moduleDataDir(exercise.topicId || exercise.topic);
-  const g = await graderFor(exercise);
-  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
-  const hint = () => g.hints({ pec: exercise.setup || '', cwd });
-  if (cold === g) {
-    cold = null;
-    /* A FRAME FIRST, so the badge is drawn before the page is held: the setup runs
-     * synchronously, and a badge switched on in the same task is never painted at all. */
-    await starting(async () => {
+export function warmPython(course, exercise) {
+  /* ONE STRETCH OF "STARTING", start to finish, whenever this interpreter is not already
+   * warm - so the overlay over the editor goes up once and comes down once, rather than
+   * dropping between building the interpreter and running its first setup (where pandas is
+   * imported, and where the page is held). Set synchronously, before anything is awaited, so
+   * the exercise's first paint already shows it. A warm interpreter's setup takes
+   * milliseconds and shows nothing. */
+  const warm = grader && graderKey === packageKey(exercise) && cold !== grader;
+  const work = async () => {
+    const mod = moduleDataDir(exercise.topicId || exercise.topic);
+    const g = await graderFor(exercise);
+    const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
+    if (cold === g) {
+      cold = null;
+      /* A FRAME FIRST, so the overlay is drawn before the page is held: the setup runs
+       * synchronously, and anything switched on in the same task is never painted. */
       await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
-      hint();
-    });
-  } else {
-    hint();
-  }
-  hinted = { grader: g, id: exercise.id };
+    }
+    g.hints({ pec: exercise.setup || '', cwd });
+    hinted = { grader: g, id: exercise.id };
+  };
+  return warm ? work() : starting(work);
 }
 
 /** Where `code` stops being Python - `[line, col, endLine, endCol, message]` - or null when it

@@ -3,7 +3,6 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
 import ResultGrid from './ResultGrid.vue';
 import { run, resetDb, warmDb, checkSql, dbStarting } from '../db.js';
-import { whenIdle } from '../idle.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
@@ -135,15 +134,13 @@ onBeforeUnmount(() => sendSoon.cancel());
 
 /* ---- THE STUDENT'S DATABASE, MADE BEFORE IT IS ASKED FOR ---------------------------------
  *
- * Warmed when the browser is idle, as a Python exercise warms its interpreter: the first Run
- * then finds it waiting, and the editor's check below has something to ask. Seeding a dataset
- * runs on the main thread, so the page may hold still for a moment while it does, and the
- * badge beside the tabs says so. Only exercises with a dataset have a database to make. */
+ * Made as the exercise opens, as a Python exercise warms its interpreter: the first Run then
+ * finds it waiting, and the editor's check below has something to ask. Seeding a dataset runs
+ * on the main thread, so the page may hold still for a moment - the editor opens covered and
+ * read-only while it does (EditorPane's `loading`), and is handed over once. When this dataset
+ * already has a database, nothing is covered. Only exercises with a dataset have one to make. */
 const startingDb = computed(() => dbStarting.value);
-const cancelWarming = props.exercise.dataset
-  ? whenIdle(() => { warmDb(props.courseId, props.exercise.dataset, props.exercise.setup); })
-  : null;
-onBeforeUnmount(() => cancelWarming?.());
+if (props.exercise.dataset) warmDb(props.courseId, props.exercise.dataset, props.exercise.setup);
 
 /* WHAT IS WRONG WITH IT, from Postgres itself: every statement is planned against the
  * student's own database and nothing is run - see sqllint.js. A red line means Run would
@@ -496,17 +493,13 @@ async function doReset() {
         <EditorPane v-model="code" name="query.sql" :readonly="frozen"
                     :preamble="exercise.setup || ''" :schema="exercise.schema || null"
                     :lint="lintSql" :lint-again="lintAgain"
+                    :loading="startingDb ? 'Loading the database…' : ''"
                     :shared="shared" :live="live"
                     :shared-at="sharedAt" :shared-anchor="sharedAnchor"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
                     @cursor="onCursor" @active="active = $event" @run="doRun()">
           <template #right>
-            <span class="right tabx">
-              <span v-if="startingDb" class="ice-boot" role="status">
-                <span class="ice-spin" aria-hidden="true"></span>Loading the database…
-              </span>
-              <button class="link" @click="doReset" :disabled="busy">Reset database</button>
-            </span>
+            <button class="link right" @click="doReset" :disabled="busy">Reset database</button>
           </template>
         </EditorPane>
         <div class="actions">
@@ -524,12 +517,12 @@ async function doReset() {
                at the educator's tab who pressed a button labelled "Run code" would fairly
                expect their own. -->
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
-                  :disabled="busy">
+                  :disabled="busy || startingDb">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
           <button class="btn primary" data-show="check" data-label="Check answer"
                   @click="doCheck"
-                  :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
+                  :disabled="busy || (isMcqStep ? picked === null : startingDb)">Check answer</button>
         </div>
       </div>
       <div class="result-pane" data-point="result">
@@ -605,7 +598,6 @@ h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: v
 .tab { font-size: 12px; padding: 9px 4px; color: var(--ice-fg-muted); }
 .tab.active { color: var(--ice-fg); box-shadow: inset 0 -2px 0 var(--ice-primary); }
 .right { margin-left: auto; }
-.tabx { display: inline-flex; align-items: center; gap: 12px; }
 .actions { display: flex; align-items: center; gap: 10px; padding: 10px 12px;
            border-top: 1px solid var(--ice-border); background: var(--ice-bg-soft); }
 .verdict { font-size: 13px; margin-right: auto; }

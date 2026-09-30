@@ -44,15 +44,16 @@ that could be shown externally or open-sourced.
 - `app/src/pycomplete.js` — pure, like `walk.js`. What a Python editor is being asked to
   complete (a bare name, after a dot, inside `x["`), worked out in JavaScript because a regex
   inside the Python bridge sits in a template literal. `py.js`'s `warmPython` runs the setup
-  into a namespace of its own at idle time and `_ice_complete` answers from it; until it has,
-  the editor offers only what CodeMirror knows. Pyodide is on the main thread, so the warm-up
-  can hold the page for a second or two - a worker is the real fix.
+  into a namespace of its own as the exercise opens and `_ice_complete` answers from it;
+  until it has, the editor offers only what CodeMirror knows. Pyodide is on the main thread,
+  so the warm-up can hold the page for a second or two - a worker is the real fix.
 - `app/src/sqllint.js` — pure but for the database it is handed. The SQL editor's red lines:
   each statement is `EXPLAIN`ed against the student's own database (planned, never run), so a
   red line means Run would fail. Checking **stops at the first statement Postgres cannot plan**
   (`CREATE VIEW`, `ALTER`…), because what follows may use what it creates. Python's red lines
-  are `compile()` in the warm interpreter (`_ice_syntax`). Both wait for their engine - warmed
-  at idle by `app/src/idle.js` - and mark nothing until it exists.
+  are `compile()` in the warm interpreter (`_ice_syntax`). Both wait for their engine - made
+  as the exercise opens, under an overlay (EditorPane's `loading`) that keeps the editor
+  read-only while the page may freeze - and mark nothing until it exists.
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 

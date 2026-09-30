@@ -51,6 +51,9 @@ const props = defineProps({
   /** What is wrong with the code, and a nudge to check again - see CodeEditor. */
   lint: { type: Function, default: null },
   lintAgain: { type: Number, default: 0 },
+  /* WHAT THE EDITOR IS WAITING FOR, said over it - "Loading Python…" - or empty when it is
+   * waiting for nothing. The editor is read-only while it is set. See `.paneload` below. */
+  loading: { type: String, default: '' },
   /* Somebody else's caret IN THIS STUDENT'S BUFFER - remote control, and nothing else. */
   peerAt: { type: Number, default: null },
   peerAnchor: { type: Number, default: null },
@@ -212,7 +215,7 @@ function take() {
       <!-- v-show, not v-if: a CodeMirror instance rebuilt on every tab switch loses the undo
            history and the scroll position, and the split flips this twice on a resize. -->
       <div v-show="split || showing === 'mine'" class="one">
-        <CodeEditor v-model="mine" :language="language" :readonly="readonly"
+        <CodeEditor v-model="mine" :language="language" :readonly="readonly || !!loading"
                     :preamble="preamble" :schema="schema" :completions="completions"
                     :lint="lint" :lint-again="lintAgain"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
@@ -243,6 +246,14 @@ function take() {
           <span class="muted">Read-only. Run it here, or take it into your own editor.</span>
         </div>
       </div>
+
+      <!-- OVER THE EDITOR, NOT BESIDE IT. This was a small badge by the tabs, and a student
+           typing into an editor that then stopped answering for a second or two - Python and
+           a dataset both load on the main thread - had no reason to look there. The editor
+           is read-only underneath while it is up, so nothing typed is lost to the freeze. -->
+      <div v-if="loading" class="paneload" role="status">
+        <span class="paneload-box"><span class="ice-spin" aria-hidden="true"></span>{{ loading }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -272,7 +283,7 @@ function take() {
 @keyframes live { 50% { opacity: .25; } }
 @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
 
-.editors { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.editors { flex: 1; min-height: 0; min-width: 0; display: flex; position: relative; }
 .one { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
        position: relative; }
 /* ORANGE, AND THE SAME ORANGE AS THE CARET AND THE BAND. `--ice-drive-line` already means
@@ -298,4 +309,13 @@ function take() {
 .link:hover { text-decoration: underline; }
 .ask p { margin: 0 0 7px; }
 .ask .acts { display: flex; gap: 8px; }
+
+/* The code shows through, dimmed, so it reads as the same editor waiting rather than as the
+   editor having gone. The box is solid so the words are legible over any code. */
+.paneload { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center;
+            background: color-mix(in srgb, var(--ice-code-bg) 75%, transparent); }
+.paneload-box { display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px;
+                border-radius: 10px; background: var(--ice-bg); border: 1px solid var(--ice-border);
+                box-shadow: 0 8px 24px rgb(0 0 0 / .18); font-size: 13px; color: var(--ice-fg); }
+.paneload-box .ice-spin { width: 16px; height: 16px; }
 </style>

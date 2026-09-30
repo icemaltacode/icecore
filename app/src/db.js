@@ -9,10 +9,10 @@ const prepared = new Map();    // that dir with one exercise's setup SQL applied
 const sessions = new Map();    // the student's own database
 const ready = new Map();       // ...once it exists, so a check never waits for one
 
-/* WHETHER A STUDENT'S DATABASE IS BEING MADE RIGHT NOW, for the badge beside the editor's
- * tabs. Seeding a dataset and booting PGlite run on the main thread, and the page can hold
- * still while they do - which is now as likely to happen when an exercise opens (see
- * `warmDb`) as on a first Run. Same reason and same shape as `pythonStarting` in py.js. */
+/* WHETHER A STUDENT'S DATABASE IS BEING MADE RIGHT NOW, for the overlay that covers the
+ * editor while it is. Seeding a dataset and booting PGlite run on the main thread, and the
+ * page can hold still while they do - which now happens as an exercise opens (see `warmDb`)
+ * rather than on a first Run. Same reason and same shape as `pythonStarting` in py.js. */
 export const dbStarting = ref(false);
 let startingFor = 0;
 const starting = async promise => {
@@ -92,9 +92,9 @@ export function getDb(course, dataset, setup) {
 
 /* ---- the editor's checking --------------------------------------------------------
  *
- * WARMED WHEN THE BROWSER IS IDLE, like Python: the exercise asks for its database before
- * anybody presses Run, so the check has something to ask - and the first Run then finds it
- * already made. Until it exists `checkSql` answers null and nothing is marked. */
+ * MADE AS THE EXERCISE OPENS, like Python's interpreter: asked for before anybody presses
+ * Run, so the check has something to ask - and the first Run then finds it already made.
+ * Until it exists `checkSql` answers null and nothing is marked. */
 export const warmDb = (course, dataset, setup) => getDb(course, dataset, setup).catch(() => null);
 
 /** What Postgres would refuse in `text`, as `[{ from, to, message }]`, or null while there is
