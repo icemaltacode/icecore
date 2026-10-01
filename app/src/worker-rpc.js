@@ -52,6 +52,24 @@ export function serve(handlers) {
 
 /* ---- the page's side ------------------------------------------------------------- */
 
+/* WHAT IS POSTED IS COPIED HERE FIRST, out of whatever Vue wrapped it in. An exercise reaches
+ * the runtimes straight from the app's reactive state, so its `packages`, `wheels` and `data`
+ * are Vue Proxies - and a Proxy cannot be structured-cloned: postMessage refuses it with
+ * "Proxy object could not be cloned", which is what every Run and Check said on the first
+ * day. Done once, here, rather than at each call site, because the next caller to hand over
+ * a prop would meet it again. Arrays and plain objects are rebuilt (a reactive one still
+ * answers Array.isArray and still has Object's prototype); everything else - strings, numbers,
+ * typed arrays, which Vue never wraps - passes through as it is. */
+export const plain = v => {
+  if (Array.isArray(v)) return v.map(plain);
+  if (v && typeof v === 'object') {
+    const proto = Object.getPrototypeOf(v);
+    if (proto === Object.prototype || proto === null)
+      return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, plain(x)]));
+  }
+  return v;
+};
+
 /**
  * A worker made on first use, and made again after it has been stopped or has died.
  *
@@ -103,7 +121,7 @@ export function spawn(make) {
       const id = ++next;
       return new Promise((resolve, reject) => {
         pending.set(id, { resolve, reject, onStatus });
-        w.postMessage({ id, op, arg }, transfer);
+        w.postMessage({ id, op, arg: plain(arg) }, transfer);
       });
     },
 
