@@ -814,6 +814,59 @@ check('a drive that moves them to another exercise carries its code with it',
     player.outbox.sent.length = 0;
   }
 
+  /* ---- WET INK: the stroke still being drawn -----------------------------------
+   *
+   * A preview over the page, not part of it: each frame is the whole stroke so far and replaces
+   * the last, and the finished stroke - numbered like any other - takes its place. Nothing here
+   * may leave two copies of a stroke on screen, or a preview hanging where nothing was drawn. */
+  {
+    const page = (v, svg) => player.emitLocal({ type: 'paged', page: 0, v, epoch: 'wet', svg });
+    const inked = (s, n, x, extra = {}) => player.emitLocal(
+      { type: 'inked', page: 0, epoch: 'wet', s, n, node: `<path d="M 0 0 L ${x} ${x}"/>`, ...extra });
+    const has = x => (ink().match(new RegExp(`L ${x} ${x}"`, 'g')) || []).length;
+
+    page(1, '<rect x="300"/>');
+    await settle(120);
+    inked(1, 1, 401);
+    await settle(30);
+    check('the stroke being drawn shows while the pen is still down', has(401) === 1,
+          ink().slice(0, 200));
+
+    inked(1, 3, 403);
+    inked(1, 2, 402);
+    await settle(30);
+    check('each frame replaces the last, and an older one arriving late is ignored',
+          has(403) === 1 && has(401) === 0 && has(402) === 0, ink().slice(0, 300));
+
+    inked(2, 1, 77, { page: 1 });
+    await settle(30);
+    check('a stroke on another page is not drawn on this one', has(77) === 0, ink().slice(0, 300));
+
+    player.emitLocal({ type: 'stroked', page: 0, v: 2, after: 1, epoch: 'wet', s: 1,
+                       node: '<path d="M 0 0 L 409 409"/>' });
+    await settle(30);
+    check('the finished stroke takes the place of its preview, one copy on screen',
+          has(409) === 1 && has(403) === 0, ink().slice(0, 300));
+    inked(1, 4, 404);
+    await settle(30);
+    check('and a frame overtaken by its own finished stroke is not drawn again', has(404) === 0,
+          ink().slice(0, 300));
+
+    inked(3, 1, 501);
+    await settle(30);
+    player.emitLocal({ type: 'inked', page: 0, epoch: 'wet', s: 3, gone: true });
+    await settle(30);
+    check('a stroke the educator threw away goes from the screen', has(501) === 0,
+          ink().slice(0, 300));
+
+    inked(4, 1, 601);
+    await settle(30);
+    page(3, '<rect x="333"/>');
+    await settle(120);
+    check('a page replacing this one takes whatever was wet with it',
+          has(601) === 0 && /x="333"/.test(ink()), ink().slice(0, 300));
+  }
+
   player.emitLocal({ type: 'boarding', on: false, page: 0 });
   await settle(150);
   check('the board goes away when the educator puts it away', !wb());

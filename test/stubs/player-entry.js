@@ -36,6 +36,7 @@ export { EditorView } from '@codemirror/view';
 /* And what it is offering to complete, read from its own state rather than from a popup
  * jsdom cannot lay out. Same bundle, so the same module instance the editor itself uses. */
 export { startCompletion, currentCompletions } from '@codemirror/autocomplete';
-/* The board's two ways a drawing leaves the educator's tab, so a test can draw without a
- * pointer. drauu calls exactly these on `committed` and `changed` - see Whiteboard.vue. */
-export { commitStroke, commitPage, KEEP_LIMIT } from '../../app/src/board.js';
+/* The board's ways a drawing leaves the educator's tab, so a test can draw without a pointer:
+ * a finished stroke, a whole page, and the stroke still being drawn. Whiteboard.vue calls
+ * exactly these from drauu's `start`, `changed`, `committed` and `canceled`. */
+export { commitStroke, commitPage, KEEP_LIMIT, inkStart, inkFrame, inkCancel } from '../../app/src/board.js';

@@ -361,6 +361,40 @@ check('and a roster that changes nothing leaves it on screen',
   await settle(50);
   check('and nothing says the page is too big', !/too big/.test(text()), text().slice(-160));
 
+  /* WET INK: the stroke still being drawn goes out while the pen is down, as a preview the
+   * class draws over the page - and the finished stroke names it, so they drop the preview as
+   * the stroke lands. Slide annotations always streamed; the board waited for the pen to lift. */
+  player.outbox.sent.length = 0;
+  player.inkStart();
+  player.inkFrame('<path d="M 1 1 L 2 2"/>');
+  player.inkFrame('<path d="M 1 1 L 2 2 L 3 3"/>');
+  const frames = sent('ink');
+  check('a stroke goes out while it is still being drawn, frame by frame, the whole stroke so far',
+        frames.length === 2 && frames[1].node === '<path d="M 1 1 L 2 2 L 3 3"/>'
+          && frames[1].n > frames[0].n && frames[0].s === frames[1].s
+          && typeof frames[0].epoch === 'string' && frames[0].page === 0,
+        JSON.stringify(frames));
+  check('and carries no version, because it is not a change to the page',
+        frames.every(f => !('v' in f) && !('after' in f)), JSON.stringify(frames[0]));
+  player.commitStroke('<path d="M 1 1 L 3 3"/>', '<path d="M 1 1 L 3 3"/>');
+  const finished = sent('stroke').at(-1);
+  check('the finished stroke names the preview it replaces',
+        finished?.s === frames[0].s && Number.isInteger(finished?.v), JSON.stringify(finished));
+
+  player.outbox.sent.length = 0;
+  player.inkStart();
+  player.inkFrame('<line x1="1" y1="1" x2="2" y2="2"/>');
+  player.inkCancel();
+  const thrown = sent('ink');
+  check('a stroke drauu throws away is said to be gone, so no preview hangs over the class',
+        thrown.length === 2 && thrown[1].gone === true && thrown[1].s === thrown[0].s
+          && thrown[0].s > frames[0].s, JSON.stringify(thrown));
+  player.outbox.sent.length = 0;
+  player.inkStart();
+  player.inkCancel();
+  check('and one thrown away before any of it was sent says nothing', sent('ink').length === 0,
+        JSON.stringify(sent('ink')));
+
   player.outbox.sent.length = 0;
   player.commitPage(heavy);
   const parts = pageParts();

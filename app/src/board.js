@@ -144,8 +144,63 @@ const ASK_EVERY = 2000;
 const strokeWatchers = new Set();
 export function onStroke(fn) { strokeWatchers.add(fn); return () => strokeWatchers.delete(fn); }
 
+/* ------------------------------------------------------------------ wet ink
+
+   THE STROKE BEING DRAWN, while the pen is still down. Slide annotations always did this -
+   Slidev reports its drawing state on every movement and decksync.js passes it on - and the
+   board waited for the pen to lift, because each stroke used to be a write to the session row.
+   That stopped when the server stopped keeping the drawing, and the waiting outlived it.
+
+   A PREVIEW, NOT A CHANGE. It carries no version and is not part of the page: a student draws it
+   over the page and drops it when the numbered stroke it previews is applied, or when the page
+   is replaced. So everything the numbering repairs stays repaired, and a lost frame costs
+   nothing - the next one is the whole stroke so far. Ordered per stroke (`n`), because frames
+   overtake one another like everything else here, and keyed by `epoch` and stroke (`s`).
+
+   A stroke previewed and never committed - cancelled with its `gone` lost - would hang over the
+   page, so one left without a frame for a while asks for the page, and whatever comes back
+   replaces it: with the stroke if it was committed, without it if it was not. Long, because a
+   pen held still mid-word sends nothing either, and asking then would blink the stroke out. */
+const INK_IDLE = 15000;
+const inks = new Map();        // key -> { n, timer }
+let dried = [];                // keys already applied or cancelled; a late frame must not redraw them
+const inkWatchers = new Set();
+/** A student's surface is told `(key, markup)` to draw or replace a preview, `(key, null)` to drop it. */
+export function onInk(fn) { inkWatchers.add(fn); return () => inkWatchers.delete(fn); }
+const inkKey = m => `${m.epoch}:${m.s}`;
+
+function dropInk(key) {
+  const w = inks.get(key);
+  if (!w) return;
+  clearTimeout(w.timer);
+  inks.delete(key);
+  for (const fn of inkWatchers) fn(key, null);
+}
+/* Done with: its stroke was applied, or it was cancelled. Remembered, so that a frame which was
+ * overtaken by the stroke it previews does not put the preview back on top of it. */
+function dry(key) {
+  dropInk(key);
+  if (!dried.includes(key)) dried = [...dried.slice(-63), key];
+}
+/* The page was replaced, turned or put away: whatever was wet belonged to the page that went. */
+function dropAllInk() { for (const key of [...inks.keys()]) dropInk(key); }
+
+function inkIn(m) {
+  if (board.mine || !board.on || typeof m.epoch !== 'string' || !Number.isInteger(m.s)) return;
+  const key = inkKey(m);
+  if (dried.includes(key)) return;
+  if (m.gone) { dry(key); return; }
+  const had = inks.get(key);
+  if (had && !(m.n > had.n)) return;
+  if ((m.page | 0) !== board.page || typeof m.node !== 'string' || !m.node) return;
+  clearTimeout(had?.timer);
+  inks.set(key, { n: m.n, timer: setTimeout(() => askForPage(), INK_IDLE) });
+  for (const fn of inkWatchers) fn(key, m.node);
+}
+
 /** A board opened or closed. `mine` is not in the message: this client already knows. */
 function applyBoarding(on, page = 0) {
+  dropAllInk();
   if (!on) {
     if (board.mine) forgetStored(delivery.cohort);
     board.on = false; board.mine = false;
@@ -196,6 +251,7 @@ function applyBoarding(on, page = 0) {
 
 /** A page in full, drawn: a turn, an undo, a clear, or what a joiner walked in on. */
 function replacePage(page, svg) {
+  dropAllInk();
   const i = Math.max(0, page | 0);
   const pages = [...board.pages];
   while (pages.length <= i) pages.push('');
@@ -206,8 +262,12 @@ function replacePage(page, svg) {
 }
 
 /* One stroke, appended. FOR THE PAGE IT WAS DRAWN ON, never for whichever page happens to be
- * showing: a page turn and a finished stroke can cross on the wire. */
-function appendStroke(page, node) {
+ * showing: a page turn and a finished stroke can cross on the wire.
+ *
+ * `ink` is the key of the preview it finishes, dried only once the stroke is drawn so the two
+ * never leave a gap between them. A stroke held back by the numbering keeps its preview up
+ * until it is applied. */
+function appendStroke(page, node, ink = null) {
   const i = Math.max(0, page | 0);
   if (typeof node !== 'string' || !node) return;
   const pages = [...board.pages];
@@ -215,6 +275,7 @@ function appendStroke(page, node) {
   pages[i] = (pages[i] || '') + node;
   board.pages = pages;
   for (const fn of strokeWatchers) fn(i, node);
+  if (ink) dry(ink);
 }
 
 /* A WHOLE PAGE ARRIVING. Taken if it is from a run of the educator's tab this client has not
@@ -244,7 +305,10 @@ function strokeIn(m) {
 }
 
 const follows = m => m.epoch === heard.epoch && (m.page | 0) === heard.page && m.after === heard.v;
-function take(m) { appendStroke(m.page, m.node); heard = { ...heard, v: m.v }; }
+function take(m) {
+  appendStroke(m.page, m.node, Number.isInteger(m.s) ? inkKey(m) : null);
+  heard = { ...heard, v: m.v };
+}
 
 /* Apply whatever was waiting on what just arrived, and forget whatever it made stale. */
 function drain() {
@@ -272,6 +336,7 @@ let boardingAt = 0;
 on('boarding', m => { boardingAt = Date.now(); applyBoarding(m.on, m.page); });
 on('paged', pageIn);
 on('stroked', strokeIn);
+on('inked', inkIn);
 /* SOMEBODY ASKED FOR THE PAGE, and only the source answers - to them alone, at the version it
  * is at, which is not a change. */
 on('pagewanted', m => { if (board.on && board.mine && m.sub) sendPage(m.sub); });
@@ -312,6 +377,7 @@ on('roster', m => {
  * delivery.js goes on having no idea this file exists - chat.js's rule. */
 watch(() => delivery.cohort, (now, was) => {
   if (was) forgetStored(was);
+  dropAllInk();
   board.on = false; board.mine = false; board.pages = ['']; board.page = 0;
   heard = { epoch: null, v: 0, page: -1 }; early = [];
   /* WHOSE BOARDS ARE VISIBLE CHANGES WITH THE LESSON, in both directions: starting one is how
@@ -410,12 +476,33 @@ export function addPage() {
  */
 export function commitStroke(node, svg) {
   setPage(svg);
+  /* The stroke it finishes, so a student drops that preview as this lands - see "wet ink". */
+  const s = wet?.s;
+  wet = null;
   if (!node || bytes(JSON.stringify(node)) > STROKE_BYTES) { sendPage(); return true; }
   const after = version;
   version = ++counter;
-  send('stroke', { page: board.page, v: version, after, epoch, node });
+  send('stroke', { page: board.page, v: version, after, epoch, node, ...(s ? { s } : {}) });
   store();
   return true;
+}
+
+/* THE PEN'S SIDE OF WET INK. Whiteboard.vue calls these from drauu's own events: `inkStart`
+ * as the pen comes down, `inkFrame` with the stroke so far - paced to ten a second by beat.js -
+ * and `inkCancel` when drauu throws a stroke away. `commitStroke` above ends the stroke. */
+let wet = null;          // the stroke being drawn: { s, n }
+let strokes = 0;
+export function inkStart() { wet = board.mine ? { s: ++strokes, n: 0 } : null; }
+export function inkFrame(node) {
+  if (!wet || !board.mine || typeof node !== 'string' || !node) return;
+  /* Too big for a frame of its own, and so too big to finish as a stroke: it will go as the
+   * page when the pen lifts, and the class sees it then. */
+  if (bytes(JSON.stringify(node)) > STROKE_BYTES) return;
+  send('ink', { page: board.page, epoch, s: wet.s, n: ++wet.n, node });
+}
+export function inkCancel() {
+  if (wet?.n) send('ink', { page: board.page, epoch, s: wet.s, gone: true });
+  wet = null;
 }
 
 /**

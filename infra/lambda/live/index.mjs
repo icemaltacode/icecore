@@ -169,11 +169,13 @@ async function boardAudience(row, to, held, connectionId) {
             : { except: connectionId, from };
 }
 /* A version and the run of the educator's tab it belongs to, carried through for board.js,
- * which orders by them. Absent from an older client, and then absent here too. */
+ * which orders by them - and `s`, the stroke a finished stroke or a frame of wet ink belongs to.
+ * Absent from an older client, and then absent here too. */
 const boardStamp = msg => ({
   ...(Number.isInteger(msg.v) && msg.v >= 0 ? { v: msg.v } : {}),
   ...(Number.isInteger(msg.after) && msg.after >= 0 ? { after: msg.after } : {}),
   ...(typeof msg.epoch === 'string' && msg.epoch ? { epoch: msg.epoch.slice(0, 60) } : {}),
+  ...(Number.isInteger(msg.s) && msg.s >= 0 ? { s: msg.s } : {}),
 });
 
 /* Same shape as the admin function's: a single group arrives as a string and several as an
@@ -2007,6 +2009,29 @@ async function tallied(cohort, mark, seeded = false) {
       const node = String(msg.node ?? '');
       if (!node || node.length > BOARD_FRAME_CHARS) return { statusCode: 200, body: 'not a stroke' };
       await emit(event, row.cohort, { type: 'stroked', page, node, ...boardStamp(msg) }, audience);
+      return { statusCode: 200, body: 'ok' };
+    }
+    /* THE STROKE BEING DRAWN, while the pen is still down: up to ten a second, each the whole
+     * stroke so far, or `gone` when the educator's tab threw the stroke away. A PREVIEW and not
+     * a change - never stored, never numbered, never back to the sender - which is why losing
+     * one costs nothing; see "wet ink" in board.js. Gated exactly as a stroke is: only the
+     * educator delivering to this room draws on its board. */
+    case 'ink': {
+      const held = await sessionCached(row.cohort);
+      const audience = await boardAudience(row, null, held, id);
+      if (!audience) return { statusCode: 200, body: 'no board of yours' };
+      const page = Math.max(0, Math.min(BOARD_PAGES - 1, Math.trunc(Number(msg.page) || 0)));
+      const stamp = boardStamp(msg);
+      if (stamp.s === undefined || !stamp.epoch) return { statusCode: 200, body: 'not ink' };
+      if (msg.gone === true) {
+        await emit(event, row.cohort, { type: 'inked', page, ...stamp, gone: true }, audience);
+        return { statusCode: 200, body: 'ok' };
+      }
+      const node = String(msg.node ?? '');
+      if (!node || node.length > BOARD_FRAME_CHARS || !Number.isInteger(msg.n) || msg.n < 1) {
+        return { statusCode: 200, body: 'not ink' };
+      }
+      await emit(event, row.cohort, { type: 'inked', page, n: msg.n, node, ...stamp }, audience);
       return { statusCode: 200, body: 'ok' };
     }
     /* A STUDENT ASKING FOR THE PAGE: they have just arrived, or have found a gap in what they

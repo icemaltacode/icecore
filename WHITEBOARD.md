@@ -150,6 +150,9 @@ So, four messages and one rule:
   bigger than a frame.
 - `wantpage` — from anyone in the room. The server carries it to the educator delivering, as
   `pagewanted { sub }`, and their tab answers that student alone.
+- `ink`: `{ page, epoch, s, n, node }`, the stroke still being drawn, up to ten a second while
+  the pen moves, or `{ s, gone }` when drauu throws the stroke away. Relayed as `inked`, never
+  stored or numbered. See "wet ink" below.
 
 **The rule: an append streams, anything else re-dumps.** Undo, redo, `clear()` and `eraseLine`
 all remove or reorder nodes, so a stream of appends cannot express them and the page is sent
@@ -163,6 +166,19 @@ messages a stroke. What makes the split clean is that `commit()` emits `committe
 `changed` while drawing, and a `changed` arriving with no `committed` beside it is exactly an
 undo, a redo, a clear or an erase. An eraser stroke commits with an *undefined* node, which
 falls into the same branch and re-dumps, correctly and by accident of the same test.
+
+**Revised once the server stopped keeping the drawing: wet ink.** A stroke used to reach the
+class only when the pen lifted, because each one was a write to the session row and ten writes
+a second while drawing was out of the question. Slide annotations always streamed - Slidev
+reports its state on every movement and `decksync.js` passes it on - so the two disagreed in
+front of a class for no reason that still held. Now, while the pen moves, the educator's tab
+sends the stroke so far (`ink`, paced by `beat.js`), and a student draws it over the page as a
+**preview, not a change**: it carries no version, each frame replaces the last (ordered per
+stroke by `n`), and it is dropped when the numbered stroke it previews is applied (the stroke
+names it with `s`) or the page is replaced. So the numbering stays the only thing a student's
+page is built from, and a lost frame costs nothing. A preview with no frame for fifteen seconds
+asks for the page, which replaces it either way. The eraser does not stream; it applies when it
+lifts.
 
 **Revised after it hit a wall: the server does not keep the drawing.** It did, as a list of
 node strings on the session row, and a joiner was handed `nodes.join('')` in the roster. The
@@ -201,7 +217,7 @@ told it cannot be kept - now, rather than when Keep refuses at the end of the le
 hosting an `<iframe>` and `<a href="javascript:">` all do — which is script execution in the
 player's own origin, where the session and the CloudFront signed cookies live.
 
-The sender is not arbitrary: `board`, `stroke` and `page` are gated on being the session's
+The sender is not arbitrary: `board`, `stroke`, `page` and `ink` are gated on being the session's
 tutor, exactly as `point` and `sync` are. **What raises this above theoretical is that saved
 boards persist and replay.** A bad page sits in the rows and reaches every student who opens
 the paperclip, months later and outside any lesson.

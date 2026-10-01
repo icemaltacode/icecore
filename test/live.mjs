@@ -1046,6 +1046,23 @@ try {
             drawn?.node === LINE && drawn.v === 2 && drawn.after === 1 && drawn.epoch === 'test-run',
             JSON.stringify(drawn));
 
+      /* WET INK: the stroke still being drawn, relayed while the pen is down, and the finished
+       * stroke naming the preview it replaces. Never stored and never numbered - see board.js. */
+      A.ws.send(JSON.stringify({ type: 'ink', page: 0, epoch: 'test-run', s: 7, n: 1, node: LINE }));
+      const wet = await heardB.next('inked');
+      check('the stroke being drawn reaches the class before the pen lifts',
+            wet?.node === LINE && wet.s === 7 && wet.n === 1 && wet.epoch === 'test-run'
+              && !('v' in wet), JSON.stringify(wet));
+      A.ws.send(JSON.stringify({ type: 'ink', page: 0, epoch: 'test-run', s: 8, gone: true }));
+      const thrown = await heardB.next('inked');
+      check('and a stroke thrown away is said to be gone',
+            thrown?.gone === true && thrown.s === 8 && !('node' in thrown), JSON.stringify(thrown));
+      A.ws.send(JSON.stringify({ type: 'stroke', page: 0, v: 3, after: 2, epoch: 'test-run', s: 7,
+                                 node: LINE }));
+      const dried = await heardB.next('stroked');
+      check('the finished stroke names the preview it replaces', dried?.s === 7 && dried.v === 3,
+            JSON.stringify(dried));
+
       if (distinct) {
         B.ws.send(JSON.stringify({ type: 'wantpage' }));
         const asked = await heardA.next('pagewanted');
@@ -1061,10 +1078,15 @@ try {
                                    node: '<path d="M 0 0"/>' }));
         check("a student cannot draw on the room's board",
               (await heardA.next('stroked', 1500)) === null, "a student's stroke was relayed");
+        B.ws.send(JSON.stringify({ type: 'ink', page: 0, epoch: 'forged', s: 1, n: 1,
+                                   node: '<path d="M 0 0"/>' }));
+        check("nor put wet ink on it", (await heardA.next('inked', 1500)) === null,
+              "a student's ink was relayed");
       } else {
         for (const label of ['a student asking for the page reaches the educator, naming them',
                              'and the answer reaches them',
-                             "a student cannot draw on the room's board"]) {
+                             "a student cannot draw on the room's board",
+                             'nor put wet ink on it']) {
           skip(label, 'one account was used for both sockets');
         }
       }

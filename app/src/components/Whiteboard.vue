@@ -20,9 +20,10 @@ import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { createDrauu } from 'drauu';
 import Icon from './Icon.vue';
 import { board, STAGE, current, turnTo, addPage, dropPage, commitStroke, commitPage, freshBoard,
-         onStroke }
+         onStroke, onInk, inkStart, inkFrame, inkCancel }
   from '../board.js';
 import { clean } from '../svgclean.js';
+import { beat } from '../beat.js';
 
 const emit = defineEmits(['close', 'save', 'open']);
 
@@ -80,8 +81,38 @@ function cleanOnce(svg) {
  * filtered: it is their DOM, and filtering what somebody is drawing as they draw it would
  * delete their stroke. */
 const viewer = ref(null);
-function paint() { if (viewer.value) viewer.value.innerHTML = cleanOnce(current()); }
+function paint() {
+  if (viewer.value) viewer.value.innerHTML = cleanOnce(current());
+  wetOnes.clear();
+}
 let unwatchStrokes = null;
+let unwatchInk = null;
+
+/* WET INK ON A STUDENT'S SURFACE: the stroke the educator is still drawing, one element per
+ * stroke, replaced by each newer frame and removed when the finished stroke lands - see "wet
+ * ink" in board.js. Filtered like everything else that arrives. */
+const wetOnes = new Map();       // key -> element
+function wetInk(key, node) {
+  const was = wetOnes.get(key);
+  wetOnes.delete(key);
+  if (node == null || !viewer.value) { was?.remove(); return; }
+  const before = viewer.value.lastElementChild;
+  viewer.value.insertAdjacentHTML('beforeend', clean(node));
+  const now = viewer.value.lastElementChild;
+  was?.remove();
+  if (now && now !== before) wetOnes.set(key, now);
+}
+
+/* THE EDUCATOR'S STROKE SO FAR, ten times a second while the pen moves. drauu's `_currentNode`
+ * is the element it is drawing - the same one it hands to `committed` when the pen lifts - and
+ * it is copied rather than rounded in place, because drauu rewrites it on the next move. */
+const wetFrame = beat(() => {
+  const node = drauu?.drawing ? drauu._currentNode : null;
+  if (!node) return;
+  const copy = node.cloneNode(true);
+  compact(copy);
+  inkFrame(copy.outerHTML);
+});
 
 /* WHOLE BOARD UNITS. drauu writes every point of a pen stroke's outline to two decimal places,
  * four numbers a point - on a 1600x900 board a hundredth of a unit is nothing anybody can see,
@@ -143,22 +174,32 @@ onMounted(async () => {
   await nextTick();
   drauu = createDrauu({ el: stage.value, brush: { mode: 'stylus', color: ink.value, size: size.value } });
   brush();
-  drauu.on('committed', node => { dot(node); compact(node); pending = node || null; });
+  drauu.on('committed', node => {
+    // No frame may follow the stroke it previews; a student would draw it again on top.
+    wetFrame.cancel();
+    dot(node); compact(node); pending = node || null;
+  });
+  /* A stroke drauu threw away - a line too short to keep, a shape with no size. Said, so the
+   * preview does not hang on the class's screens. */
+  drauu.on('canceled', () => { wetFrame.cancel(); inkCancel(); });
   /* WHAT THE ERASER CAN HIT IS COLLECTED AFRESH AS EACH PASS STARTS. drauu collects it once,
    * when the eraser is picked up, and that goes stale whenever the page changes under it
    * without the tool changing: a page turn, an undo, a clear, a kept board reopened. Erasing
    * against it then removes strokes that are no longer on the page and misses the ones that
    * are. */
   drauu.on('start', () => {
-    if (drauu.mode !== 'eraseLine') return;
+    if (drauu.mode !== 'eraseLine') { inkStart(); return; }
     drauu.model.onUnselected();
     drauu.model.onSelected(drauu.el);
   });
   /* `changed` also fires on pointer-down and on every move, so a page would otherwise be
    * recorded - and sent - a hundred times a stroke. `drawing` is already false by the time
-   * the one that matters arrives: drauu sets it before emitting `end`. */
+   * the one that matters arrives: drauu sets it before emitting `end`. While the pen is down
+   * it paces the stroke so far instead; the eraser has nothing to preview, and applies when it
+   * lifts. */
   drauu.on('changed', () => {
-    if (loading || drauu.drawing) return;
+    if (loading) return;
+    if (drauu.drawing) { if (drauu.mode !== 'eraseLine') wetFrame(); return; }
     const svg = drauu.dump();
     if (pending) { commitStroke(pending.outerHTML, svg); pending = null; }
     /* An eraser pass that touched nothing still ends in `changed`, and the room already has
@@ -176,9 +217,14 @@ onMounted(() => {
     if (board.mine || page !== board.page || !viewer.value) return;
     viewer.value.insertAdjacentHTML('beforeend', clean(node));
   });
+  unwatchInk = onInk((key, node) => { if (!board.mine) wetInk(key, node); });
 });
 
-onBeforeUnmount(() => { drauu?.unmount(); drauu = null; unwatchStrokes?.(); });
+onBeforeUnmount(() => {
+  wetFrame.cancel();
+  drauu?.unmount(); drauu = null;
+  unwatchStrokes?.(); unwatchInk?.();
+});
 
 watch([tool, ink, size], brush);
 /* The page the room is on, whoever turned it - and `rev`, which is how a wholesale
