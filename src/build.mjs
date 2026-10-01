@@ -151,6 +151,38 @@ const unitOf = topic => String(topic).split('.').slice(0, 2).join('.');
  * SQL dataset. */
 const moduleDataDir = topic => `module-${String(topic).split('.')[0]}`;
 
+/* ONE PYTHON INTERPRETER PER MODULE. Every Python exercise is graded in the union of the
+ * packages its module declares, written over the exercise's own list, so that index.json,
+ * the player's grader and the validation pass all key on the same set.
+ *
+ * Each exercise used to get exactly what it declared, and a different set meant a fresh
+ * interpreter: seconds of boot and `import pandas` under the editor's overlay. Exercises
+ * declare slightly different subsets (`[pandas]`, then nothing, then `[matplotlib, pandas]`),
+ * so Data Analyst Python rebuilt 105 times along a 313-exercise walk, about every third
+ * exercise. Per module it is seven, one at each boundary.
+ *
+ * NOT THE UNION OF THE COURSE, which was tried and is why packageKey's comment exists:
+ * pyarrow being merely installed changes how pandas merges a pickled frame, and module 4,
+ * which never asks for it, failed eleven merges because module 8 did. A module is one
+ * DataCamp course, and grouping by it keeps pyarrow in the modules that declare it.
+ *
+ * WHAT MAKES A SUPERSET SAFE IS THAT THE BUILD CHECKED IT. The validation pass grades every
+ * reference solution in exactly this set, so an interaction inside a module fails the build
+ * the way pyarrow did, naming the exercise. Fix it in the exercise, as for any library that
+ * moved on. A module that cannot be fixed that way is the point at which modules get a way
+ * to split. */
+function shareModuleInterpreter(mod) {
+  const python = mod.units.flatMap(u => u.topics).flatMap(t => t.exercises)
+    .filter(e => e.type === 'python');
+  const union = field => [...new Set(python.flatMap(e => e[field] || []))].sort();
+  const packages = union('packages');
+  const wheels = union('wheels');
+  for (const e of python) {
+    if (packages.length) e.packages = [...packages];
+    if (wheels.length) e.wheels = [...wheels];
+  }
+}
+
 export function parseExercise(file, text) {
   const [fm, md] = frontmatter(text);
   const secs = sections(md);
@@ -516,6 +548,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   for (const m of course.modules) {
     m.units.sort((a, b) => byNumber(a.unit, b.unit));
     for (const u of m.units) u.topics.sort((a, b) => byNumber(a.topic, b.topic));
+    shareModuleInterpreter(m);
   }
   if (course.image && !fs.existsSync(path.join(contentDir, course.image)))
     missingImages.push(`course.json: no image at ${course.image}`);
@@ -942,9 +975,10 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
      * what "correct" means. */
     /* Grouped by package set, and each set validated in a process of its own.
      *
-     * An interpreter must hold exactly what the exercise declared, Pyodide cannot unload a
-     * module, and it has no teardown API - so 25 package sets means 25 interpreters, and
-     * doing that in one process runs V8 out of heap. It survived a laptop and died on a CI
+     * An interpreter must hold exactly the set its module was given (see
+     * `shareModuleInterpreter`), Pyodide cannot unload a module, and it has no teardown API.
+     * So each distinct set is an interpreter of its own, one per module at most, and doing
+     * several in one process runs V8 out of heap. It survived a laptop and died on a CI
      * runner after four sets. See src/python-worker.mjs.
      *
      * Only cache MISSES are handed out, so a warm build spawns nothing at all. */

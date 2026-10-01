@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /* Validate one package set's Python exercises, in a process of its own.
  *
- * WHY A SEPARATE PROCESS. An interpreter must hold exactly the packages its exercise
- * declared - see `packageKey` in app/src/python.js - and Pyodide cannot unload a module, so
- * a course with 25 distinct package sets needs 25 interpreters. It has no teardown API
+ * WHY A SEPARATE PROCESS. An interpreter must hold exactly the packages its exercise's
+ * module was given (see `packageKey` in app/src/python.js), and Pyodide cannot unload a
+ * module, so a course with nine modules needs up to nine interpreters. It has no teardown API
  * either: dropping the reference is all a caller can do, and V8 will not reclaim several
  * hundred megabytes of wasm heap fast enough to keep up.
  *

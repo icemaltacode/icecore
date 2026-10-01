@@ -41,7 +41,7 @@
 /* The seed both runs start from. Any fixed number would do; an exercise can name its own
  * with `seed:` in its frontmatter, and `seed: null` turns it off for one that is genuinely
  * meant to vary - though such an exercise cannot then be graded on values. */
-/* AN INTERPRETER MUST HOLD EXACTLY WHAT THE EXERCISE DECLARED - no more.
+/* AN INTERPRETER MUST HOLD EXACTLY THE SET THE BUILD VALIDATED THE EXERCISE IN, no more.
  *
  * Merely IMPORTABLE packages change behaviour. pandas takes a different factorize path when
  * pyarrow is present, and on a pickle-loaded frame that path writes into a read-only buffer:
@@ -49,14 +49,17 @@
  *   licenses.merge(zip_demo, on='zip')
  *   ValueError: putmask: output array is read-only        (pandas/core/reshape/merge.py)
  *
- * Unit 2.4 has no .feather files and never asks for pyarrow. It broke anyway, because the
- * builder loaded the union of every package the COURSE needs into one interpreter and 2.8
- * needs pyarrow. Eleven merges failed pointing at pandas internals, with nothing naming the
- * cause.
+ * Module 4 (unit 2.4 at the time) has no .feather files and never asks for pyarrow. It broke
+ * anyway, because the builder loaded the union of every package the COURSE needs into one
+ * interpreter and module 8 needs pyarrow. Eleven merges failed pointing at pandas
+ * internals, with nothing naming the cause.
  *
  * So a grader is keyed by its exact package set and a different set means a different
- * interpreter. Not "a superset is fine" - a superset is precisely the failure. Not "load
- * the union once", which is the obvious implementation and is what produced this.
+ * interpreter. Not "a superset is fine": an unchecked superset is precisely the failure,
+ * and "load the union of the course once" is the obvious implementation that produced it.
+ * The set an exercise carries is its MODULE's union, assigned by the builder
+ * (`shareModuleInterpreter` in src/build.mjs), and that is safe only because the build
+ * grades every reference solution in that same set.
  *
  * There is no unloading. Pyodide cannot remove a module from a running interpreter, so the
  * only way back from an extra package is a new one. */

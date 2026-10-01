@@ -860,6 +860,12 @@ and none is custom.
 - **Nothing is precomputed.** The interpreter is already up and a check is ~20ms, so grading
   is live. What the builder does instead is *validate*: every reference solution is graded
   against its own SCT, and one that does not mark itself correct fails the build.
+- **An exercise is graded in its MODULE's interpreter**: the union of every package the
+  module declares, written over the exercise's own list by `shareModuleInterpreter` in
+  `build.mjs`. Per exercise, Data Analyst Python rebuilt the interpreter 105 times along its
+  walk; per module it is seven. Never the union of the *course*: pyarrow merely installed
+  breaks pandas merges in module 4 (`packageKey` in `python.js`). A superset is safe only
+  because the validation above grades in that same set, so an interaction fails the build.
 - **That validation is only half the question**, and `python-worker.mjs` can now be asked the
   other half. A step may carry its own `submission` and `expect: 'incorrect'`, and the step
   then fails if the SCT marks that submission correct. Validating the solution against itself

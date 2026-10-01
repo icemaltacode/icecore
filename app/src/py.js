@@ -33,19 +33,20 @@ import { readWheel, pyodideOptions } from './wheels.js';
 
 /* One grader, rebuilt when the exercise needs a different set of packages.
  *
- * NOT grown, and not the union of the unit. A package that is merely importable changes
- * behaviour - pandas takes a different factorize path when pyarrow is present, and on a
- * pickle-loaded frame that path raises "putmask: output array is read-only" from inside
- * pandas, naming nothing you could search for. Unit 2.4 never asks for pyarrow and broke
- * anyway, because a sibling unit did. See `packageKey` in python.js.
+ * NOT grown here, and never by anything but the builder. A package that is merely
+ * importable changes behaviour: pandas takes a different factorize path when pyarrow is
+ * present, and on a pickle-loaded frame that path raises "putmask: output array is
+ * read-only" from inside pandas, naming nothing you could search for. Module 4 never asks
+ * for pyarrow and broke anyway, because module 8 did. See `packageKey` in python.js.
  *
- * Pyodide cannot unload a module, so the only way back from an extra package is a fresh
- * interpreter. Topping up is safe in one direction only - adding what THIS exercise
- * declared - and that is not enough, because the next exercise may declare fewer.
+ * The set an exercise arrives with is its whole MODULE's, assigned and validated by the
+ * builder (`shareModuleInterpreter` in src/build.mjs), so within a module the key does not
+ * change and this rebuilds only when a student crosses into the next one. Topping up here
+ * instead would grade in a set the build never checked.
  *
  * Exactly one is alive at a time. Keeping a cache of them per package set would avoid the
  * rebuilds and hold tens of megabytes of wasm per entry in a browser tab, which is the
- * wrong trade for something a student crosses at a unit boundary.
+ * wrong trade for something a student crosses at a module boundary.
  */
 let grader = null;
 let graderKey = null;
