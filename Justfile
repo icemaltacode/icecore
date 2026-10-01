@@ -240,10 +240,10 @@ deploy: bundle _auth-json
     # and the allowlist below is still the whole of what the app owns.
     #
     # `pyodide/` IS NOT IN THIS LIST, and must not be. It is uploaded by `just pyodide` from
-    # the release tarball, and `dist/` holds whatever this machine happened to stage - npm's
-    # 24 packages on a machine that has not downloaded the full distribution. Included here,
-    # `--delete` would then remove the other 330 from the bucket, which is this file's oldest
-    # foot-gun wearing a new hat. It belongs to its own recipe for the same reason `brand/`
+    # the release tarball, once per version. `dist/` does hold a staged copy now - the same
+    # full release - but this pass is the app's, and a prefix uploaded here is a prefix this
+    # pass's `--delete` would one day remove, which is this file's oldest foot-gun wearing a
+    # new hat. It belongs to its own recipe for the same reason `brand/`
     # belongs to the stack: it is a bucket asset with its own lifecycle, not an app file.
     aws s3 sync dist/ "s3://$bucket/" --delete \
       --exclude '*' --include 'assets/*' \

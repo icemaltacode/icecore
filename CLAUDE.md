@@ -896,9 +896,9 @@ and none is custom.
   else. [`src/pyodide-dist.mjs`](src/pyodide-dist.mjs) is the one definition of where it is
   published and which files it consists of; `copyPyodide` in the CLI stages the full
   release into `pyodide/<version>/` in the course's staging directory, which is Vite's
-  publicDir, so `dev` serves it on exactly a deployment's terms. `just deploy`
-  carries the prefix in the **immutable** pass beside `assets/*`, because the version is in
-  the path.
+  publicDir, so `dev` serves it on exactly a deployment's terms. **`just deploy` does NOT
+  upload it**: `just pyodide` does, once per version, from the same release - the prefix
+  carries the version, so it is immutable, and `deploy`'s `--delete` passes leave it alone.
   - **`packageBaseUrl` has to be set as well as `indexURL`.** Packages already resolve
     against `indexURL` — they are relative to `lockFileURL`, which defaults from it — but
     `cdnUrl` is computed as `packageBaseUrl ?? cdn.jsdelivr.net/…`, so leaving it unset
