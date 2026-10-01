@@ -219,6 +219,20 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   does not invalidate a cached verdict. Putting the commit in the key would close it and bust
   the whole cache on every platform push — 13 minutes a run — which is why it has not been.
 
+- **The deck theme is pinned per course, and ice_slidev moves the pins.** A course's
+  `slides/package-lock.json` names a `slidev-theme-ice` commit and `npm ci` installs it
+  forever, so a theme change reached a course only when somebody bumped that lockfile. Only
+  ONEY ever was: FIAU and both Data Analyst courses ran a month without the theme's deck sync,
+  so an educator's slide annotations reached nobody, and it read as a player bug.
+
+  It is **not** re-resolved in the publish the way icecore is. The deck build picks decks from
+  what changed in the course repo, so a lockfile edited on the runner would rebuild nothing.
+  Instead ice_slidev's `repin courses` workflow commits the new pin into every course its
+  `REPIN_TOKEN` can write to (a fine-grained token on `icemaltacode`, scoped to the course
+  repos), and that commit rebuilds every deck. Two consequences: **a new course with decks has
+  to be added to that token**, and until it is, its publish warns that its theme is behind the
+  theme's `pinned` tag; and **pushing the theme is a deploy of every course's slides**, so not
+  during a lesson.
 - **Never `aws s3 sync --delete` against `slides/` as a whole.** With a partial `dist/slides`
   — which is now the normal case — it deletes every deck that wasn't rebuilt. Sync one deck
   prefix at a time and reconcile removed decks explicitly. **The reconcile is scoped to the

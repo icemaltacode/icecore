@@ -189,6 +189,42 @@ jobs:
         if: steps.scope.outputs.decks == 'true'
         run: npm ci --prefix slides
 
+      # ---- the deck theme, current or said -------------------------------------------
+      #
+      # NOT re-resolved here the way icecore is above, and on purpose: a theme change has to
+      # rebuild every deck, and the deck build chooses what to rebuild from what changed in
+      # THIS repo, so a lockfile edited on the runner would rebuild nothing. ice_slidev's repin
+      # workflow commits the new pin into each course instead, and that commit rebuilds every
+      # deck here.
+      #
+      # It reaches only the courses its token may write to, so a course missing from the token
+      # would sit on an old theme without a word - which is how FIAU and both Data Analyst
+      # courses were found, a month behind and with no slide annotations reaching the class. So
+      # every publish compares the pin with the theme's `pinned` tag, the commit every course
+      # was last moved onto, and says when this course is behind it. A warning, never a
+      # failure: an old theme is still a working deck.
+      - name: Check the deck theme is current
+        if: steps.scope.outputs.decks == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          url=$(jq -r '.packages["node_modules/slidev-theme-ice"].resolved // ""' slides/package-lock.json)
+          [ -n "$url" ] || { echo 'decks not built with slidev-theme-ice'; exit 0; }
+          pin=${url##*#}
+          repo=$(sed -E 's|^git\+ssh://git@github\.com/|https://github.com/|; s|^git\+https://|https://|; s|#.*$||' <<<"$url")
+          echo "Deck theme: \`${pin:0:8}\`" >> "$GITHUB_STEP_SUMMARY"
+          theme=$(mktemp -d)
+          git -C "$theme" init -q
+          if ! git -C "$theme" fetch -q --filter=blob:none "$repo" main 'refs/tags/pinned:refs/tags/pinned'; then
+            echo "could not read the theme's pinned tag from $repo"; exit 0
+          fi
+          if ! git -C "$theme" merge-base --is-ancestor refs/tags/pinned "$pin" 2>/dev/null; then
+            tag=$(git -C "$theme" rev-parse refs/tags/pinned)
+            msg="This course's decks are built with theme ${pin:0:8}, behind ${tag:0:8}, which every course was last moved onto. ice_slidev's repin workflow did not reach this repo: add it to REPIN_TOKEN's repositories and run that workflow."
+            echo "::warning::$msg"
+            echo "> **Warning:** $msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # ---- the precomputed results ---------------------------------------------------
       #
       # `verify` and `build` each grade every reference solution the course has: ~400 result
