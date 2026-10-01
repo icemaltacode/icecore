@@ -441,10 +441,34 @@ jobs:
             # One prefix at a time. --delete is scoped to the single deck being replaced, so
             # it can only ever remove files belonging to that deck - never a deck this run
             # did not rebuild.
+            #
+            # WITH CACHE HEADERS, which decks went without after content had learned it, see
+            # above. FIAU's decks were republished with the annotation sync and its students
+            # went on getting the old ones for days, a hard refresh included. So:
+            #   - assets/ is Vite's output, named by its content hash: a year, immutable;
+            #   - index.html names those hashes, so it is the one file that must never be
+            #     stale: `no-cache`, revalidated on every load, usually a 304;
+            #   - the rest - images copied from public/ under their own names, slides.pdf - an
+            #     hour, as for content.
+            # Headers only reach a browser that fetches again, so the address changes too: the
+            # player loads a deck as index.html?v=<course commit> - see deckVersion in
+            # build.mjs.
+            #
+            # IN AN ORDER THAT NEVER LEAVES AN index.html POINTING AT NOTHING: the new assets
+            # first, then the rest, then index.html, and the old assets deleted only once
+            # nothing new names them. A deck already open in a lesson still loses whatever it
+            # had not fetched yet, which is why a publish is not something to run mid-lesson.
             for unit in ${built[@]+"${built[@]}"}; do
-              [ -d "dist/slides/$deckCourse/$unit" ] || continue
+              from="dist/slides/$deckCourse/$unit"
+              to="s3://$BUCKET/slides/$deckCourse/$unit"
+              [ -d "$from" ] || continue
               echo "publishing slides/$deckCourse/$unit"
-              aws s3 sync "dist/slides/$deckCourse/$unit/" "s3://$BUCKET/slides/$deckCourse/$unit/" --delete
+              immutable='public, max-age=31536000, immutable'
+              [ -d "$from/assets" ] && aws s3 sync "$from/assets/" "$to/assets/" --cache-control "$immutable"
+              aws s3 sync "$from/" "$to/" --delete --exclude 'assets/*' --exclude 'index.html' \
+                --cache-control 'public, max-age=3600'
+              aws s3 cp "$from/index.html" "$to/index.html" --cache-control 'no-cache'
+              [ -d "$from/assets" ] && aws s3 sync "$from/assets/" "$to/assets/" --delete --cache-control "$immutable"
               paths+=("/slides/$deckCourse/$unit/*")
             done
 

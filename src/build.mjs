@@ -22,6 +22,7 @@ import { openExpectedCache } from './expected-cache.mjs';
 import { readPlayground, borrowed } from './playground.mjs';
 import { seedFor, packageKey, GRADER_WHEELS, wheelsFor } from '../app/src/python.js';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -324,6 +325,34 @@ export function stepProblems(ex) {
 }
 
 /**
+ * The course commit this build is of, carried on every deck's address as `?v=`. Null outside
+ * a git checkout, and then the address is bare.
+ *
+ * A REPUBLISHED DECK HAS TO BE A NEW ADDRESS, because a browser holding the old one will not
+ * ask. Decks were published with no Cache-Control at all, and a browser then decides for
+ * itself how long a page stays fresh - about a tenth of its age, so a deck five weeks old was
+ * reused for three or four days without a request. FIAU's decks were republished with the
+ * annotation sync and a student who had opened one that week went on getting the old one, a
+ * hard refresh included: the refresh reloads the player, and the player then creates the frame
+ * as an ordinary navigation, which the cache answers. The publish now sends headers that make
+ * a browser ask, but those only reach a browser that fetches again, and this does not depend
+ * on what any browser cached before.
+ *
+ * The commit rather than anything about the deck itself: a publish that rebuilds a deck
+ * always republishes index.json beside it, so every rebuilt deck gets a new address. Decks
+ * that were not rebuilt get one too, and the cost is one small page each, with the deck's
+ * hashed assets already cached. CloudFront leaves the query out of its cache key, so it costs
+ * the origin nothing. A hex hash cannot collide with what Slidev reads from the query
+ * (`print`, `embedded`, `clicks`, `password`).
+ */
+function deckVersion(dir) {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'],
+      { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
+  } catch { return null; }
+}
+
+/**
  * Build a content directory. Returns the full model, which is also what gets written.
  */
 export async function buildContent({ contentDir, outDir, write = true, log = console.log,
@@ -511,6 +540,7 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
   const slidesDir = path.join(contentDir, 'slides');       // build output, copied to dist
   const srcDir = slidesSrc || slidesSrcDir(contentDir);    // authored decks
   const sources = deckFiles(srcDir);
+  const version = deckVersion(contentDir);
   const built = new Set(fs.existsSync(slidesDir)
     ? fs.readdirSync(slidesDir).filter(d => fs.existsSync(path.join(slidesDir, d, 'index.html')))
     : []);
@@ -564,8 +594,13 @@ export async function buildContent({ contentDir, outDir, write = true, log = con
        * - which then loads the whole player inside the iframe.
        *
        * Course-scoped, because two courses on one site both number a unit 1.1 now. See
-       * deckPrefix. */
-      if (!u.slides && sources.has(unitId)) u.slides = `${deckPrefix(course.id, unitId)}/index.html`;
+       * deckPrefix.
+       *
+       * Versioned, see deckVersion - and only a deck of ours: an absolute `slides:` is
+       * somebody else's address and is left exactly as written. */
+      if (!u.slides && sources.has(unitId)) {
+        u.slides = `${deckPrefix(course.id, unitId)}/index.html${version ? `?v=${version}` : ''}`;
+      }
       if (!u.slides) continue;
 
       const section = deck?.sections?.[ordinal - 1];

@@ -44,9 +44,13 @@ const href = computed(() => props.open || props.deck);
  * the app already uses to decide whether to prefix BASE_URL. */
 const own = computed(() => !/^https?:\/\//.test(String(props.deck || '')));
 
+/* Beside the deck, and carrying the deck's `?v=` along: the version is what makes a
+ * republished deck a new address - see deckVersion in build.mjs - and the PDF is republished
+ * with it. */
 const pdf = computed(() => {
-  const dir = String(props.deck || '').replace(/index\.html?$/i, '');
-  return `${dir}${dir.endsWith('/') ? '' : '/'}slides.pdf`;
+  const [where, query] = String(props.deck || '').split('?');
+  const dir = where.replace(/index\.html?$/i, '');
+  return `${dir}${dir.endsWith('/') ? '' : '/'}slides.pdf${query ? `?${query}` : ''}`;
 });
 /* A filename, not a title: slashes and colons are not allowed in one and a topic label is
  * full of both. */

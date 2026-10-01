@@ -239,6 +239,16 @@ variables. Pass them explicitly: `vars` does not resolve inside a called workflo
   publishing course's own prefix** (`slides/<courseId>/`) for the same reason the content
   sync is: listing `slides/` as a whole walks every other course's decks and, finding none
   of them in this repo's manifest, would delete the lot.
+- **A republished deck is a new address: `index.html?v=<course commit>`.** Decks used to go
+  up with no `Cache-Control`, so a browser kept a deck for about a tenth of its age without
+  asking. FIAU's republished decks were invisible for days to anybody who had opened the old
+  ones, and a hard refresh did not help: it reloads the player, which then creates the frame
+  as an ordinary navigation. The publish now sends headers (`assets/` immutable for a year,
+  `index.html` `no-cache`, the rest an hour), but headers only reach a browser that fetches
+  again. So `deckVersion` in `build.mjs` puts the course commit on every deck address it
+  derives, and anything that builds a sibling path from a deck address (the PDF link) has to
+  carry the query along. **Deploy the player before a course publishes with a new kind of
+  deck address**, or the deployed player is the one reading it.
 - **Each deck ships only the images it references.** Slidev copies all of `public/` into
   every build; that was 84MB and 861 objects for a deck whose own content is 6.4MB. Pruned
   after the build, so `slidev dev` still sees all of `public/` and the markdown is untouched.

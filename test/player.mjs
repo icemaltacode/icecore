@@ -28,7 +28,8 @@ const COURSE = {
   id: 'c1', title: 'Course One',
   modules: [{ module: '1', title: 'M', units: [{ unit: '1.1', title: 'U', topics: [
     { topic: '1.1.1', title: 'Topic One',
-      slides: 'slides/c1/1.1/index.html', slide: 3, end: 9, slideCount: 31,
+      /* Versioned, as the builder writes it - see deckVersion in build.mjs. */
+      slides: 'slides/c1/1.1/index.html?v=abc123def456', slide: 3, end: 9, slideCount: 31,
       exercises: [
         /* A dataset on the first one only, so that a run reaching for the database reaches
          * PGlite - which is stubbed, and says so. See the Run relay at the end of this file. */
@@ -89,10 +90,18 @@ check('the walk counts the slides row', at() === '1 / 4', at());
 {
   const frame = document.querySelector('iframe');
   check('the slides step points at its own deck, at its own first slide',
-        !!frame && frame.getAttribute('src') === '/slides/c1/1.1/index.html#/3',
+        !!frame && frame.getAttribute('src') === '/slides/c1/1.1/index.html?v=abc123def456#/3',
         frame ? frame.getAttribute('src') : 'no iframe');
   check('and never at a path built out of nothing',
         !/undefined/.test(frame?.getAttribute('src') || ''), frame?.getAttribute('src'));
+  /* THE VERSION GOES WHERE THE DECK GOES. A republished deck is a new address so that no
+   * browser reuses the old one, and the PDF is republished with it - so the download carries
+   * the same `?v=`, and is still `slides.pdf` beside the deck rather than a path with the query
+   * stuck in the middle of it. */
+  const pdf = document.querySelector('a.deckbtn[download]');
+  check('the PDF sits beside the deck, with the same version',
+        pdf?.getAttribute('href') === '/slides/c1/1.1/slides.pdf?v=abc123def456',
+        pdf ? pdf.getAttribute('href') : 'no download link');
 }
 
 // ------------------------------------------------------- joining a live session
