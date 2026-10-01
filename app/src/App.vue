@@ -46,6 +46,8 @@ import SlidesPanel from './components/SlidesPanel.vue';
 import SplitPane from './components/SplitPane.vue';
 import SlidesStep from './components/SlidesStep.vue';
 import { walkCourse, gradable } from './walk.js';
+import { warmPython } from './py.js';
+import { warmDb } from './db.js';
 import { board, startBoard, keepBoard, loadSaved, reopen, boardSource } from './board.js';
 import SignIn from './components/SignIn.vue';
 import Playground from './components/Playground.vue';
@@ -439,6 +441,39 @@ const total = computed(() => flat.value.length);
  * Previous and Next move through. Progress counts only what can be solved: slides are
  * taught, not graded, and a bar that fills as you page past them measures nothing. */
 const exercises = computed(() => gradable(flat.value));
+
+/* THE NEXT EXERCISE'S ENGINE, STARTED DURING THE SLIDES BEFORE IT.
+ *
+ * A topic opens on its slides and its exercises follow (walk.js), so a student reading the
+ * slides is minutes away from the exercise that needs Python or a seeded database - and
+ * booting either is seconds the exercise used to spend saying "Loading…". Started here
+ * instead, the exercise usually opens with its engine already up. It could not be done
+ * while the engines ran on the page's own thread: warming then would have frozen the
+ * deck the student was reading. In workers it costs the page nothing.
+ *
+ * FROM A SLIDES STEP ONLY, and only for the row straight after it. On an exercise, warming
+ * the next one could replace the interpreter the current one is using (a new module brings a
+ * new package set), which would be paying for the future with the present.
+ *
+ * NOT AT ONCE: a few seconds after the slides appear, so the deck's own assets are not
+ * fighting a runtime download for the same connection. NOT AT ALL when the browser has been
+ * asked to save data, because this spends bandwidth on something the student has not asked
+ * for yet. */
+const PREWARM_AFTER = 3000;
+let prewarmTimer = null;
+watch(currentId, () => {
+  clearTimeout(prewarmTimer);
+  if (current.value?.kind !== 'slides' || !course.value) return;
+  if (globalThis.navigator?.connection?.saveData) return;
+  const next = flat.value[index.value + 1];
+  if (next?.kind !== 'exercise') return;
+  const courseId = course.value.id;
+  prewarmTimer = setTimeout(() => {
+    if (next.type === 'python') warmPython(courseId, next).catch(() => {});
+    else if (!componentFor[next.type] && next.dataset) warmDb(courseId, next.dataset, next.setup);
+  }, PREWARM_AFTER);
+});
+onBeforeUnmount(() => clearTimeout(prewarmTimer));
 
 /* The educator moved. Only their moves, and only while following: everybody else's positions
  * are for the panel to draw, not for this screen to obey.

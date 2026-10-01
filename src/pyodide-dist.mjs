@@ -11,19 +11,21 @@
  * simply broken for that student and for nobody else, which is the hardest kind of fault to
  * be told about.
  *
- * WE ALREADY HAVE THE FILES. `npm i pyodide` ships the runtime AND the twenty-four wheels
- * Pyodide bundles - pandas, numpy, matplotlib, scipy, statsmodels, pyarrow and their
- * dependencies - so this is a copy, not a download. Nothing is fetched at build time and
- * nothing new has to be kept up to date: the version in `package.json` is the version that
- * ships, and it cannot drift from the loader compiled against it.
+ * THE FILES ARE THE RELEASE TARBALL, not the npm package. `npm i pyodide` ships the runtime
+ * and none of its packages: the wasm, the stdlib, the loader, and a lock file naming 356
+ * wheels it does not contain. It was believed for a while to ship two dozen, because a
+ * checkout's `node_modules/pyodide` gained them - but that is Pyodide under Node fetching
+ * what the builder's validation imported and saving it there, not anything npm put down.
+ * src/pyodide-fetch.mjs finds or fetches the release; the version in `package.json` is still
+ * the version that ships, so it cannot drift from the loader compiled against it.
  *
- * THE WHOLE DISTRIBUTION, not a curated subset. An earlier version of this staged the
- * twenty-four packages npm happens to bundle and trimmed the lock file to match, on the
- * reasoning that the six the courses declare were covered and 334MB is a lot of bucket. That
- * was the wrong call and not one this file gets to make: jsDelivr served all 356, so a
- * subset is a REGRESSION dressed as a saving - the Playground exists precisely so a student
- * can import what they like, and `import networkx` failing on our own site is not something
- * they can be expected to understand.
+ * THE WHOLE DISTRIBUTION, not a curated subset. An earlier version of this staged whatever
+ * packages `node_modules/pyodide` held and trimmed the lock file to match, on the reasoning
+ * that the six the courses declare were covered and 334MB is a lot of bucket. That was the
+ * wrong call and not one this file gets to make: jsDelivr served all 356, so a subset is a
+ * REGRESSION dressed as a saving - the Playground exists precisely so a student can import
+ * what they like, and `import networkx` failing on our own site is not something they can be
+ * expected to understand.
  *
  * So the rule is simply that what used to come from jsDelivr now comes from icecampus.com,
  * and nothing else changes. `just pyodide` puts the release tarball in the bucket, which is

@@ -156,13 +156,12 @@ onBeforeUnmount(() => sendSoon.cancel());
  * warm-up pays for the interpreter a first Run used to wait on, and brings the compiler the
  * red lines below need - which is why every Python exercise warms, setup or not.
  *
- * AT ONCE, AND SAID OVER THE EDITOR. It was warmed at idle with a small badge by the tabs,
- * which nobody saw - and at idle it could start a few seconds in, under an editor somebody
- * had begun typing into. Now it starts before the first paint, the editor opens covered and
- * read-only (see EditorPane's `loading`), and is handed over once. When the interpreter is
- * already warm nothing is covered at all. Pyodide runs in a worker now (see py.js), so the
- * page no longer holds still while it starts; the cover stays because there is still nothing
- * to run against until it has. */
+ * AT ONCE, AND SAID IN THE EDITOR. It starts before the first paint - often earlier, during
+ * the slides before this exercise (see `prewarm` in App.vue) - and while it is on its way
+ * the editor says so in its corner (EditorPane's `loading`). Pyodide runs in a worker (see
+ * py.js), so the page never holds still for it: the student can read and type, and a Run
+ * pressed meanwhile waits for the interpreter rather than being refused. When the
+ * interpreter is already warm nothing is shown at all. */
 const startingPython = computed(() => pythonStarting.value);
 warmPython(props.courseId, props.exercise).catch(() => {});
 
@@ -226,8 +225,8 @@ const busy = ref(false);
 const booting = ref(false);
 
 /* STOP, for code that is not going to finish - see stop.js. It ends the interpreter, so the
- * exercise is warmed again at once: the editor is covered while Python restarts rather than
- * the student finding out on their next press. The Run or Check that was stopped says so
+ * exercise is warmed again at once: the editor says Python is loading while it restarts,
+ * rather than the student finding out on their next press. The Run or Check that was stopped says so
  * through `wrap`, and is not reported as an attempt. */
 const stoppable = useStop(busy);
 function stop() {
@@ -574,11 +573,11 @@ const ranQuietly = computed(() =>
                expect their own. -->
           <button v-if="stoppable" class="btn ghost" type="button" @click="stop">Stop</button>
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
-                  :disabled="busy || startingPython">
+                  :disabled="busy">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
           <button class="btn primary" data-show="check" data-label="Check answer"
-                  @click="doCheck" :disabled="busy || startingPython">Check answer</button>
+                  @click="doCheck" :disabled="busy">Check answer</button>
         </div>
       </div>
       <div class="result-pane" data-point="result">

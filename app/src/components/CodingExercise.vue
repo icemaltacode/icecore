@@ -137,9 +137,11 @@ onBeforeUnmount(() => sendSoon.cancel());
  *
  * Made as the exercise opens, as a Python exercise warms its interpreter: the first Run then
  * finds it waiting, and the editor's check below has something to ask. Seeding a dataset takes
- * a moment - in a worker now, so the page keeps moving - and the editor opens covered and
- * read-only while it does (EditorPane's `loading`), and is handed over once. When this dataset
- * already has a database, nothing is covered. Only exercises with a dataset have one to make. */
+ * a moment - in a worker, so the page keeps moving - and the editor says so in its corner
+ * while it does (EditorPane's `loading`). The student can type meanwhile, and a Run pressed
+ * before the database exists waits for it. Often it was made during the slides before this
+ * exercise (see `prewarm` in App.vue), and then nothing is shown at all. Only exercises with
+ * a dataset have one to make. */
 const startingDb = computed(() => dbStarting.value);
 if (props.exercise.dataset) warmDb(props.courseId, props.exercise.dataset, props.exercise.setup);
 
@@ -163,7 +165,7 @@ const busy = ref(false);
 
 /* STOP, for a query that is not going to finish - see stop.js. It ends the database worker,
  * and the student's database with it, so the exercise is warmed again at once and the editor
- * is covered while it is remade. */
+ * says the database is loading while it is remade. */
 const stoppable = useStop(busy);
 function stop() {
   stopDb('Stopped. Your database is starting again from the beginning.');
@@ -537,12 +539,12 @@ async function doReset() {
                expect their own. -->
           <button v-if="stoppable" class="btn ghost" type="button" @click="stop">Stop</button>
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
-                  :disabled="busy || startingDb">
+                  :disabled="busy">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}
           </button>
           <button class="btn primary" data-show="check" data-label="Check answer"
                   @click="doCheck"
-                  :disabled="busy || (isMcqStep ? picked === null : startingDb)">Check answer</button>
+                  :disabled="busy || (isMcqStep && picked === null)">Check answer</button>
         </div>
       </div>
       <div class="result-pane" data-point="result">

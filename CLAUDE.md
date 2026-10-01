@@ -52,8 +52,10 @@ that could be shown externally or open-sourced.
   red line means Run would fail. Checking **stops at the first statement Postgres cannot plan**
   (`CREATE VIEW`, `ALTER`…), because what follows may use what it creates. Python's red lines
   are `compile()` in the warm interpreter (`_ice_syntax`). Both wait for their engine - made
-  as the exercise opens, under an overlay (EditorPane's `loading`) that keeps the editor
-  read-only until there is something to run against - and mark nothing until it exists.
+  as the exercise opens (or during the slides before it), said in the editor's corner
+  (EditorPane's `loading`) - and mark nothing until it exists. The editor is NOT read-only
+  meanwhile: the engines are in workers, so nothing typed can be lost to a freeze, and a
+  Run pressed early waits for its engine.
 - **The runtimes run in WORKERS**, never on the page's thread: `py.worker.js` (an exercise's
   grader), `playground-py.worker.js`, and `sql.worker.js` (one instance for exercises, one
   for the Playground). `worker-rpc.js` is the one way the page talks to them. What that
@@ -892,9 +894,9 @@ and none is custom.
   behind a network that blocks CDNs, where every coding exercise simply never started: not
   slow, not degraded, just an interpreter that never arrives, for that student and nobody
   else. [`src/pyodide-dist.mjs`](src/pyodide-dist.mjs) is the one definition of where it is
-  published and which files it consists of; `copyPyodide` in the CLI stages it out of
-  `node_modules/pyodide` into `pyodide/<version>/` in the course's staging directory, which
-  is Vite's publicDir — so `dev` serves it on exactly a deployment's terms. `just deploy`
+  published and which files it consists of; `copyPyodide` in the CLI stages the full
+  release into `pyodide/<version>/` in the course's staging directory, which is Vite's
+  publicDir, so `dev` serves it on exactly a deployment's terms. `just deploy`
   carries the prefix in the **immutable** pass beside `assets/*`, because the version is in
   the path.
   - **`packageBaseUrl` has to be set as well as `indexURL`.** Packages already resolve
@@ -902,11 +904,16 @@ and none is custom.
     `cdnUrl` is computed as `packageBaseUrl ?? cdn.jsdelivr.net/…`, so leaving it unset
     keeps a jsDelivr URL alive in the runtime's own config as the fallback for anything the
     lock file does not name. `pyodideOptions()` in `wheels.js` is the one caller.
-  - **npm ships 24 of Pyodide's 356 packages, and the staged lock file is TRIMMED to them.**
-    That is a real narrowing — jsDelivr served all 356, and the full distribution is a 334MB
-    download — but it must not lie: left whole, `import networkx` resolves to a wheel we do
-    not have and 404s against our own origin, which reads as the platform being broken. The
-    24 are dependency-closed and `test/setup-checks.mjs` asserts that they stay so.
+  - **npm ships Pyodide's runtime and NONE of its packages.** A checkout's
+    `node_modules/pyodide` gains wheels anyway, and that is the trap: Pyodide under Node
+    fetches whatever the builder's validation imports from jsDelivr and saves it there
+    ("caching the wheel in node_modules for future use"). So a machine that had graded a
+    course held its wheels and a fresh `npm ci` held none, and `dev`, which used to fall back
+    to that directory, served Python or did not depending on the machine's history. Nothing
+    reads those wheels now. `src/pyodide-fetch.mjs` finds the full release (a checkout's own
+    `.pyodide/<version>/`, else `~/.cache/icecore/pyodide/<version>/`) or fetches it, once per
+    version per machine, and `dev`, `bundle` and `just pyodide` all stage that one copy. A
+    site with no Python exercise and no Python playground fetches nothing.
   - The check also refuses **any `http(s)://` host named anywhere in `app/src`**. Today there
     are none. It is the kind of property that rots by accident — a font, a chart library, an
     icon set, each added by somebody who was not on that network — so it is asserted rather

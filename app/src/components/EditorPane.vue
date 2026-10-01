@@ -51,8 +51,8 @@ const props = defineProps({
   /** What is wrong with the code, and a nudge to check again - see CodeEditor. */
   lint: { type: Function, default: null },
   lintAgain: { type: Number, default: 0 },
-  /* WHAT THE EDITOR IS WAITING FOR, said over it - "Loading Python…" - or empty when it is
-   * waiting for nothing. The editor is read-only while it is set. See `.paneload` below. */
+  /* WHAT THE EDITOR IS WAITING FOR, said in its corner - "Loading Python…" - or empty when
+   * it is waiting for nothing. The editor stays editable throughout. See `.paneload` below. */
   loading: { type: String, default: '' },
   /* Somebody else's caret IN THIS STUDENT'S BUFFER - remote control, and nothing else. */
   peerAt: { type: Number, default: null },
@@ -215,7 +215,7 @@ function take() {
       <!-- v-show, not v-if: a CodeMirror instance rebuilt on every tab switch loses the undo
            history and the scroll position, and the split flips this twice on a resize. -->
       <div v-show="split || showing === 'mine'" class="one">
-        <CodeEditor v-model="mine" :language="language" :readonly="readonly || !!loading"
+        <CodeEditor v-model="mine" :language="language" :readonly="readonly"
                     :preamble="preamble" :schema="schema" :completions="completions"
                     :lint="lint" :lint-again="lintAgain"
                     :peer-at="peerAt" :peer-anchor="peerAnchor" :peer-name="peerName"
@@ -247,13 +247,16 @@ function take() {
         </div>
       </div>
 
-      <!-- OVER THE EDITOR, NOT BESIDE IT. This was a small badge by the tabs, and a student
-           typing into an editor that then stopped answering - Python and a dataset used to
-           load on the main thread - had no reason to look there. They load in workers now,
-           and the editor is still read-only underneath while it is up: until the engine
-           exists there is nothing to run against, check against or complete from. -->
+      <!-- IN THE EDITOR'S CORNER, AND THE EDITOR STAYS THEIRS. This was a cover over the whole
+           editor, read-only underneath, because Python and a dataset loaded on the page's own
+           thread and the page stopped answering while they did; anything typed then was lost
+           to the freeze. They load in workers now and the page never stops, so there is
+           nothing to protect the student from: they can read the code, start typing, and press
+           Run, which simply waits for the engine. What is left to say is only that the engine
+           is on its way, which is why red lines and completion have not appeared yet - said
+           where they are looking, in the editor, and small enough not to cover their code. -->
       <div v-if="loading" class="paneload" role="status">
-        <span class="paneload-box"><span class="ice-spin" aria-hidden="true"></span>{{ loading }}</span>
+        <span class="ice-spin" aria-hidden="true"></span>{{ loading }}
       </div>
     </div>
   </div>
@@ -311,12 +314,10 @@ function take() {
 .ask p { margin: 0 0 7px; }
 .ask .acts { display: flex; gap: 8px; }
 
-/* The code shows through, dimmed, so it reads as the same editor waiting rather than as the
-   editor having gone. The box is solid so the words are legible over any code. */
-.paneload { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center;
-            background: color-mix(in srgb, var(--ice-code-bg) 75%, transparent); }
-.paneload-box { display: inline-flex; align-items: center; gap: 10px; padding: 10px 16px;
-                border-radius: 10px; background: var(--ice-bg); border: 1px solid var(--ice-border);
-                box-shadow: 0 8px 24px rgb(0 0 0 / .18); font-size: 13px; color: var(--ice-fg); }
-.paneload-box .ice-spin { width: 16px; height: 16px; }
+/* Bottom right, where code rarely reaches, and transparent to the pointer so that a click
+   meant for the line underneath still lands on it. Solid, so the words read over any code. */
+.paneload { position: absolute; right: 10px; bottom: 10px; z-index: 5; pointer-events: none;
+            display: inline-flex; align-items: center; gap: 8px; padding: 5px 11px;
+            border-radius: 999px; background: var(--ice-bg); border: 1px solid var(--ice-border);
+            box-shadow: 0 4px 12px rgb(0 0 0 / .12); font-size: 12px; color: var(--ice-fg); }
 </style>

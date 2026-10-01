@@ -104,6 +104,17 @@ check('the walk counts the slides row', at() === '1 / 4', at());
         pdf ? pdf.getAttribute('href') : 'no download link');
 }
 
+/* THE NEXT EXERCISE'S DATABASE IS MADE DURING THE SLIDES - see the prewarm in App.vue. The
+ * exercise after this slides step has a dataset, so a few seconds into the slides the page
+ * reaches for the SQL worker; and not at once, so the deck has the connection to itself
+ * first. The instrument is the test DOM's Worker, which records what was asked for. */
+// By prefix: the build gives each worker script a content hash, `sql.worker-<hash>.js`.
+const askedForSql = () => dom.workers.some(n => n.startsWith('sql.worker'));
+check('the slides do not reach for the next exercise\'s database at once',
+      !askedForSql(), dom.workers.join(', ') || 'nothing');
+await settle(3200);
+check('but a few seconds in, they do', askedForSql(), dom.workers.join(', ') || 'nothing');
+
 // ------------------------------------------------------- joining a live session
 location.hash = '#/live/data-team';
 dispatchEvent(new window.Event('hashchange'));

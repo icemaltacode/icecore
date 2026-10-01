@@ -115,10 +115,13 @@ export function installDom({ hash = '', search = '', url = 'https://icecore.test
    * (app/src/worker-rpc.js), and what a test asserts about them is that the page REACHED for
    * one - the instrument test/stubs/absent.js is for the runtimes themselves. So a Worker
    * here refuses to be made, in the same words the stubs use, and the refusal arrives where
-   * the runtime's own error would. */
+   * the runtime's own error would. Each attempt is recorded too, by script name - `workers`
+   * below - so a test can say WHICH engine the page reached for, and when. */
+  const workers = [];
   put('Worker', class Worker {
     constructor(url) {
       const name = String(url).split('/').pop().split('?')[0];
+      workers.push(name);
       throw new Error(`Worker(${name}) is not available in a test process - see test/dom.mjs`);
     }
   });
@@ -141,6 +144,8 @@ export function installDom({ hash = '', search = '', url = 'https://icecore.test
 
   return {
     dom,
+    /** Every worker script the page has tried to start, in order - see `Worker` above. */
+    workers,
     window,
     /** Serve one JSON file at a path, as the content bucket would. */
     serve: (path, body) => routes.set(path, body),

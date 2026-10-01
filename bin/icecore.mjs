@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { EXTENSIONS } from '../src/extensions.mjs';
 import { pyodideDir, shipped } from '../src/pyodide-dist.mjs';
+import { ensureDistribution, findDistribution } from '../src/pyodide-fetch.mjs';
 import { buildContent, stepProblems } from '../src/build.mjs';
 import { slidesSrcDir, deckFiles, readDecks, affectedDecks, deckPrefix } from '../src/decks.mjs';
 import { checkAgainst, borrowed, readListing, resolveAgainst, MANIFEST }
@@ -72,7 +73,8 @@ const has = name => name in flags;
  * grade. */
 const contentDirs = (positional.length ? positional : ['content']).map(d => path.resolve(d));
 const contentDir = contentDirs[0];
-if (!fs.existsSync(contentDir)) die(`No content directory at ${contentDir}`);
+// `pyodide` is about this machine rather than about a course, so it needs no content.
+if (cmd !== 'pyodide' && !fs.existsSync(contentDir)) die(`No content directory at ${contentDir}`);
 
 function die(msg) { console.error(`icecore: ${msg}`); process.exit(1); }
 
@@ -83,6 +85,7 @@ switch (cmd) {
   case 'bundle': await cmdBundle(); break;
   case 'slides': await cmdSlides(); break;
   case 'playground': await cmdPlayground(); break;
+  case 'pyodide': await cmdPyodide(); break;
   default:
     console.log(`icecore - ICE practice platform
 
@@ -96,6 +99,8 @@ switch (cmd) {
                  [--lenders]                  ...list the courses it borrows from
                  [--sizes <file>]             ...against an "aws s3 ls --recursive"
                                                  listing, and stamp the sizes in
+  icecore pyodide                           fetch the full Python distribution if this
+                                            machine has none, and print where it is
   icecore slides [contentDir]               build the course's per-unit decks
                                             (and export each one to slides.pdf; --no-pdf skips)
                  [--since <sha>]              ...only those a change since <sha> affects
@@ -363,7 +368,7 @@ async function cmdDev() {
   const staging = path.join(contentDir, '..', '.icecore', String(port));
   await buildAll(staging);
   copyRootFiles(staging);
-  copyPyodide(staging);
+  await copyPyodide(staging);
   // Vite picks VITE_-prefixed variables up out of the environment, so this is all it takes
   // to reach import.meta.env in the app. It is read only under import.meta.env.DEV, which
   // `bundle` sets false - preview cannot leak into anything that ships.
@@ -707,60 +712,94 @@ function copyRootFiles(staging) {
 }
 
 /**
- * The Python runtime, staged from node_modules so it is served from our own origin.
+ * The Python runtime, staged so it is served from our own origin.
  *
- * See src/pyodide-dist.mjs for why it is not a CDN any more. Copied into the staging
- * directory for `copyRootFiles`'s reason and by the same mechanism: that directory IS Vite's
- * publicDir, so `dev` serves these on exactly the terms a deployment does and the one path
- * that matters - a browser resolving `pyodide-lock.json` against `indexURL` - is exercised
- * locally rather than first discovered in production.
+ * See src/pyodide-dist.mjs for why it is not a CDN any more, and src/pyodide-fetch.mjs for
+ * where the files come from: the full release, the same distribution production serves, and
+ * never `node_modules/pyodide`, which holds the runtime but none of its packages. Staged into
+ * the staging directory for `copyRootFiles`'s reason and by the same mechanism: that
+ * directory IS Vite's publicDir, so `dev` serves these on exactly the terms a deployment does
+ * and the one path that matters - a browser resolving `pyodide-lock.json` against `indexURL`
+ * - is exercised locally rather than first discovered in production.
+ *
+ * LINKED, NOT COPIED, where the filesystem allows it. The full distribution is a few hundred
+ * megabytes, there is a staging directory per course and per port, and nothing ever writes
+ * to these files; a hard link costs nothing and reads identically. A copy is the fallback.
  *
  * SKIPPED WHEN IT IS ALREADY THERE, which is safe only because the version is in the path:
- * these 30 files are 65MB, `buildAll` wipes the staging directory on every run, and `dev` is
- * run all day. A file that exists under `pyodide/<version>/` cannot be a different file.
+ * `buildAll` rebuilds the staging directory's content on every run, and `dev` is run all day.
+ * A file that exists under `pyodide/<version>/` cannot be a different file.
  *
- * A MISSING PACKAGE IS FATAL RATHER THAN QUIET. Without it the first Python exercise a
- * student opens fails inside `loadPyodide` with a fetch error naming a URL, which reads as
- * the site being broken rather than as an install that did not happen.
+ * NOT FETCHED FOR A SITE WITH NO PYTHON. A SQL course's author should not wait on a download
+ * nothing will boot; if the distribution is already here it is staged anyway, so the
+ * Playground still has it.
  */
-function copyPyodide(staging) {
+async function copyPyodide(staging) {
   const npm = path.join(ROOT, 'node_modules', 'pyodide');
   if (!fs.existsSync(npm)) {
     die('node_modules/pyodide is missing - run `npm ci` before building');
   }
   /* THE VERSION THE APP WAS COMPILED AGAINST, read from the installed package rather than
-   * written down - and read from npm even when the files come from the tarball, because that
-   * is the number the bundled loader will check itself against. `app/src/wheels.js` reads the
-   * same number from the same place through the bundler, so the directory this stages and the
-   * one the player asks for cannot drift; a drift surfaces as a 404 for a wasm file, a long
-   * way from its cause.
+   * written down - and read from npm even though the files come from the release, because
+   * that is the number the bundled loader will check itself against. `app/src/wheels.js`
+   * reads the same number from the same place through the bundler, so the directory this
+   * stages and the one the player asks for cannot drift; a drift surfaces as a 404 for a
+   * wasm file, a long way from its cause.
    *
    * Read HERE and not in a const beside it: this file's command dispatch is top-level code,
    * so a module-level read runs for `icecore verify` and `icecore slides` too - commands that
    * want nothing to do with Python and would fail on an install that is merely incomplete. */
   const version = JSON.parse(fs.readFileSync(path.join(npm, 'package.json'), 'utf8')).version;
 
-  /* THE WHOLE DISTRIBUTION IF IT IS HERE, and npm's twenty-four if it is not.
-   *
-   * `just pyodide` unpacks the release into `.pyodide/<version>/` and puts it in the bucket;
-   * that is what a deployed site serves. Locally the download is 334MB for a long tail no
-   * exercise uses, so `dev` falls back to what `npm ci` already brought - every package the
-   * courses declare, and enough to run any of them. The difference is only which packages the
-   * PLAYGROUND can reach, and it is said out loud rather than left to be discovered. */
-  const full = path.join(ROOT, '.pyodide', version);
-  const from = fs.existsSync(path.join(full, 'pyodide-lock.json')) ? full : npm;
+  const from = usesPython(staging)
+    ? await ensureDistribution(version, { root: ROOT }).catch(e => die(`${e.message}
+  Python cannot be served without it. Fetch it by hand with \`icecore pyodide\`, or put the
+  unpacked release at ${path.join(ROOT, '.pyodide', version)}.`))
+    : findDistribution(version, { root: ROOT });
+  if (!from) {
+    console.log(`  python ${version}: not staged - nothing here uses Python`);
+    return;
+  }
 
   const to = path.join(staging, ...pyodideDir(version).split('/'));
   fs.mkdirSync(to, { recursive: true });
   const names = fs.readdirSync(from).filter(shipped);
   for (const name of names) {
     const at = path.join(to, name);
-    if (!fs.existsSync(at)) fs.copyFileSync(path.join(from, name), at);
+    if (fs.existsSync(at)) continue;
+    try { fs.linkSync(path.join(from, name), at); }
+    catch { fs.copyFileSync(path.join(from, name), at); }
   }
   const wheels = names.filter(n => n.endsWith('.whl')).length;
-  console.log(from === full
-    ? `  python ${version}: the whole distribution, ${wheels} packages`
-    : `  python ${version}: npm's ${wheels} packages - \`just pyodide\` for all of them`);
+  console.log(`  python ${version}: the whole distribution, ${wheels} packages`);
+}
+
+/* Whether any course just built into `staging` has a Python exercise or a Python playground.
+ * Read off what the build wrote rather than asked of the builder, because that is exactly
+ * what the player will be served. */
+function usesPython(staging) {
+  const content = path.join(staging, 'content');
+  if (!fs.existsSync(content)) return false;
+  for (const id of fs.readdirSync(content)) {
+    const read = name => {
+      try { return fs.readFileSync(path.join(content, id, name), 'utf8'); } catch { return ''; }
+    };
+    if (/"type":"python"/.test(read('index.json'))) return true;
+    if (/"python"\s*:/.test(read('playground.json'))) return true;
+  }
+  return false;
+}
+
+/* `icecore pyodide`: the full distribution's directory on this machine, fetched first if
+ * there is none. The PATH ALONE goes to stdout, so `just pyodide` can upload from it; every
+ * word about the fetch goes to stderr. */
+async function cmdPyodide() {
+  const npm = path.join(ROOT, 'node_modules', 'pyodide');
+  if (!fs.existsSync(npm)) die('node_modules/pyodide is missing - run `npm ci` first');
+  const version = JSON.parse(fs.readFileSync(path.join(npm, 'package.json'), 'utf8')).version;
+  const dir = await ensureDistribution(version, { root: ROOT, log: m => console.error(m) })
+    .catch(e => die(e.message));
+  console.log(dir);
 }
 
 async function cmdBundle() {
@@ -771,7 +810,7 @@ async function cmdBundle() {
   const staging = path.join(contentDir, '..', '.icecore-bundle');
   await buildAll(staging);
   copyRootFiles(staging);
-  copyPyodide(staging);
+  await copyPyodide(staging);
   const { build } = await import('vite');
   await build({
     configFile: path.join(APP, 'vite.config.js'),

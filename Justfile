@@ -285,9 +285,9 @@ deploy: bundle _auth-json
 # now, and the bucket is behind CloudFront, which is a CDN: the one thing that was ever
 # wanted here.
 #
-# ALL OF IT, not the twenty-four packages npm bundles. jsDelivr served the whole catalogue,
-# so a subset is a regression dressed as a saving - the Playground exists precisely so a
-# student can import what they like. 334MB compressed, once per Pyodide version.
+# ALL OF IT. npm ships the runtime and none of its packages, and jsDelivr served the whole
+# catalogue, so a subset would be a regression dressed as a saving - the Playground exists
+# precisely so a student can import what they like. 334MB, once per Pyodide version.
 #
 # ITS OWN RECIPE RATHER THAN PART OF `deploy`, because it is a bucket asset with its own
 # lifecycle - the same reason `brand/` is deployed by the stack. It also must not ride the
@@ -305,26 +305,10 @@ pyodide:
     set -euo pipefail
     eval "$(just _targets)"
     v=$(node -p "require('./node_modules/pyodide/package.json').version")
-    dir=".pyodide/$v"
-    if [[ ! -f "$dir/pyodide-lock.json" ]]; then
-      tar="pyodide-$v.tar.bz2"
-      url="https://github.com/pyodide/pyodide/releases/download/$v/$tar"
-      mkdir -p .pyodide
-      # Downloaded beside the target and moved into place, so an interrupted fetch is not
-      # mistaken for a complete one by the next run.
-      if [[ ! -f ".pyodide/$tar" ]]; then
-        echo "fetching $url"
-        curl -fL --progress-bar "$url" -o ".pyodide/$tar.part"
-        mv ".pyodide/$tar.part" ".pyodide/$tar"
-      fi
-      echo "extracting..."
-      rm -rf "$dir.part" && mkdir -p "$dir.part"
-      # The tarball's own root is `pyodide/`; strip it so the version directory is the files.
-      tar -xjf ".pyodide/$tar" -C "$dir.part" --strip-components=1
-      [[ -f "$dir.part/pyodide-lock.json" ]] || { echo "no pyodide-lock.json in $tar" >&2; exit 1; }
-      rm -rf "$dir" && mv "$dir.part" "$dir"
-      rm -f ".pyodide/$tar"
-    fi
+    # THE SAME COPY `icecore dev` SERVES, found or fetched by one definition - see
+    # src/pyodide-fetch.mjs. It used to be fetched here as well, in bash, which was two ways
+    # of getting one tarball. The command prints the directory and nothing else.
+    dir=$(node bin/icecore.mjs pyodide)
     echo "$(ls "$dir"/*.whl 2>/dev/null | wc -l) packages in $dir"
     # No --delete. Nothing else writes this prefix, and a partial local copy must never be
     # able to remove what is already serving a lesson.
