@@ -105,13 +105,37 @@ function brush() {
   if (!drauu) return;
   drauu.brush = {
     ...drauu.brush,
-    mode: MODE[tool.value] || tool.value,
     color: ink.value,
     size: size.value,
     /* A shape is an outline. Filled, a rectangle drawn over a diagram hides it, and the one
      * thing a board is for is drawing ON TOP of an explanation. */
     fill: 'transparent',
   };
+  /* THE TOOL THROUGH ITS SETTER, never inside `brush`. The setter is where drauu tells a tool
+   * it has been picked up, and the eraser is the one that needs telling: that is when it
+   * collects the strokes it can hit. Set as part of `brush` it was never picked up, had
+   * nothing to hit, and erased nothing. */
+  drauu.mode = MODE[tool.value] || tool.value;
+}
+
+/* A TAP IS A DOT. drauu tapers both ends of a pen stroke, and a stroke shorter than the taper
+ * comes out with no width at all: a tap is an outline a hundredth of a unit across, so the dot
+ * of an i drew nothing. Anything that stayed within about one pen width is drawn as a round
+ * dot of the pen's width, where the hand came down. The points are the pen model's own, still
+ * there when the stroke is committed. */
+function dot(node) {
+  if (node?.tagName !== 'path' || drauu.mode !== 'stylus') return;
+  const points = drauu.model.points || [];
+  if (!points.length) return;
+  const xs = points.map(p => p.x);
+  const ys = points.map(p => p.y);
+  const pen = drauu.brush.size;
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  if (Math.max(x1 - x0, y1 - y0) >= pen + 2) return;
+  const x = Math.round((x0 + x1) / 2);
+  const y = Math.round((y0 + y1) / 2);
+  const r = Math.max(1, Math.round(pen / 2));
+  node.setAttribute('d', `M ${x - r} ${y} A ${r} ${r} 0 1 0 ${x + r} ${y} A ${r} ${r} 0 1 0 ${x - r} ${y} Z`);
 }
 
 onMounted(async () => {
@@ -119,7 +143,17 @@ onMounted(async () => {
   await nextTick();
   drauu = createDrauu({ el: stage.value, brush: { mode: 'stylus', color: ink.value, size: size.value } });
   brush();
-  drauu.on('committed', node => { compact(node); pending = node || null; });
+  drauu.on('committed', node => { dot(node); compact(node); pending = node || null; });
+  /* WHAT THE ERASER CAN HIT IS COLLECTED AFRESH AS EACH PASS STARTS. drauu collects it once,
+   * when the eraser is picked up, and that goes stale whenever the page changes under it
+   * without the tool changing: a page turn, an undo, a clear, a kept board reopened. Erasing
+   * against it then removes strokes that are no longer on the page and misses the ones that
+   * are. */
+  drauu.on('start', () => {
+    if (drauu.mode !== 'eraseLine') return;
+    drauu.model.onUnselected();
+    drauu.model.onSelected(drauu.el);
+  });
   /* `changed` also fires on pointer-down and on every move, so a page would otherwise be
    * recorded - and sent - a hundred times a stroke. `drawing` is already false by the time
    * the one that matters arrives: drauu sets it before emitting `end`. */
@@ -127,7 +161,9 @@ onMounted(async () => {
     if (loading || drauu.drawing) return;
     const svg = drauu.dump();
     if (pending) { commitStroke(pending.outerHTML, svg); pending = null; }
-    else commitPage(svg);
+    /* An eraser pass that touched nothing still ends in `changed`, and the room already has
+     * this page - which, with no ceiling on a page, can be several parts to send again. */
+    else if (svg !== current()) commitPage(svg);
     canUndo.value = drauu.canUndo();
   });
   apply();
