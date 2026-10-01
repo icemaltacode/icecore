@@ -37,6 +37,11 @@ export default defineConfig({
    * pre-bundled copy cannot find it. For pglite, each contrib entry point needs listing
    * separately - exclude matches the import specifier, not the package. */
   optimizeDeps: { exclude: ['@electric-sql/pglite', 'pyodide', ...EXTENSION_SPECIFIERS] },
+  /* The runtimes live in workers (app/src/*.worker.js, see worker-rpc.js), started as MODULE
+   * workers, so they are bundled as ES modules. The default is a classic IIFE, which cannot
+   * hold the dynamic imports Pyodide's loader makes, and fails the build rather than the page.
+   * The `define` above reaches the worker bundles as well, and has to: PGlite is in one. */
+  worker: { format: 'es' },
   /* The grader's wheels are ordinary build assets, imported by `py.js` and emitted with a
    * content hash. They are deliberately NOT in `public/`: `icecore dev` points publicDir at
    * the course's staging directory, so the app's own public/ is not served at all and a

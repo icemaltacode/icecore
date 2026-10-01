@@ -15,7 +15,8 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
 import { gradePython, runPython, pythonReady, warmPython, completePython, pythonStarting,
-         checkPython } from '../py.js';
+         checkPython, stopPython } from '../py.js';
+import { useStop } from '../stop.js';
 import { syntaxTree } from '@codemirror/language';
 import { askFor } from '../pycomplete.js';
 import { md } from '../md.js';
@@ -155,13 +156,13 @@ onBeforeUnmount(() => sendSoon.cancel());
  * warm-up pays for the interpreter a first Run used to wait on, and brings the compiler the
  * red lines below need - which is why every Python exercise warms, setup or not.
  *
- * AT ONCE, AND SAID OVER THE EDITOR. Pyodide runs on the main thread rather than in a worker,
- * so importing pandas holds the page for a second or two. It was warmed at idle with a small
- * badge by the tabs, which nobody saw - and at idle it could start a few seconds in, locking
- * an editor somebody had begun typing into. Now it starts before the first paint, the editor
- * opens covered and read-only (see EditorPane's `loading`), and is handed over once. When the
- * interpreter is already warm nothing is covered at all. A worker is the real fix, and a
- * larger one. */
+ * AT ONCE, AND SAID OVER THE EDITOR. It was warmed at idle with a small badge by the tabs,
+ * which nobody saw - and at idle it could start a few seconds in, under an editor somebody
+ * had begun typing into. Now it starts before the first paint, the editor opens covered and
+ * read-only (see EditorPane's `loading`), and is handed over once. When the interpreter is
+ * already warm nothing is covered at all. Pyodide runs in a worker now (see py.js), so the
+ * page no longer holds still while it starts; the cover stays because there is still nothing
+ * to run against until it has. */
 const startingPython = computed(() => pythonStarting.value);
 warmPython(props.courseId, props.exercise).catch(() => {});
 
@@ -172,8 +173,8 @@ warmPython(props.courseId, props.exercise).catch(() => {});
  * there is an interpreter nothing is marked, and it checks again the moment one arrives. */
 const lintAgain = ref(0);
 watch(startingPython, (now, was) => { if (was && !now) lintAgain.value++; });
-const lintPython = text => {
-  const found = checkPython(text);
+const lintPython = async text => {
+  const found = await checkPython(text);
   if (!found) return [];
   const [line, col, endLine, endCol, message] = found;
   const starts = [0];
@@ -197,13 +198,13 @@ const lintPython = text => {
 
 /* What is being asked - a subscript's key, after a dot, a bare word - is worked out in
  * pycomplete.js, and Python only answers. */
-const liveCompletions = context => {
+const liveCompletions = async context => {
   const line = context.state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
   const node = syntaxTree(context.state).resolveInner(context.pos, -1).name;
   const ask = askFor(before, node, context.explicit);
   if (!ask) return null;
-  const rows = completePython(props.exercise, ...ask);
+  const rows = await completePython(props.exercise, ...ask);
   if (!rows?.length) return null;
   return {
     from: context.pos - ask[2].length,
@@ -223,6 +224,16 @@ const files = ref([]);         // { name, bytes } for whatever it wrote
 const verdict = ref(null);
 const busy = ref(false);
 const booting = ref(false);
+
+/* STOP, for code that is not going to finish - see stop.js. It ends the interpreter, so the
+ * exercise is warmed again at once: the editor is covered while Python restarts rather than
+ * the student finding out on their next press. The Run or Check that was stopped says so
+ * through `wrap`, and is not reported as an attempt. */
+const stoppable = useStop(busy);
+function stop() {
+  stopPython('Stopped. Python is starting again, which takes a few seconds.');
+  warmPython(props.courseId, props.exercise).catch(() => {});
+}
 /* WHETHER THE RESULT PANE HOLDS A RUN OF SOMEBODY ELSE'S SCREEN, and it is given back when
  * that screen stops being shared. A classmate's run is relayed to everybody watching and runs
  * that screen's code here; once control ends the editor tab goes back to their own - see
@@ -561,6 +572,7 @@ const ranQuietly = computed(() =>
           <!-- AND IT SAYS WHOSE CODE, once there are two buffers to run. A student looking
                at the educator's tab who pressed a button labelled "Run code" would fairly
                expect their own. -->
+          <button v-if="stoppable" class="btn ghost" type="button" @click="stop">Stop</button>
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
                   :disabled="busy || startingPython">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}

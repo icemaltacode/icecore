@@ -295,6 +295,7 @@ check('and the band says so once more', /Following .* live/.test(text()), text()
  * WHAT IS ASSERTED IS THAT THE RUN WAS ATTEMPTED ON THIS SIDE, and the instrument is the
  * stub. The wasm runtimes are aliased away in a test process and name themselves when
  * called, so the database reporting itself absent is proof that this browser reached for it.
+ * The database is in a worker now, and the test DOM's Worker refuses in the same words.
  * Nothing about a query RESULT is observable from here and nothing should be - asserting on
  * rows would be asserting on PGlite. See test/stubs/absent.js.
  */

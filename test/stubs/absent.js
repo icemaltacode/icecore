@@ -6,8 +6,8 @@
  * "unused" still costs the parse: with them in, a bundle of App.vue is 53MB.
  *
  * EVERY EXPORT IS NAMED, because a static `import { PGlite }` is resolved by the bundler and
- * a catch-all Proxy cannot answer it. The list is the union of what `app/src/db.js`,
- * `app/src/py.js`, `app/src/playground-*.js` and `src/extensions.mjs` import - so a new
+ * a catch-all Proxy cannot answer it. The list is the union of what the runtimes' workers
+ * (`app/src/*.worker.js`), `app/src/wheels.js` and `src/extensions.mjs` import - so a new
  * import from either package fails the BUILD of the test rather than at some later moment,
  * which is the right way round.
  *

@@ -1,4 +1,4 @@
-import { scratch, run, runOn } from './db.js';
+import { run, runScratch } from './db.js';
 import { compareResults, isDDL } from './compare.js';
 
 export { compareResults, isDDL };
@@ -14,17 +14,18 @@ export async function grade(course, exercise, step, submission) {
   // A submission that changes the database gets a throwaway copy, so a failed
   // attempt can't leave the student's own session broken.
   const ddl = expected.ddl || isDDL(submission);
-  const db = ddl ? await scratch(course, dataset, setup) : null;
   let actual;
   try {
-    actual = db ? await runOn(db, submission) : await run(course, dataset, submission, setup);
+    actual = ddl ? await runScratch(course, dataset, setup, submission)
+      : await run(course, dataset, submission, setup);
   } catch (e) {
+    /* A STOP IS NOT AN ANSWER. The student ended the query themselves, so there is no
+     * verdict to give and no attempt to record; the caller says what happened. */
+    if (e.stopped) throw e;
     /* `error` marks this as the query having FAILED rather than having been wrong, which
      * is a distinction the player makes: a wrong answer is ordinary progress, a broken one
      * is where Ask AI offers itself. Both are `pass: false` and only this knows which. */
     return { pass: false, error: true, reason: cleanError(e.message) };
-  } finally {
-    await db?.close().catch(() => {});
   }
 
   return compareResults(expected, actual);

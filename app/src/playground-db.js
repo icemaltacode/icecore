@@ -1,11 +1,14 @@
 /* The Playground's SQL session: ONE database, added to.
  *
- * WHY THIS IS NOT `db.js`. That module caches a dumped data directory per dataset and
- * clones it with `loadDataDir`, which is exactly right for an exercise - each one wants
- * exactly one dataset and wants it instantly. It is useless for composition, because
- * loading a dump REPLACES the database. Two dumps cannot be merged. So a student loading
- * Film and then Sport has to be `exec`, and once it is `exec` the whole thing is three
- * lines. No new caching machinery, and `runOn` is already the editor's execute path.
+ * The database itself lives in `sql.worker.js`, in a worker instance of the Playground's
+ * own; this file is the page's half. See worker-rpc.js for why a worker at all.
+ *
+ * WHY THIS IS NOT `db.js`. That one caches a dumped data directory per dataset and clones it
+ * with `loadDataDir`, which is exactly right for an exercise - each one wants exactly one
+ * dataset and wants it instantly. It is useless for composition, because loading a dump
+ * REPLACES the database. Two dumps cannot be merged. So a student loading Film and then
+ * Sport has to be `exec`, and once it is `exec` the whole thing is three lines. No new
+ * caching machinery, and `runOn` is the same execute path the exercise editor uses.
  *
  * ATOMIC PER SET, FOR FREE. Postgres runs a multi-statement simple query as one implicit
  * transaction and its DDL is transactional, so a set that collides half way through rolls
@@ -18,57 +21,51 @@
  * IN MEMORY, NOT `idb://` - and that is a deviation from the plan, for a reason the plan
  * could not have known. PGlite refuses `loadDataDir` against a data directory that already
  * holds a database ("Database already exists, cannot load from tarball"), so with an idb
- * data directory the blank-dump reset below is not available at all: resetting would mean
+ * data directory the blank-dump reset is not available at all: resetting would mean
  * deleting the IndexedDB store and paying a cold `initdb`, seconds, on a button a student
  * might press ten times. Persistence is worth having and should come back with the
  * multi-tab question answered - two tabs on one idb store have no locking between them.
  */
-import { PGlite } from '@electric-sql/pglite';
-import { EXTENSIONS } from '../../src/extensions.mjs';
-import { loadDatasetSql } from './content.js';
+import { spawn } from './worker-rpc.js';
 
-let ready = null;
+const engine = spawn(() =>
+  new Worker(new URL('./sql.worker.js', import.meta.url), { type: 'module' }));
+
+let booted = null;
 
 /* Booting PGlite costs seconds, so it happens once and lazily - a student who opens the
- * Playground and switches straight to Python should never pay for it. The blank dump is
- * taken immediately after, while the database is still empty, because that is the only
- * moment it is cheap and it is what Reset restores. */
-function session() {
-  if (!ready) ready = (async () => {
-    const db = new PGlite({ extensions: EXTENSIONS });
-    const blank = await db.dumpDataDir();
-    return { db, blank };
-  })();
-  return ready;
-}
+ * Playground and switches straight to Python should never pay for it. */
+export const boot = () =>
+  booted ??= engine.call('pgBoot').catch(e => { booted = null; throw e; });
 
-/** The live database, booting it if this is the first time anyone asked. */
-export const database = async () => (await session()).db;
-
-/** Has the database been booted yet? Lets the UI say "starting" without causing it. */
-export const started = () => ready !== null;
+/** Has the database been asked for yet? Lets the UI say "starting" without causing it. */
+export const started = () => booted !== null;
 
 /**
  * Add one dataset to the live database. Rejects with Postgres's own message if it
  * collides with something already loaded, having changed nothing.
  */
 export async function addDataset(course, name) {
-  const { db } = await session();
-  await db.exec(await loadDatasetSql(course, name));
+  await boot();
+  await engine.call('pgAdd', { course, name });
 }
 
-/**
- * Empty the database.
- *
- * The blank dump rather than a fresh instance: a cold boot is seconds and restoring an
- * empty data directory is not. The old handle is closed rather than dropped, or its wasm
- * heap stays live for as long as the tab does.
- */
+/** Empty the database, from a dump taken while it was still empty. */
 export async function reset() {
-  const { db, blank } = await session();
-  await db.close().catch(() => {});
-  ready = Promise.resolve({ db: new PGlite({ loadDataDir: blank, extensions: EXTENSIONS }), blank });
-  await ready;
+  await boot();
+  await engine.call('pgReset');
+}
+
+/** Run the student's SQL, and return the LAST statement's result. */
+export async function run(sql) {
+  await boot();
+  return engine.call('pgRun', { sql });
+}
+
+/** One statement's `{ fields, rows }`, fields by name - what the data browser pages through. */
+export async function query(sql) {
+  await boot();
+  return engine.call('pgQuery', { sql });
 }
 
 /**
@@ -86,25 +83,18 @@ export async function reset() {
  * someone is looking at it.
  */
 export async function schema() {
-  const db = await database();
-  const { rows } = await db.query(`
-    SELECT c.relname AS table_name,
-           c.relkind AS kind,
-           a.attname AS column_name,
-           format_type(a.atttypid, a.atttypmod) AS data_type
-      FROM pg_class c
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      JOIN pg_attribute a ON a.attrelid = c.oid
-     WHERE n.nspname = 'public'
-       AND c.relkind IN ('r', 'v', 'm')
-       AND a.attnum > 0 AND NOT a.attisdropped
-     ORDER BY c.relname, a.attnum`);
+  await boot();
+  return engine.call('pgSchema');
+}
 
-  const tables = new Map();
-  for (const r of rows) {
-    if (!tables.has(r.table_name))
-      tables.set(r.table_name, { name: r.table_name, view: r.kind !== 'r', columns: [] });
-    tables.get(r.table_name).columns.push({ name: r.column_name, type: r.data_type });
-  }
-  return [...tables.values()];
+/**
+ * End whatever the database is doing, and the database with it.
+ *
+ * The only way out of a query that will not finish. Every dataset the student loaded goes
+ * with the worker, so the next call boots an empty database. A query in flight rejects with
+ * `message`, marked `stopped`.
+ */
+export function stop(message = 'Stopped.') {
+  booted = null;
+  engine.stop(message);
 }

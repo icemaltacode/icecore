@@ -2,10 +2,15 @@
  *
  * The same job `db.js` does for SQL, and the same shape: something expensive is built once
  * and shared, and everything downstream of it is keyed by what it was built from. What
- * differs is where the cost sits. PGlite is cheap to boot and expensive to seed, so `db.js`
- * caches seeded data directories. Pyodide is the other way round: booting the interpreter
- * and importing pandas is seconds, and every check after that is milliseconds in the same
- * interpreter. So there is exactly one interpreter per session and it is never rebuilt.
+ * differs is where the cost sits. PGlite is cheap to boot and expensive to seed, so the SQL
+ * worker caches seeded data directories. Pyodide is the other way round: booting the
+ * interpreter and importing pandas is seconds, and every check after that is milliseconds in
+ * the same interpreter. So one interpreter serves a whole module, and is rebuilt only when
+ * the student crosses into the next.
+ *
+ * THE INTERPRETER LIVES IN A WORKER (py.worker.js), and this file is the page's half: it
+ * decides when an interpreter exists, which packages it holds, and when it is thrown away.
+ * See worker-rpc.js for why. Nothing here imports Pyodide.
  *
  * WHERE PYODIDE COMES FROM: our own origin, and nowhere else. The loader is bundled and the
  * wasm, the stdlib and every package are staged out of node_modules into `pyodide/<version>/`
@@ -22,14 +27,9 @@
  * of Python now comes from one host, which is the property that was actually wanted.
  */
 import { ref } from 'vue';
-import { loadPyodide } from 'pyodide';
-import { createGrader, seedFor, packageKey } from './python.js';
+import { seedFor, packageKey } from './python.js';
 import { dataBase } from './content.js';
-// Shared with the Playground's interpreter - see wheels.js.
-import { readWheel, pyodideOptions } from './wheels.js';
-
-
-
+import { spawn } from './worker-rpc.js';
 
 /* One grader, rebuilt when the exercise needs a different set of packages.
  *
@@ -44,19 +44,21 @@ import { readWheel, pyodideOptions } from './wheels.js';
  * change and this rebuilds only when a student crosses into the next one. Topping up here
  * instead would grade in a set the build never checked.
  *
- * Exactly one is alive at a time. Keeping a cache of them per package set would avoid the
- * rebuilds and hold tens of megabytes of wasm per entry in a browser tab, which is the
- * wrong trade for something a student crosses at a module boundary.
+ * Exactly one is alive at a time, and the old one is TERMINATED before the next boots: its
+ * worker goes, and its heap with it. Keeping one per package set would avoid the rebuilds
+ * and hold tens of megabytes of wasm per entry, which is the wrong trade for something a
+ * student crosses at a module boundary.
  */
-let grader = null;
+let grader = null;      // the worker whose interpreter has booted
 let graderKey = null;
+let booting = null;     // the worker still booting, so a Stop can end that too
 let building = null;
 
 /* WHETHER PYTHON IS STARTING RIGHT NOW, for the overlay that covers the editor while it is.
  * On while an interpreter is being built, and while a freshly built one runs its first setup -
- * which is where pandas is imported, and the part that holds the page. Not on for the setup
- * of every later exercise: in an interpreter that already has its imports that takes a few
- * milliseconds, and an editor that locked for a blink on every Next would read as broken. */
+ * which is where pandas is imported. Not on for the setup of every later exercise: in an
+ * interpreter that already has its imports that takes a few milliseconds, and an editor that
+ * locked for a blink on every Next would read as broken. */
 export const pythonStarting = ref(false);
 let startingFor = 0;
 const starting = async fn => {
@@ -67,64 +69,31 @@ const starting = async fn => {
 /* An interpreter built but not yet warmed: its first setup is the expensive one. */
 let cold = null;
 
+const makeWorker = () =>
+  new Worker(new URL('./py.worker.js', import.meta.url), { type: 'module' });
+
 async function graderFor(exercise) {
   const key = packageKey(exercise);
   if (grader && graderKey === key) return grader;
   // Serialised: two exercises starting at once must not build two interpreters.
   if (building) { await building; return graderFor(exercise); }
-  building = starting(async () => {
-    const pyodide = await loadPyodide(pyodideOptions());
-    const g = await createGrader({
-      pyodide,
-      packages: exercise.packages || [],
-      wheels: exercise.wheels || [],
-      readWheel,
-    });
-    grader = g; graderKey = key; mounts.clear();   // a new interpreter has an empty filesystem
-    cold = g;
-    return g;
+  const mine = starting(async () => {
+    grader?.stop('Python moved on to a different set of packages.');
+    grader = null; graderKey = null; cold = null; hinted = null;
+    const w = spawn(makeWorker);
+    booting = w;
+    try {
+      await w.call('boot', { packages: exercise.packages || [], wheels: exercise.wheels || [] });
+    } finally { if (booting === w) booting = null; }
+    grader = w; graderKey = key;
+    cold = w;
+    return w;
   });
-  try { return await building; } finally { building = null; }
-}
-
-/* A module's data files, fetched once and written into the interpreter's filesystem.
- *
- * Published per MODULE rather than per topic because that is how they exist: a DataCamp
- * course's loose files are shared across all its chapters, and module 4's casts.p is 8.6MB.
- * Fetched lazily - a student doing module 1 never pays for module 4's pickles - and cached
- * by the promise, so two exercises starting at once share one download rather than racing
- * to write the same path.
- *
- * CACHED PER FILE, NOT PER DIRECTORY, and the difference was a bug that only appeared in the
- * right order. The cache was keyed on `/ice-data/<module>`, but the file SET is a property of
- * the exercise: 1.1.2's "Subsetting" declares baseball.csv and "2D Arithmetic", the very next
- * one, declares baseball.csv AND update.csv. Opening them in that order found the directory
- * already mounted, returned the first exercise's promise, and never fetched update.csv at
- * all - `FileNotFoundError: 'update.csv'` on a file that was sitting in the bucket. Open the
- * second one first and it worked, which is exactly the kind of fault that survives testing.
- *
- * A FAILURE IS NOT REMEMBERED. A rejected promise left in the map is a file that can never be
- * fetched again for the life of the interpreter, so one dropped request would break an
- * exercise until the tab was reloaded. */
-const mounts = new Map();
-
-function mountData(pyodide, course, mod, files = []) {
-  const at = `/ice-data/${mod}`;
-  if (!files.length) return Promise.resolve('');
-  pyodide.FS.mkdirTree(at);
-  const each = files.map(name => {
-    const path = `${at}/${name}`;
-    if (!mounts.has(path)) {
-      mounts.set(path, (async () => {
-        const url = `${dataBase(course)}${encodeURIComponent(mod)}/${encodeURIComponent(name)}`;
-        const r = await fetch(url, { credentials: 'include' });
-        if (!r.ok) throw new Error(`cannot load ${name} (${r.status})`);
-        pyodide.FS.writeFile(path, new Uint8Array(await r.arrayBuffer()));
-      })().catch(e => { mounts.delete(path); throw e; }));
-    }
-    return mounts.get(path);
-  });
-  return Promise.all(each).then(() => at);
+  building = mine;
+  /* ONLY ITS OWN. A Stop during a boot drops `building` so the warm-up that follows starts a
+   * new one at once; this finally then runs later, and clearing whatever `building` holds by
+   * then would forget that new boot and let a third caller start a duplicate. */
+  try { return await mine; } finally { if (building === mine) building = null; }
 }
 
 /* `6.1.2` -> `module-6`. The numbering is the hierarchy, so the module never needs storing.
@@ -132,6 +101,19 @@ function mountData(pyodide, course, mod, files = []) {
  * datasets and Python data directories side by side and the name is what tells them apart -
  * see the note on PY_DIR in build.mjs. */
 export const moduleDataDir = topic => `module-${String(topic).split('.')[0]}`;
+
+/* The exercise's data files, mounted in the worker's filesystem; answers the directory, or ''
+ * for an exercise with none. The URLs are made ABSOLUTE here, against the page: a relative
+ * one would resolve against the worker's script, which lives somewhere else entirely. */
+function mount(g, course, exercise) {
+  const mod = moduleDataDir(exercise.topicId || exercise.topic);
+  const files = (exercise.data || []).map(name => ({
+    name,
+    url: new URL(`${dataBase(course)}${encodeURIComponent(mod)}/${encodeURIComponent(name)}`,
+                 location.href).href,
+  }));
+  return g.call('mount', { dir: `/ice-data/${mod}`, files });
+}
 
 /**
  * Grade one submission against its step's SCT.
@@ -141,14 +123,13 @@ export const moduleDataDir = topic => `module-${String(topic).split('.')[0]}`;
  * student wants to see whether or not they got it right.
  */
 export async function gradePython(course, exercise, step, submission) {
-  const mod = moduleDataDir(exercise.topicId || exercise.topic);
   // The grader first, then the mount: the data goes into THAT interpreter's filesystem, and
   // building a new one wipes what the last had mounted.
   const g = await graderFor(exercise);
   if (cold === g) cold = null;   // this grade does the importing; the warm-up will be quick
-  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
-  return g.grade({ pec: exercise.setup, solution: step.solution, submission,
-                   sct: step.sct, cwd, seed: seedFor(exercise), capture: true });
+  const cwd = await mount(g, course, exercise);
+  return g.call('grade', { pec: exercise.setup, solution: step.solution, submission,
+                           sct: step.sct, cwd, seed: seedFor(exercise), capture: true });
 }
 
 /**
@@ -165,41 +146,35 @@ export async function gradePython(course, exercise, step, submission) {
  * unchanged and was never offered to them.
  */
 export async function runPython(course, exercise, step, submission) {
-  const mod = moduleDataDir(exercise.topicId || exercise.topic);
   const g = await graderFor(exercise);
   if (cold === g) cold = null;   // this run does the importing; the warm-up will be quick
-  const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
-  const r = await g.run({ pec: exercise.setup, submission, cwd, seed: seedFor(exercise) });
-  /* READ FROM WHERE THE RUN ACTUALLY HAPPENED, which is not always the directory handed to
-   * it. An exercise with no `data:` mounts nothing, so `cwd` is the empty string and the run
-   * takes place in the interpreter's own home - and joining a filename onto '' reads from
-   * the filesystem ROOT, finds nothing, and drops the file. The student pressed Run, saw the
-   * output, and was offered no workbook. See `_ice_run` in python.js. */
-  return { ...r, files: readFiles(g.pyodide, r.cwd || cwd, r.files) };
-}
-
-/* The bytes of each file the run wrote. Read here rather than base64'd through the bridge:
- * a workbook is a quarter of a megabyte and the interpreter's filesystem is right there.
- * A file that vanishes between being named and being read is skipped rather than fatal -
- * nothing else in the run is worth losing over it. */
-function readFiles(pyodide, cwd, names = []) {
-  const out = [];
-  for (const name of names) {
-    try {
-      out.push({ name, bytes: pyodide.FS.readFile(`${cwd}/${name}`) });
-    } catch { /* gone, or not a plain file after all */ }
-  }
-  return out;
+  const cwd = await mount(g, course, exercise);
+  return g.call('run', { pec: exercise.setup, submission, cwd, seed: seedFor(exercise) });
 }
 
 /** Whether the interpreter has already been paid for, so the UI can say so honestly. */
 export const pythonReady = () => !!grader;
 
+/**
+ * End whatever Python is doing, now - a `while True:` included, which nothing else can.
+ *
+ * The interpreter goes with it, so the next Run or Check boots a fresh one. That costs
+ * seconds, which is why the caller warms the exercise again straight away rather than
+ * leaving the student to discover it on their next press. A Run or Check in flight rejects
+ * with `message`, marked `stopped`.
+ */
+export function stopPython(message = 'Stopped.') {
+  for (const w of [grader, booting]) w?.stop(message);
+  grader = null; graderKey = null; booting = null; cold = null; hinted = null;
+  // A boot this ended is not one to wait for: whoever asks next starts a new one.
+  building = null;
+}
+
 /* ---- the editor's completion, from what the setup made -------------------------------
  *
- * WARMED, NEVER WAITED FOR. An exercise asks for this when the browser is idle, and until it
- * has finished `completePython` answers null and the editor offers what it always did. The
- * same work also pays for the interpreter a first Run would otherwise have waited on.
+ * WARMED, NEVER WAITED FOR. An exercise asks for this as it opens, and until it has finished
+ * `completePython` answers null and the editor offers what it always did. The same work also
+ * pays for the interpreter a first Run would otherwise have waited on.
  *
  * ONE EXERCISE AT A TIME, for the interpreter that is alive. A namespace holding the last
  * exercise's DataFrames is memory for names nobody is being offered, and one belonging to an
@@ -209,23 +184,16 @@ let hinted = null;   // { grader, id } - whose names the editor may be offered
 export function warmPython(course, exercise) {
   /* ONE STRETCH OF "STARTING", start to finish, whenever this interpreter is not already
    * warm - so the overlay over the editor goes up once and comes down once, rather than
-   * dropping between building the interpreter and running its first setup (where pandas is
-   * imported, and where the page is held). Set synchronously, before anything is awaited, so
-   * the exercise's first paint already shows it. A warm interpreter's setup takes
-   * milliseconds and shows nothing. */
+   * dropping between building the interpreter and running its first setup. Set
+   * synchronously, before anything is awaited, so the exercise's first paint already shows
+   * it. A warm interpreter's setup takes milliseconds and shows nothing. */
   const warm = grader && graderKey === packageKey(exercise) && cold !== grader;
   const work = async () => {
-    const mod = moduleDataDir(exercise.topicId || exercise.topic);
     const g = await graderFor(exercise);
-    const cwd = await mountData(g.pyodide, course, mod, exercise.data || []);
-    if (cold === g) {
-      cold = null;
-      /* A FRAME FIRST, so the overlay is drawn before the page is held: the setup runs
-       * synchronously, and anything switched on in the same task is never painted. */
-      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
-    }
-    g.hints({ pec: exercise.setup || '', cwd });
-    hinted = { grader: g, id: exercise.id };
+    const cwd = await mount(g, course, exercise);
+    if (cold === g) cold = null;
+    await g.call('hints', { pec: exercise.setup || '', cwd });
+    if (g === grader) hinted = { grader: g, id: exercise.id };
   };
   return warm ? work() : starting(work);
 }
@@ -233,13 +201,13 @@ export function warmPython(course, exercise) {
 /** Where `code` stops being Python - `[line, col, endLine, endCol, message]` - or null when it
  *  compiles or there is no interpreter yet. Any interpreter will do: parsing does not depend
  *  on which packages it holds. */
-export function checkPython(code) {
+export async function checkPython(code) {
   if (!grader) return null;
-  try { return grader.syntax(code); } catch { return null; }
+  return grader.call('syntax', { code }).catch(() => null);
 }
 
 /** `[label, type, detail]` for what may follow the caret, or null while not warmed yet. */
-export function completePython(exercise, kind, base, prefix) {
+export async function completePython(exercise, kind, base, prefix) {
   if (!hinted || hinted.grader !== grader || hinted.id !== exercise.id) return null;
-  try { return grader.complete(kind, base, prefix); } catch { return null; }
+  return grader.call('complete', { kind, base, prefix }).catch(() => null);
 }

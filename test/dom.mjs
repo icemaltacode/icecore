@@ -111,6 +111,18 @@ export function installDom({ hash = '', search = '', url = 'https://icecore.test
   put('removeEventListener', window.removeEventListener.bind(window));
   put('dispatchEvent', window.dispatchEvent.bind(window));
 
+  /* THE RUNTIMES' WORKERS, which jsdom does not have. Pyodide and PGlite run in workers now
+   * (app/src/worker-rpc.js), and what a test asserts about them is that the page REACHED for
+   * one - the instrument test/stubs/absent.js is for the runtimes themselves. So a Worker
+   * here refuses to be made, in the same words the stubs use, and the refusal arrives where
+   * the runtime's own error would. */
+  put('Worker', class Worker {
+    constructor(url) {
+      const name = String(url).split('/').pop().split('?')[0];
+      throw new Error(`Worker(${name}) is not available in a test process - see test/dom.mjs`);
+    }
+  });
+
   /* THE CONTENT FETCH, and nothing else. `content.js` reads static JSON off the origin -
    * the catalogue and one course - and under preview every other call goes to `previewApi`
    * without touching the network. Anything this does not know about THROWS rather than

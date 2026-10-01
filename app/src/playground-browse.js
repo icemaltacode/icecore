@@ -25,7 +25,7 @@
  * student happened to be browsing. `strpos`, `includes` and `regex=False` are the three
  * spellings of the same rule.
  */
-import { database } from './playground-db.js';
+import { query } from './playground-db.js';
 import { browse as pyBrowse } from './playground-py.js';
 
 /* ---------------------------------------------------------------- CSV, in the browser */
@@ -115,7 +115,6 @@ const ident = n => `"${String(n).replace(/"/g, '""')}"`;
 const lit = s => `'${String(s).replace(/'/g, "''")}'`;
 
 async function sqlPage(item, { q, col, offset, limit }) {
-  const db = await database();
   const names = item.columns.map(c => c.name);
   const t = ident(item.name);
   const which = col === null || col === undefined ? names : [names[col]];
@@ -130,13 +129,13 @@ async function sqlPage(item, { q, col, offset, limit }) {
    * deterministic instead, since any two rows that could still swap are identical. */
   const order = item.view ? `ORDER BY ${names.map((_, i) => i + 1).join(', ')}` : 'ORDER BY ctid';
 
-  const total = Number((await db.query(`SELECT count(*) AS n FROM ${t}`)).rows[0].n);
+  const total = Number((await query(`SELECT count(*) AS n FROM ${t}`)).rows[0].n);
   const matched = q
-    ? Number((await db.query(`SELECT count(*) AS n FROM ${t}${where}`)).rows[0].n)
+    ? Number((await query(`SELECT count(*) AS n FROM ${t}${where}`)).rows[0].n)
     : total;
-  const { fields, rows } = await db.query(
+  const { fields, rows } = await query(
     `SELECT * FROM ${t}${where} ${order} LIMIT ${Number(limit)} OFFSET ${Number(offset)}`);
-  return { fields: fields.map(f => f.name), columns: names, rows, total, matched };
+  return { fields, columns: names, rows, total, matched };
 }
 
 /* ------------------------------------------------------------------------- the front */

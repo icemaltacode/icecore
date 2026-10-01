@@ -45,15 +45,26 @@ that could be shown externally or open-sourced.
   complete (a bare name, after a dot, inside `x["`), worked out in JavaScript because a regex
   inside the Python bridge sits in a template literal. `py.js`'s `warmPython` runs the setup
   into a namespace of its own as the exercise opens and `_ice_complete` answers from it;
-  until it has, the editor offers only what CodeMirror knows. Pyodide is on the main thread,
-  so the warm-up can hold the page for a second or two - a worker is the real fix.
+  until it has, the editor offers only what CodeMirror knows. The answer arrives from a
+  worker, so the completion source is asynchronous.
 - `app/src/sqllint.js` — pure but for the database it is handed. The SQL editor's red lines:
   each statement is `EXPLAIN`ed against the student's own database (planned, never run), so a
   red line means Run would fail. Checking **stops at the first statement Postgres cannot plan**
   (`CREATE VIEW`, `ALTER`…), because what follows may use what it creates. Python's red lines
   are `compile()` in the warm interpreter (`_ice_syntax`). Both wait for their engine - made
   as the exercise opens, under an overlay (EditorPane's `loading`) that keeps the editor
-  read-only while the page may freeze - and mark nothing until it exists.
+  read-only until there is something to run against - and mark nothing until it exists.
+- **The runtimes run in WORKERS**, never on the page's thread: `py.worker.js` (an exercise's
+  grader), `playground-py.worker.js`, and `sql.worker.js` (one instance for exercises, one
+  for the Playground). `worker-rpc.js` is the one way the page talks to them. What that
+  buys is Stop: a `while True:` or a runaway cross join used to hold the page with no way
+  out, and a worker can be terminated from outside, which also hands back its whole heap.
+  `py.js`, `db.js`, `playground-py.js` and `playground-db.js` are the page's halves and
+  import neither runtime. Three rules follow. **Nothing that crosses may be a handle**: a
+  Pyodide proxy or a PGlite instance stays in its worker, and every answer is plain data.
+  **A URL a worker fetches is made absolute on the page** - a relative one resolves against
+  the worker's script. **A stopped call rejects with `stopped` set**, and a caller must not
+  report it as a wrong answer or an error: no verdict, no `checked`, no Ask AI nudge.
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 

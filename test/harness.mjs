@@ -70,6 +70,10 @@ export async function buildPlayer({ preview = 'student', base = '/' } = {}) {
         { find: /^pyodide(\/.*)?$/, replacement: here('stubs/absent.js') },
       ],
     },
+    /* As the app's own config: the runtimes' workers are module workers. They are bundled
+     * here only because the player names them, and never started - jsdom has no Worker - so
+     * the aliases above leave each of them a few lines of stub. */
+    worker: { format: 'es' },
     build: {
       write: false, minify: false, cssCodeSplit: false, target: 'esnext',
       lib: { entry: here('stubs/player-entry.js'), formats: ['es'], fileName: 'player' },

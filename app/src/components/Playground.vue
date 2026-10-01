@@ -28,12 +28,13 @@ import SplitPane from './SplitPane.vue';
 import Icon from './Icon.vue';
 import PlaygroundStart from './PlaygroundStart.vue';
 import DataBrowser from './DataBrowser.vue';
-import { runOn } from '../db.js';
 import { dataBase } from '../content.js';
-import { database, addDataset, reset as resetDb, schema } from '../playground-db.js';
+import { boot as bootDb, addDataset, reset as resetDb, schema, run as runSql,
+         stop as stopDb } from '../playground-db.js';
 import { run as runPy, addFiles, reset as resetPy, shape as pyShape,
-         started as pyStarted, interpreter } from '../playground-py.js';
+         started as pyStarted, interpreter, stop as stopPy } from '../playground-py.js';
 import { forget as forgetBrowsed } from '../playground-browse.js';
+import { useStop } from '../stop.js';
 
 const props = defineProps({
   /** The playground manifest, as published. */
@@ -208,6 +209,19 @@ async function resetAll() {
   } finally { busy.value = false; }
 }
 
+/* STOP, for code that is not going to finish - see stop.js. Unlike Reset it ends the
+ * runtime, so EVERYTHING the session held goes: the variables or tables, and every set that
+ * was loaded. Said in the message the stopped run leaves behind, and the picker forgets what
+ * it had loaded so that it offers the sets again. A new session is started at once. */
+const stoppable = useStop(running);
+function stop() {
+  if (py.value) stopPy('Stopped. Python started again, so your variables and loaded files are gone.');
+  else stopDb('Stopped. The database started again empty, so load your datasets again.');
+  forgetBrowsed();
+  state.value = {};
+  (py.value ? interpreter() : bootDb()).then(refresh, () => {});
+}
+
 async function run() {
   if (running.value) return;
   running.value = true;
@@ -223,7 +237,7 @@ async function run() {
       result.value = null;
       ms.value = out.value.ms;
     } else {
-      result.value = await runOn(await database(), code.value);
+      result.value = await runSql(code.value);
       out.value = null;
       ms.value = Math.round(performance.now() - t0);
     }
@@ -254,7 +268,7 @@ const mod = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent) ? 
  * their first query look like the slow one. */
 onMounted(() => {
   if (py.value) interpreter().then(refresh, () => {});
-  else database().then(refresh, () => {});
+  else bootDb().then(refresh, () => {});
 });
 </script>
 
@@ -355,6 +369,7 @@ onMounted(() => {
                     ? `${tables.length} table${tables.length === 1 ? '' : 's'} loaded`
                     : 'Empty database' }}</template>
                 </span>
+                <button v-if="stoppable" class="btn ghost" type="button" @click="stop">Stop</button>
                 <button class="btn" :disabled="running || !code.trim()" @click="run">
                   <Icon name="run" :size="14" />
                   {{ running ? 'Running…' : 'Run' }}

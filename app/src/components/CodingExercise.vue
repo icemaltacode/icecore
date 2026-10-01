@@ -2,7 +2,8 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import EditorPane from './EditorPane.vue';
 import ResultGrid from './ResultGrid.vue';
-import { run, resetDb, warmDb, checkSql, dbStarting } from '../db.js';
+import { run, resetDb, warmDb, checkSql, dbStarting, stopDb } from '../db.js';
+import { useStop } from '../stop.js';
 import { grade } from '../grade.js';
 import { md } from '../md.js';
 import { imageBase, appBase } from '../content.js';
@@ -135,8 +136,8 @@ onBeforeUnmount(() => sendSoon.cancel());
 /* ---- THE STUDENT'S DATABASE, MADE BEFORE IT IS ASKED FOR ---------------------------------
  *
  * Made as the exercise opens, as a Python exercise warms its interpreter: the first Run then
- * finds it waiting, and the editor's check below has something to ask. Seeding a dataset runs
- * on the main thread, so the page may hold still for a moment - the editor opens covered and
+ * finds it waiting, and the editor's check below has something to ask. Seeding a dataset takes
+ * a moment - in a worker now, so the page keeps moving - and the editor opens covered and
  * read-only while it does (EditorPane's `loading`), and is handed over once. When this dataset
  * already has a database, nothing is covered. Only exercises with a dataset have one to make. */
 const startingDb = computed(() => dbStarting.value);
@@ -159,6 +160,15 @@ const result = ref(null);
 const error = ref('');
 const verdict = ref(null);
 const busy = ref(false);
+
+/* STOP, for a query that is not going to finish - see stop.js. It ends the database worker,
+ * and the student's database with it, so the exercise is warmed again at once and the editor
+ * is covered while it is remade. */
+const stoppable = useStop(busy);
+function stop() {
+  stopDb('Stopped. Your database is starting again from the beginning.');
+  if (props.exercise.dataset) warmDb(props.courseId, props.exercise.dataset, props.exercise.setup);
+}
 /* WHETHER THE RESULT PANE HOLDS A RUN OF SOMEBODY ELSE'S SCREEN, and it is given back when
  * that screen stops being shared. A classmate's run is relayed to everybody watching and runs
  * that screen's code here; once control ends the editor tab goes back to their own - see
@@ -338,7 +348,11 @@ async function doRun({ whole = false, only = null } = {}) {
   emit('act', 'run', sel);
   busy.value = true; error.value = ''; verdict.value = null;
   try { result.value = await run(props.courseId, props.exercise.dataset, sending, props.exercise.setup); }
-  catch (e) { error.value = e.message; result.value = null; urgeHelp.value = true; }
+  catch (e) {
+    error.value = e.message; result.value = null;
+    // A query the student stopped themselves is not one that failed: nothing to offer help on.
+    if (!e.stopped) urgeHelp.value = true;
+  }
   finally { busy.value = false; }
 }
 
@@ -363,6 +377,11 @@ async function doCheck() {
       if (stepIndex.value < steps.value.length - 1) setTimeout(() => stepIndex.value++, 900);
       else emit('solved', props.exercise.id, { ...passed.value });
     }
+  } catch (e) {
+    /* A STOPPED CHECK HAS NO VERDICT, and is not reported as an attempt: the student ended
+     * it, the query neither passed nor failed. Anything else is a real fault. */
+    if (!e.stopped) throw e;
+    error.value = e.message;
   } finally { busy.value = false; }
 }
 
@@ -516,6 +535,7 @@ async function doReset() {
           <!-- AND IT SAYS WHOSE CODE, once there are two buffers to run. A student looking
                at the educator's tab who pressed a button labelled "Run code" would fairly
                expect their own. -->
+          <button v-if="stoppable" class="btn ghost" type="button" @click="stop">Stop</button>
           <button class="btn ghost" data-show="run" data-label="Run" @click="doRun()"
                   :disabled="busy || startingDb">
             {{ running ? 'Run selection' : (active.mine ? 'Run code' : 'Run this version') }}

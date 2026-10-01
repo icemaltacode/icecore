@@ -248,9 +248,10 @@ function take() {
       </div>
 
       <!-- OVER THE EDITOR, NOT BESIDE IT. This was a small badge by the tabs, and a student
-           typing into an editor that then stopped answering for a second or two - Python and
-           a dataset both load on the main thread - had no reason to look there. The editor
-           is read-only underneath while it is up, so nothing typed is lost to the freeze. -->
+           typing into an editor that then stopped answering - Python and a dataset used to
+           load on the main thread - had no reason to look there. They load in workers now,
+           and the editor is still read-only underneath while it is up: until the engine
+           exists there is nothing to run against, check against or complete from. -->
       <div v-if="loading" class="paneload" role="status">
         <span class="paneload-box"><span class="ice-spin" aria-hidden="true"></span>{{ loading }}</span>
       </div>
