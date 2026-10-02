@@ -1321,6 +1321,41 @@ await settle(150);
         `${document.querySelectorAll('.clipmenu button').length} still listed`);
 }
 
+// -------------------------------------------------- a Python that would not start
+/* A BOOT THAT FAILED ENDS ITS WORKER. Every Run and Check makes a new worker when there is no
+ * interpreter, which is the retry a student on a flaky network needs, but the one that failed
+ * was never terminated: each press left one more behind, holding whatever the failed start had
+ * allocated, until the tab closed. A worker here answers every boot the way Pyodide does when
+ * its standard library was cut off mid-download. */
+{
+  player.stopPython();   // nothing of the earlier tests' left in flight to wait on
+  const real = globalThis.Worker;
+  const made = [];
+  globalThis.Worker = class {
+    constructor() { made.push(this); this.terminated = false; }
+    postMessage({ id }) {
+      queueMicrotask(() => this.onmessage?.({
+        data: { id, error: { message: 'Program terminated with exit(1)' } } }));
+    }
+    terminate() { this.terminated = true; }
+  };
+  const exercise = { id: 9001, type: 'python', topic: '1.1.1', packages: [], wheels: [] };
+  const said = [];
+  try {
+    for (let i = 0; i < 2; i++) {
+      await player.runPython('c1', exercise, { solution: '' }, 'x = 1')
+        .catch(e => said.push(e.message));
+    }
+  } finally { globalThis.Worker = real; }
+  check('a Python that would not start says why, every time',
+        said.length === 2 && said.every(m => /exit\(1\)/.test(m)), said.join(' | '));
+  check('and is retried in a new worker on the next press', made.length === 2,
+        `${made.length} made`);
+  check('and the worker that failed is ended rather than left holding its heap',
+        made.length > 0 && made.every(w => w.terminated),
+        made.map(w => w.terminated).join(', '));
+}
+
 await player.dispose();
 dom.restore();
 console.log(failures ? `\n${failures} failing` : '\nall green');

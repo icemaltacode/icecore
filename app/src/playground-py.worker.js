@@ -19,9 +19,8 @@
  * last expression, any figures, and the traceback if there was one. A traceback is output
  * too - shown in the pane, not raised as a failure.
  */
-import { loadPyodide } from 'pyodide';
 import { WHEELS_BY_NAME } from './python.js';
-import { readWheel, pyodideOptions } from './wheels.js';
+import { readWheel, startPyodide } from './wheels.js';
 import { serve } from './worker-rpc.js';
 
 
@@ -333,7 +332,7 @@ const mounted = new Set();
 
 function session() {
   if (!ready) ready = (async () => {
-    const pyodide = await loadPyodide(pyodideOptions());
+    const pyodide = await startPyodide();
     /* Agg BEFORE matplotlib can possibly be imported. Pyodide's default backend draws to a
      * canvas it expects to find in the page, and a worker has no page at all; figures are
      * collected as PNG bytes instead. An environment variable rather than `matplotlib.use`

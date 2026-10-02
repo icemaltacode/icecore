@@ -67,6 +67,9 @@ that could be shown externally or open-sourced.
   **A URL a worker fetches is made absolute on the page** - a relative one resolves against
   the worker's script. **A stopped call rejects with `stopped` set**, and a caller must not
   report it as a wrong answer or an error: no verdict, no `checked`, no Ask AI nudge.
+  **A boot that fails ends its worker**, so the next call starts clean in a new one: left
+  alive, each failed press leaked a heap (exercises) or got back the worker's remembered
+  rejection (Playground).
 - `.github/workflows/publish.yml` — the publish pipeline, called by every course repo.
   There is no template to copy any more; the two copies had already drifted.
 
@@ -918,6 +921,12 @@ and none is custom.
     are none. It is the kind of property that rots by accident — a font, a chart library, an
     icon set, each added by somebody who was not on that network — so it is asserted rather
     than remembered.
+  - **Both workers start Python through `startPyodide` in `wheels.js`, never `loadPyodide`.**
+    A filter that resets `python_stdlib.zip` mid-download (a 200, then
+    `ERR_CONNECTION_RESET`, while the 9.6MB wasm arrives whole) is logged and swallowed by
+    Pyodide, and the student saw only "Program terminated with exit(1)". `startPyodide`
+    turns any failed start into a sentence that names the network and keeps the original on
+    the end. `setup-checks` fails a direct `loadPyodide(` anywhere else in `app/src`.
 - Only pythonwhat and its two non-bundled companions are vendored as **wheels**, under
   `app/py/`. They are **build assets, not `public/`** — `icecore dev` points Vite's publicDir
   at the course's staging directory, so the app's own `public/` is never served.

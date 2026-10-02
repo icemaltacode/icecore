@@ -19,7 +19,7 @@
  * one edit away from a Playground that boots from somewhere the grader does not.
  */
 import { pyodideDir } from '../../src/pyodide-dist.mjs';
-import { version } from 'pyodide';
+import { loadPyodide, version } from 'pyodide';
 const WHEEL_URLS = Object.fromEntries(
   Object.entries(import.meta.glob('../py/*.whl', { eager: true, query: '?url', import: 'default' }))
     .map(([path, url]) => [path.split('/').pop(), url]));
@@ -64,6 +64,33 @@ export const pyodideOptions = () => {
   const indexURL = pyodideIndexUrl();
   return { indexURL, packageBaseUrl: indexURL };
 };
+
+/**
+ * Start an interpreter, or fail with a sentence a student can act on. Both workers start
+ * Python here and nowhere else.
+ *
+ * PYODIDE'S OWN FAILURE POINTS NOWHERE. The case that showed it: a student's network cut
+ * `python_stdlib.zip` off part way through (a 200, then a connection reset), while the 9.6MB
+ * wasm beside it arrived whole. Pyodide logs the failed download to the console and carries
+ * on, Python cannot import its own `encodings` module, and what reached the editor was
+ * "Program terminated with exit(1)". She tried another browser and a private window, because
+ * nothing on screen said the fault was on the wire, and every browser on that machine went
+ * through the same filter.
+ *
+ * Almost every way this fails is a download that did not arrive whole, and the student is the
+ * only person who can try another network. The original message stays on the end, for
+ * whoever they show it to.
+ */
+export async function startPyodide() {
+  try { return await loadPyodide(pyodideOptions()); }
+  catch (e) {
+    throw new Error('Python could not start in this browser. The usual cause is that part of '
+      + 'it was blocked while downloading, by a school or work firewall or by antivirus that '
+      + 'scans web traffic. Trying another network, such as a phone hotspot, shows whether it '
+      + 'is the network. If it keeps happening, show your tutor this message. '
+      + `(${String(e?.message ?? e)})`);
+  }
+}
 
 export const wheelUrl = name => WHEEL_URLS[name]
   || (() => { throw new Error(`no vendored wheel named ${name}`); })();

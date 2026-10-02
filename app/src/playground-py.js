@@ -14,9 +14,27 @@ let booted = null;
 /** Has the interpreter been asked for yet, so the UI can say so without causing it. */
 export const started = () => booted !== null;
 
-/** Boot the interpreter, or wait for the boot already in flight. */
-export const interpreter = () =>
-  booted ??= engine.call('boot').catch(e => { booted = null; throw e; });
+/**
+ * Boot the interpreter, or wait for the boot already in flight.
+ *
+ * A BOOT THAT FAILED ENDS ITS WORKER, so the next call starts in a new one. The worker
+ * remembers its own boot, failure included, and forgetting it only here sent every retry to
+ * the same worker for the same rejection: Run could not start Python again until Stop or a
+ * reload. A fresh worker is also the only clean retry, since a start that failed part way
+ * leaves its heap behind.
+ *
+ * ONLY ITS OWN. A Stop during the boot has already ended this worker, and the Playground
+ * boots again straight after a Stop, so by the time this rejection arrives `booted` may be
+ * that new boot. Clearing it, or stopping the engine, would end somebody else's.
+ */
+export const interpreter = () => {
+  if (booted) return booted;
+  const mine = engine.call('boot').catch(e => {
+    if (booted === mine) { booted = null; engine.stop('Python could not start.'); }
+    throw e;
+  });
+  return (booted = mine);
+};
 
 /**
  * Mount one set's files into the working directory.

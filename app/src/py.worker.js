@@ -8,10 +8,9 @@
  * whether the interpreter it holds is still the right one, and the old one's heap goes back
  * the moment it is replaced, rather than whenever the garbage collector got round to it.
  */
-import { loadPyodide } from 'pyodide';
 import { createGrader } from './python.js';
 // Shared with the Playground's interpreter - see wheels.js.
-import { readWheel, pyodideOptions } from './wheels.js';
+import { readWheel, startPyodide } from './wheels.js';
 import { serve, moving } from './worker-rpc.js';
 
 let grader = null;
@@ -78,7 +77,7 @@ function readFiles(pyodide, cwd, names = []) {
 
 serve({
   async boot({ packages = [], wheels = [] }) {
-    const pyodide = await loadPyodide(pyodideOptions());
+    const pyodide = await startPyodide();
     grader = await createGrader({ pyodide, packages, wheels, readWheel });
     return true;
   },

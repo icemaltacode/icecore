@@ -54,5 +54,55 @@ const exercise = reactive({
   check('and the worker sees the values', JSON.stringify(answer) === '["pandas"]', String(answer));
 }
 
+/* THE PLAYGROUND'S PYTHON, when it would not start.
+ *
+ * The worker remembers its own boot, failure and all, and the page used to forget it alone:
+ * every retry went to the same worker for the same rejection, so Run could not start Python
+ * again until Stop or a reload. A boot that failed now ends its worker.
+ *
+ * THE OTHER HALF IS A STOP DURING A BOOT. The Playground boots again straight after a Stop,
+ * so the stopped boot's rejection arrives with a NEW boot already in `booted`. Clearing that
+ * would forget it, and ending the engine would kill it. */
+{
+  const made = [];
+  let answer = 'fail';   // how a boot is answered: 'fail', 'ok', or 'hold' (not at all)
+  globalThis.Worker = class {
+    constructor() { made.push(this); this.terminated = false; }
+    postMessage({ id, op }) {
+      if (op === 'boot' && answer === 'hold') return;
+      const data = op === 'boot' && answer === 'fail'
+        ? { id, error: { message: 'Program terminated with exit(1)' } }
+        : { id, value: true };
+      queueMicrotask(() => this.onmessage({ data }));
+    }
+    terminate() { this.terminated = true; }
+  };
+  const pg = await import('../app/src/playground-py.js');
+
+  let said = '';
+  await pg.interpreter().catch(e => { said = e.message; });
+  check('a Playground Python that would not start says why', /exit\(1\)/.test(said), said);
+  check('and its worker is ended', made[0]?.terminated === true);
+  check('and nothing claims to have started', !pg.started());
+
+  answer = 'ok';
+  await pg.interpreter();
+  check('so Run tries again in a NEW worker, rather than asking the failed one',
+        made.length === 2 && !made[1].terminated, `${made.length} made`);
+
+  pg.stop('Stopped.');
+  answer = 'hold';
+  const first = pg.interpreter();
+  pg.stop('Stopped.');                // a Stop while that boot is in flight
+  answer = 'ok';
+  const second = pg.interpreter();    // and the boot that follows every Stop
+  await first.catch(() => {});
+  await second;
+  check('a boot stopped mid-way does not end the boot that followed the Stop',
+        !made.at(-1).terminated && pg.started(),
+        `last terminated: ${made.at(-1).terminated}, started: ${pg.started()}`);
+  delete globalThis.Worker;
+}
+
 console.log(failed ? `\n${failed} failed` : '\nall green');
 process.exit(failed ? 1 : 0);

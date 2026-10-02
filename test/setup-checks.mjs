@@ -304,6 +304,21 @@ for (const file of everyFile(ROOT, n => /\.(js|vue|css)$/.test(n))
   }
 }
 
+/* A blocked network is also the case where Python's own failure says least: a stdlib cut off
+ * mid-download reaches the student as "Program terminated with exit(1)". `startPyodide` in
+ * wheels.js says what to try instead, and it only helps if no worker goes round it. */
+for (const file of everyFile(ROOT, n => /\.(js|vue)$/.test(n))) {
+  if (path.basename(file) === 'wheels.js') continue;
+  const src = code(readFileSync(file, 'utf8'));
+  for (const m of src.matchAll(/\bloadPyodide\s*\(/g)) {
+    const line = src.slice(0, m.index).split('\n').length;
+    console.log(`FAIL  ${path.relative(REPO, file)}:${line}`);
+    console.log(`      start Python with startPyodide() from wheels.js, not loadPyodide() -`);
+    console.log(`      a failed download otherwise reads as "exit(1)" and nothing else.`);
+    bad++;
+  }
+}
+
 /* Every wheel the lock file names has to survive `shipped()`, because that is the filter the
  * CLI stages with. Read from node_modules rather than from a list here: the list IS the lock
  * file, and a second copy of it is a copy that goes stale on the next upgrade. */

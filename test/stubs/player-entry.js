@@ -28,6 +28,10 @@ export { session, restore, startSession } from '../../app/src/auth.js';
  * but the URL is a string, and a wrong one is the difference between every Python exercise
  * working and none of them. */
 export { pyodideOptions } from '../../app/src/wheels.js';
+/* WHAT BECOMES OF A WORKER WHOSE PYTHON WOULD NOT START. py.js reads `import.meta.env` through
+ * content.js, so only the built bundle can import it. Same module graph as the App, so these
+ * are the grader the exercises use. */
+export { runPython, stopPython } from '../../app/src/py.js';
 /* THE EDITOR ITSELF, so a test can put a selection in it. There is no other way in: a
  * selection is CodeMirror's state and not the DOM's, and jsdom cannot drag a mouse. This
  * adds no seam to the player either - `findFromDOM` is CodeMirror's own public door onto a

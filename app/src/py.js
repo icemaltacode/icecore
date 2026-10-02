@@ -84,6 +84,14 @@ async function graderFor(exercise) {
     booting = w;
     try {
       await w.call('boot', { packages: exercise.packages || [], wheels: exercise.wheels || [] });
+    } catch (e) {
+      /* A BOOT THAT FAILED ENDS ITS WORKER. Nothing else holds it, and the next press makes a
+       * new one, so left alone it lives until the tab closes with whatever heap the failed
+       * start had allocated. On a network that blocks part of the runtime that is every Run
+       * and every Check, each leaving one more behind. A Stop has already ended it, and then
+       * this is a no-op. */
+      w.stop('Python could not start.');
+      throw e;
     } finally { if (booting === w) booting = null; }
     grader = w; graderKey = key;
     cold = w;
